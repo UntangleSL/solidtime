@@ -10,8 +10,8 @@ dentro de solidtime. La aplicación solo **lee** los calendarios: no puede crear
 nada en Outlook.
 
 **Cuánto tiempo lleva.** Unos 45 minutos para registrar la aplicación (Partes 1 a 5). Las Partes 6 a 9
-preparan las cuentas de prueba y los eventos de Outlook en dos rondas, y la Parte 10 es la entrega de
-datos.
+preparan a las dos personas de prueba (A y B) y los eventos de Outlook en dos rondas, y la Parte 10
+es la entrega de datos.
 
 **Idioma del portal.** Las etiquetas en español de Microsoft cambian de una versión del portal a
 otra. Por eso cada etiqueta lleva la etiqueta en inglés entre paréntesis. Si algo no coincide,
@@ -24,19 +24,24 @@ secretos): «Registro listo», «Ronda A lista» y «Ronda B lista».
 **Dominio de producción.** La dirección pública de solidtime en Dokploy es `time.untangle.es`
 (ya configurada en Dokploy con https).
 
-**Caso Untangle.** En Untangle hay una sola persona administradora (Administrador global) y no hay
-cuentas de prueba sin licencia: todo el tenant tiene MFA. Por eso esta guía usa **personas reales**:
-la usuaria A eres tú (tu propio buzón) y la usuaria B es un compañero o compañera real con buzón.
-Durante la Fase 1 **solo tú** quedas asignado a la aplicación; B no se asigna hasta la Fase 2, y así
-sirve para comprobar el bloqueo.
+**Caso Untangle.** El tenant de Untangle tiene dos dominios: `untanglegrowth.com` (el principal) y
+`untangle.es`. Podrán iniciar sesión con su cuenta de Microsoft 365 todas las personas **miembros**
+del tenant, de cualquiera de los dos dominios. Los invitados externos no se bloquean en Entra: se
+rechazan después, dentro de solidtime. Solo hay una persona administradora (Administrador global),
+no hay cuentas de prueba y todo el tenant tiene MFA; nadie comparte contraseñas. Por eso esta guía
+usa **personas reales**: la usuaria A eres tú (tu propio buzón) y la usuaria B es Alejandro Cava,
+un compañero real sin rol de administrador y con buzón. Cada persona inicia sesión ella misma.
+Nadie se asigna a la aplicación: queda abierta a todo el tenant (Parte 5). Informativo: las
+personas freelance con licencia F1 no tienen buzón; podrán iniciar sesión más adelante, pero no
+verán calendario de Outlook. No necesitan ninguna acción en esta guía.
 
 **Regla de oro.** Un secreto o una contraseña **nunca** se pega en un chat, un correo, Teams, un
 ticket ni el repositorio. Solo viaja por el gestor de contraseñas de la empresa, que en Untangle es
 **Doppler** (proyecto `vps`; todos los nombres empiezan por `SOLIDTIME_`) (Parte 10).
 
 Índice: Preparación, Parte 1 (registro), Parte 2 (URI de redirección), Parte 3 (permisos y
-consentimiento), Parte 4 (secretos de cliente), Parte 5 (aplicación empresarial), Parte 6 (acceso
-condicional), Parte 7 (usuarias de prueba y buzón), Parte 8 (escenarios de Outlook, Ronda A), Parte 9
+consentimiento), Parte 4 (secretos de cliente), Parte 5 (aplicación empresarial: acceso a todo el
+tenant), Parte 6 (acceso condicional), Parte 7 (usuarias de prueba y buzón), Parte 8 (escenarios de Outlook, Ronda A), Parte 9
 (modificaciones, Ronda B) y Parte 10 (entrega).
 
 ## Preparación
@@ -44,43 +49,48 @@ condicional), Parte 7 (usuarias de prueba y buzón), Parte 8 (escenarios de Outl
 **Qué hacer**
 
 1. **Roles.** Para registrar la aplicación necesitas al menos el rol *Desarrollador de aplicaciones*
-   (Application Developer). Para conceder el consentimiento y asignar personas necesitas *Administrador
-   de aplicaciones en la nube* (Cloud Application Administrator) o *Administrador de aplicaciones*
-   (Application Administrator). Una cuenta de *Administrador global* (Global Administrator) también
-   sirve para hacer la configuración, pero **no** para las usuarias de prueba (punto 4).
-2. **Licencias.** Comprueba si el inquilino tiene Microsoft Entra ID P1 o P2 (por ejemplo, Microsoft 365
-   Business Premium incluye P1). Entra ID > Licencias (Licenses) > Todos los productos (All products).
-   Sin P1 ni P2 no se pueden asignar grupos a una aplicación: en ese caso se asigna a las personas una
-   a una (Parte 5) y en la entrega anotas `Modo de asignación: individual`. Con P1 o P2 se asigna un
-   grupo, y solo cuentan sus **miembros directos**: los grupos anidados dentro de ese grupo no valen.
+   (Application Developer). Para conceder el consentimiento necesitas *Administrador de aplicaciones
+   en la nube* (Cloud Application Administrator) o *Administrador de aplicaciones* (Application
+   Administrator). Una cuenta de *Administrador global* (Global Administrator) también sirve para
+   hacer la configuración, pero por sí sola **no** demuestra que una persona normal no vea una
+   pantalla de permisos (punto 4).
+2. **Licencias.** Comprueba qué licencias tiene el inquilino. En Untangle son Microsoft 365 Business
+   Standard, que **no** incluye Microsoft Entra ID P1 ni P2 (Business Premium, por ejemplo, sí incluye
+   P1). Entra ID > Licencias (Licenses) > Todos los productos (All products). Sin P1 ni P2 no se pueden
+   asignar grupos a una aplicación; por eso la decisión (2026-10-19) es dejar la aplicación abierta a
+   todo el tenant (Parte 5) en lugar de asignar personas una a una. Si algún día hay P1 o P2 se podrá
+   restringir a un grupo; entonces solo contarán sus **miembros directos**.
 3. **Gestor de contraseñas (Doppler).** Se usa el proyecto `vps` de Doppler, con sus entornos `dev` y
    `prd`. Todos los nombres de solidtime empiezan por `SOLIDTIME_` (Doppler los guarda en mayúsculas).
    Ahí guardarás los secretos de la Parte 4: el de producción en `prd` como
    `SOLIDTIME_MICROSOFT_CLIENT_SECRET` y el temporal (spike) en `dev` como
    `SOLIDTIME_M365_SPIKE_CLIENT_SECRET`.
-4. **Usuarias A y B (personas reales).** Hacen falta dos personas con buzón de Exchange Online:
-   - **A = tú.** Eres Administrador global: eso no impide hacer la prueba de inicio de sesión sin
-     pantalla de permisos, pero un Administrador global se salta la opción «Asignación requerida», así
-     que **tú no sirves** para comprobar el bloqueo.
-   - **B = un compañero o compañera sin rol de administrador.** Organiza las reuniones de prueba de la
-     Parte 8 y, como **no** estará asignado durante la Fase 1, su intento de iniciar sesión debe
-     fallar con el error AADSTS50105.
-   Se confirman en la Parte 7.
+4. **Usuarias A y B (personas reales).** Hacen falta dos personas con buzón de Exchange Online y
+   cuenta de tipo Miembro en `untanglegrowth.com` (dominio principal) o en `untangle.es`:
+   - **A = tú.** Eres Administrador global y tu buzón es real. Tu inicio de sesión sirve para la
+     primera comprobación, pero el consentimiento de administrador ya está concedido, así que **tú no
+     sirves** para demostrar que una persona normal no ve la pantalla de permisos.
+   - **B = Alejandro Cava,** un compañero real **sin rol de administrador** y con buzón. Organiza las
+     reuniones de prueba de la Parte 8 y **no** se le asigna la aplicación. Su inicio de sesión debe
+     funcionar **sin pantalla de permisos** y con exactamente los seis permisos de la Parte 3: es la
+     comprobación de consentimiento de una persona sin privilegios.
+   Se confirman en la Parte 7. No hay cuentas de prueba dedicadas: cada persona inicia sesión ella
+   misma, con su MFA, y nadie comparte contraseñas.
 5. **Qué tendrás a mano al terminar.** Los dos identificadores de la aplicación (no son secretos), la
-   fecha de caducidad de los secretos, el nombre del grupo y el valor de los secretos en el gestor de
-   contraseñas.
+   fecha de caducidad de los secretos, el modo de acceso (todo el tenant) y el valor de los secretos
+   en el gestor de contraseñas.
 
 **Por qué**
 
-Los permisos que concedemos son mínimos (solo lectura de calendario) y la aplicación solo debe poder
-usarla el personal asignado. Dos cuentas de prueba sin privilegios permiten comprobar de verdad que
-quien no está asignado queda fuera.
+Los permisos que concedemos son mínimos (solo lectura de calendario) y el consentimiento lo concede
+un administrador una sola vez para todo el tenant. Una persona sin privilegios (B) permite comprobar
+de verdad que nadie más ve una pantalla de permisos.
 
 **Cómo comprobarlo**
 
-Sabes si tienes P1 o P2 porque aparece en la lista de productos de Licencias. Tienes dos cuentas de
-prueba que no figuran en ningún rol de administrador (Entra ID > Roles y administradores (Roles &
-administrators) no las lista) y una entrada vacía en el gestor de contraseñas.
+Sabes si tienes P1 o P2 porque aparece en la lista de productos de Licencias (en Untangle, no). B no
+figura en ningún rol de administrador (Entra ID > Roles y administradores (Roles & administrators)
+no la lista) y tienes una entrada vacía en el gestor de contraseñas.
 
 ## Parte 1 – Registro de la aplicación
 
@@ -164,9 +174,10 @@ de redirección no coincide): distingue mayúsculas y minúsculas y no admite un
 **Por qué**
 
 Pedimos lo mínimo: leer calendarios y datos básicos del perfil, siempre en nombre de cada usuaria y
-sin poder modificar nada. Como la aplicación exigirá asignación (Parte 5), las personas no pueden dar
-su propio consentimiento: tiene que concederlo un administrador, y hacerlo ahora evita que cada
-persona vea una pantalla de permisos.
+sin poder modificar nada. Como la aplicación estará abierta a todo el tenant (Parte 5), el
+consentimiento lo concede un administrador una sola vez para todo el tenant, y hacerlo ahora evita
+que cada persona vea una pantalla de permisos. La usuaria B (sin privilegios) lo comprobará más
+adelante.
 
 **Cómo comprobarlo**
 
@@ -235,7 +246,7 @@ de desarrollo, y se destruye cuando termina el trabajo.
 La lista de secretos muestra dos filas: `produccion-AAAA-MM` y el secreto spike, cada una con su fecha
 de caducidad distinta.
 
-## Parte 5 – Aplicación empresarial: asignación obligatoria
+## Parte 5 – Aplicación empresarial: acceso a todo el tenant
 
 **Qué hacer**
 
@@ -243,39 +254,35 @@ de caducidad distinta.
    y abre `solidtime-m365`. Se crea sola al registrar la aplicación; si no aparece, espera un minuto y
    pulsa Actualizar.
 2. Administrar (Manage) > Propiedades (Properties):
-   - ¿Asignación requerida? (Assignment required?) = Sí.
+   - ¿Asignación requerida? (Assignment required?) = No.
    - ¿Habilitado para que los usuarios inicien sesión? (Enabled for users to sign-in?) = Sí.
    - Pulsa Guardar (Save).
-3. Administrar (Manage) > Usuarios y grupos (Users and groups) > Agregar usuario o grupo (Add
-   user/group) > Ninguno seleccionado (None Selected): elige el grupo del personal que te indique el
-   equipo (solo cuentan sus miembros directos) > Seleccionar (Select) > rol Acceso predeterminado
-   (Default Access) > Asignar (Assign).
-4. Comprueba que la usuaria A es miembro directo de ese grupo y que la usuaria B no está asignada de
-   ninguna forma.
-5. Sin P1 ni P2: no se puede asignar un grupo. Asigna una a una a cada persona del equipo y a la
-   usuaria A con Agregar usuario o grupo, y en la entrega anota `Modo de asignación: individual`.
-6. **Caso Untangle (Fase 1):** asigna **solo a ti** (usuaria A), de forma individual, aunque tengas
-   P1 o P2. El grupo del personal (y con él B) se asigna en la Fase 2, después de la prueba de
-   bloqueo.
+3. No asignes a nadie en Usuarios y grupos (Users and groups): no hace falta. Con Business Standard
+   no hay Entra ID P1, así que no se pueden asignar grupos a la aplicación; la decisión del equipo
+   (2026-10-19) es el acceso a todo el tenant, para las cuentas de `untanglegrowth.com` y de
+   `untangle.es`.
+4. Solo como aviso: si alguien activa la asignación obligatoria por error en el futuro, las personas
+   no asignadas verán el error AADSTS50105 al iniciar sesión. En ese caso, vuelve a ponerla en No.
 
 **Por qué**
 
-Con la asignación obligatoria, Microsoft rechaza a cualquier persona no asignada, también a invitados
-externos, con el error AADSTS50105 antes de que la aplicación llegue a verla. Recuerda que los
-Administradores globales se saltan esta comprobación, por eso las usuarias de prueba no pueden serlo.
+Con la asignación desactivada, cualquier persona miembro del tenant puede iniciar sesión con su
+cuenta de Microsoft 365 y su MFA. Los invitados externos no se bloquean en Entra: se rechazan después,
+dentro de solidtime (requisito AUTH-02). Los permisos se mantienen mínimos y ya están concedidos por
+un administrador (Parte 3).
 
 **Cómo comprobarlo**
 
-Usuarios y grupos lista el grupo (o las personas) con el rol Acceso predeterminado, y Propiedades
-muestra ¿Asignación requerida? = Sí. Más adelante, el intento de la usuaria B debe fallar con
-AADSTS50105.
+Propiedades muestra ¿Asignación requerida? (Assignment required?) = No y ¿Habilitado para que los
+usuarios inicien sesión? = Sí. Más adelante, la usuaria B (Alejandro Cava), sin estar asignada,
+iniciará sesión sin error y sin pantalla de permisos.
 
 ## Parte 6 – Revisión de acceso condicional
 
 **Qué hacer**
 
 1. Entra ID > Acceso condicional (Conditional Access) > Directivas (Policies).
-2. Revisa cada directiva **activada** cuyos usuarios incluyan al grupo del personal o a «Todos los usuarios» y cuyos recursos de destino incluyan «Todos los recursos» (All resources), Office 365, Exchange Online o Microsoft Graph. De cada una apunta si exige:
+2. Revisa cada directiva **activada** cuyos usuarios incluyan a «Todos los usuarios» o a algún grupo del personal y cuyos recursos de destino incluyan «Todos los recursos» (All resources), Office 365, Exchange Online o Microsoft Graph. De cada una apunta si exige:
    - Autenticación multifactor (MFA).
    - Frecuencia de inicio de sesión (sign-in frequency).
    - Dispositivo compatible o unido de forma híbrida (compliant or hybrid-joined device).
@@ -290,7 +297,7 @@ AADSTS50105.
    - Plataforma de dispositivo (Device platform): Windows.
    - Aplicaciones cliente (Client apps): Explorador (Browser).
    - Pulsa ¿Qué Pasaría Si? (What If) y apunta qué directivas se aplican y qué exigen.
-4. Cuando el equipo te avise de que ha hecho el primer inicio de sesión con la usuaria A (después de tu «Registro listo»; es la Entrega 1), entra en Supervisión y estado (Monitoring & health) > Registros de inicio de sesión (Sign-in logs), abre el inicio de sesión de A y mira la pestaña Acceso condicional (Conditional Access) y la columna Audiencia (Audience). Apunta las directivas aplicadas y el resultado. Comprueba también que el intento fallido de la usuaria B aparece con AADSTS50105.
+4. Cuando el equipo te avise de que ha hecho el primer inicio de sesión con la usuaria A (después de tu «Registro listo»; es la Entrega 1), entra en Supervisión y estado (Monitoring & health) > Registros de inicio de sesión (Sign-in logs), abre el inicio de sesión de A y mira la pestaña Acceso condicional (Conditional Access) y la columna Audiencia (Audience). Apunta las directivas aplicadas y el resultado. Comprueba también el inicio de sesión de la usuaria B (Alejandro Cava) cuando lo haga: debe aparecer con resultado Éxito (Success) y sin directivas inesperadas.
 5. Anota todo como «hallazgos de acceso condicional» para la entrega. Esta guía no te pide ninguna exclusión: cualquier excepción es decisión tuya.
 
 **Por qué**
@@ -305,8 +312,8 @@ Tienes una lista de las directivas que afectan a la aplicación (o la anotación
 
 **Qué hacer**
 
-1. Confirma las dos personas en Entra ID > Usuarios (Users) > Todos los usuarios (All users): A (tú) y B (el compañero o compañera), las dos con licencia que incluya un buzón de Exchange Online. B **sin ningún rol de administrador**.
-2. La usuaria A está asignada a la aplicación (Parte 5, punto 6). La usuaria B no está asignada.
+1. Confirma las dos personas en Entra ID > Usuarios (Users) > Todos los usuarios (All users): A (tú) y B (Alejandro Cava), las dos con cuenta de tipo Miembro (no Invitado) en `untanglegrowth.com` o en `untangle.es` y con licencia que incluya un buzón de Exchange Online. B **sin ningún rol de administrador**.
+2. Ninguna de las dos está asignada individualmente a la aplicación: el acceso es a todo el tenant (Parte 5). B es la comprobación importante: como persona sin privilegios y sin asignar, debe iniciar sesión **sin pantalla de permisos** y recibir exactamente los seis permisos de la Parte 3. Lo hará él mismo, con su MFA, cuando el equipo se lo pida.
 3. Comprueba que las dos ven su calendario en Outlook en la web: `https://outlook.office.com/calendar`.
 4. En los dos buzones la zona horaria debe ser (UTC+01:00) Bruselas, Copenhague, Madrid, París: Configuración (Settings, la rueda) > General > Idioma y hora (Language and time) > Zona horaria (Time zone); si no la encuentras, busca «zona horaria» en el cuadro de búsqueda de Configuración.
 5. Las dos personas usan su MFA habitual: **no** se comparten contraseñas con nadie. Cuando toque iniciar sesión con la herramienta de captura, cada persona lo hará ella misma en el navegador del equipo de desarrollo.
@@ -319,7 +326,7 @@ Con personas reales, la herramienta lee también reuniones reales de A durante l
 
 **Cómo comprobarlo**
 
-Outlook en la web muestra el calendario de A y el de B, con la zona horaria de Madrid. B no aparece en Entra ID > Roles y administradores (Roles & administrators) ni en Usuarios y grupos de la aplicación.
+Outlook en la web muestra el calendario de A y el de B, con la zona horaria de Madrid. B no aparece en Entra ID > Roles y administradores (Roles & administrators) ni en Usuarios y grupos de la aplicación. Cuando B inicie sesión con la herramienta de captura, entrará sin pantalla de permisos y la herramienta confirmará los seis permisos.
 
 ## Parte 8 – Escenarios de Outlook (Ronda A)
 
@@ -436,7 +443,8 @@ repositorio (`docs/m365/RUNBOOK-entra-app.md`) porque no son secretos.
 
 - [ ] Directory (tenant) ID (runbook)
 - [ ] Application (client) ID (runbook)
-- [ ] Nombre del grupo asignado, o la palabra «individual» si asignaste personas una a una (runbook)
+- [ ] Modo de acceso: todo el tenant (asignación requerida = No) (runbook)
+- [ ] Dominios del tenant: `untanglegrowth.com` (primario) y `untangle.es` (runbook)
 - [ ] Fecha de caducidad del secreto de producción (runbook)
 - [ ] Fecha del recordatorio de renovación y rol responsable (runbook)
 - [ ] Fecha de la comprobación del Valor del secreto de producción (runbook)
