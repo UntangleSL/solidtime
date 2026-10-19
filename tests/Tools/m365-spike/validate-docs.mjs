@@ -155,6 +155,9 @@ const CORE_REQUIRED_TEXT = [
     ['180 días', /180 días/],
     ['45 días', /45 días/],
     ['gestor de contraseñas', /gestor de contraseñas/],
+    // Both tenant domains must be named where the guide says which accounts may sign in.
+    ['untanglegrowth.com', /untanglegrowth\.com/],
+    ['untangle.es', /(?<![\w.-])untangle\.es/],
 ];
 
 const ALLOWED_SCOPE_TOKENS = new Set(['User.Read', 'Calendars.Read']);
@@ -239,6 +242,18 @@ function coreGuideChecks(checker, text) {
     checker.check(
         publicClientLines.every((line) => /\bNo\b/.test(line) && !/=\s*(?:Yes|Sí)\b/.test(line)),
         'toda línea con "Allow public client flows" debe indicar = No'
+    );
+
+    // Decision of 2026-10-19: tenant-wide access. Without Entra P1 a group cannot be assigned, so
+    // "Assignment required?" stays off and guests are rejected later, in code.
+    const assignmentLines = lines.filter((line) => line.includes('Assignment required?'));
+    checker.check(
+        assignmentLines.length > 0 &&
+            assignmentLines.every(
+                (line) => /[=:]\s*No\b/.test(line) && !/=\s*(?:Yes|Sí)\b/.test(line)
+            ),
+        'toda línea con "Assignment required?" debe indicar = No (acceso a todo el tenant, ' +
+            'sin asignación) y debe haber al menos una'
     );
 
     for (const [label, pattern] of CORE_REQUIRED_TEXT) {
@@ -381,8 +396,8 @@ const RUNBOOK_KEYS = [
     'Application (client) ID',
     'Redirect URIs',
     'Scopes delegados',
-    'Grupo asignado',
-    'Modo de asignación',
+    'Modo de acceso',
+    'Dominios',
     'Caducidad del secreto de producción',
     'Recordatorio de renovación',
     'Responsable del recordatorio',
@@ -392,15 +407,22 @@ const RUNBOOK_KEYS = [
 ];
 
 const PROD_SECRET_LABEL = 'Secreto de producción';
+const B_LINE_LABEL = 'Usuaria B';
+const TENANT_DOMAIN = 'untanglegrowth.com';
+
+const DOPPLER_KEYS = [
+    'SOLIDTIME_MICROSOFT_CLIENT_SECRET',
+    'SOLIDTIME_M365_SPIKE_CLIENT_SECRET',
+    'SOLIDTIME_MICROSOFT_TENANT_ID',
+    'SOLIDTIME_MICROSOFT_CLIENT_ID',
+];
 
 // Maps a Parte 10 checklist item marked "(runbook)" to the runbook slot(s) that hold it.
 const HAND_BACK_SLOTS = [
     { test: /directory \(tenant\) id/i, slots: [{ row: 'Directory (tenant) ID' }] },
     { test: /application \(client\) id/i, slots: [{ row: 'Application (client) ID' }] },
-    {
-        test: /grupo asignado/i,
-        slots: [{ row: 'Grupo asignado' }, { row: 'Modo de asignación' }],
-    },
+    { test: /modo de acceso/i, slots: [{ row: 'Modo de acceso' }] },
+    { test: /dominios/i, slots: [{ row: 'Dominios' }] },
     {
         test: /caducidad del secreto de producción/i,
         slots: [{ row: 'Caducidad del secreto de producción' }],
@@ -502,9 +524,19 @@ function finalRunbookChecks(checker, { values, verification, today }) {
         verification.includes('scopeMatches'),
         '## Verificación debe contener scopeMatches'
     );
+    const bLine = userBLine(verification) ?? '';
     checker.check(
-        verification.includes('AADSTS50105'),
-        '## Verificación debe contener AADSTS50105'
+        bLine !== '' && !pending(bLine),
+        `la línea "- ${B_LINE_LABEL}" de ## Verificación debe estar rellena (sin PENDIENTE): la ` +
+            'usuaria B inicia sesión sin pantalla de permisos y recibe los seis permisos'
+    );
+    checker.check(
+        /^tenant\b/i.test(stripMarkup(values.get('Modo de acceso') ?? '')),
+        'Modo de acceso debe ser tenant (acceso a todo el tenant, asignación requerida = No)'
+    );
+    checker.check(
+        (values.get('Dominios') ?? '').includes(TENANT_DOMAIN),
+        `Dominios debe contener ${TENANT_DOMAIN}`
     );
     const prodLine = prodSecretLine(verification) ?? '';
     checker.check(
@@ -514,6 +546,23 @@ function finalRunbookChecks(checker, { values, verification, today }) {
         `la línea "- ${PROD_SECRET_LABEL}:" debe llevar la fecha ISO de la comprobación del Valor, ` +
             '"Fase 2" y AADSTS7000215'
     );
+}
+
+function userBLine(verification) {
+    return normalize(verification)
+        .split('\n')
+        .find((line) => line.startsWith(`- ${B_LINE_LABEL}`));
+}
+
+function dopplerChecks(checker, section) {
+    checker.check(Boolean(section), 'falta el encabezado "## Doppler"');
+    if (!section) {
+        return;
+    }
+    checker.check(/\bvps\b/.test(section.body), '## Doppler debe nombrar el proyecto vps');
+    for (const key of DOPPLER_KEYS) {
+        checker.check(section.body.includes(key), `## Doppler debe nombrar la clave ${key}`);
+    }
 }
 
 function prodSecretLine(verification) {
@@ -558,6 +607,11 @@ function runRunbookChecks(text, { final, today, guideText }) {
         prodSecretLine(verification) !== undefined,
         `## Verificación debe contener una línea que empiece por "- ${PROD_SECRET_LABEL}:"`
     );
+    checker.check(
+        userBLine(verification) !== undefined,
+        `## Verificación debe contener una línea que empiece por "- ${B_LINE_LABEL}"`
+    );
+    dopplerChecks(checker, findSection(sections, 'Doppler'));
     checker.check(
         /spike/i.test(renewal) && renewal.includes('AADSTS7000222'),
         '## Renovación del secreto debe cubrir el secreto spike y mencionar AADSTS7000222'
