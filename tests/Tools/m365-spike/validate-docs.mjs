@@ -1,7 +1,7 @@
 // Offline doc gates for the Microsoft 365 setup phase. Zero dependencies (node: built-ins only).
 //
-//   node tests/Tools/m365-spike/validate-docs.mjs <guide|runbook|secrets|gitignore>
-//        [--final] [--file <path>]
+//   node tests/Tools/m365-spike/validate-docs.mjs <guide|runbook|secrets|gitignore|decisions>
+//        [--final] [--trace] [--file <path>] [--manifest <path>]
 //
 // Success prints "<sub>: OK (<n> checks)" and exits 0. Failure prints one
 // "FAIL <sub>: <reason>" line per failed check and exits 1. An unknown subcommand or flag prints
@@ -15,6 +15,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const GUIDE_PATH = 'docs/m365/GUIA-ADMIN-ENTRA.md';
 const RUNBOOK_PATH = 'docs/m365/RUNBOOK-entra-app.md';
 const SPIKE_DIR = 'tests/Tools/m365-spike';
+const DECISIONS_PATH = 'docs/m365/DECISIONS-graph.md';
+const FIXTURE_DIR = 'tests/Fixtures/M365/';
 
 export const SCOPES = 'openid profile email offline_access User.Read Calendars.Read';
 
@@ -752,8 +754,53 @@ export const DECISION_HEADINGS = [
     '## Corrections to earlier research',
 ];
 
-export function checkDecisions() {
-    return ['no implementado'];
+const READBASIC_HEADING = '## Calendars.ReadBasic (informational)';
+const FIXTURE_CITATION = /`(tests\/Fixtures\/M365\/[^`\s]+)`/g;
+const LEARN_URL = /https:\/\/learn\.microsoft\.com\//;
+
+function citedFixturePaths(text) {
+    return [...text.matchAll(FIXTURE_CITATION)].map((match) => match[1]);
+}
+
+function decisionStructureChecks(checker, text) {
+    const sections = splitSections(text);
+    for (const required of DECISION_HEADINGS) {
+        const matches = sections.filter((section) => `## ${section.heading}` === required);
+        checker.check(matches.length > 0, `falta el encabezado "${required}"`);
+        checker.check(
+            matches.length <= 1,
+            `el encabezado "${required}" aparece ${matches.length} veces`
+        );
+        if (matches.length !== 1) {
+            continue;
+        }
+        const lines = matches[0].body.split('\n');
+        checker.check(
+            lines.some((line) => /^Decision:\s*\S/.test(line)),
+            `la sección "${required}" no tiene ninguna línea "Decision:" con texto`
+        );
+        const informational = required === READBASIC_HEADING;
+        const evidence = lines.filter((line) => line.startsWith('Evidence:'));
+        checker.check(
+            evidence.some(
+                (line) =>
+                    citedFixturePaths(line).length > 0 || (informational && LEARN_URL.test(line))
+            ),
+            `la sección "${required}" necesita una línea "Evidence:" con una ruta entre comillas ` +
+                `invertidas bajo ${FIXTURE_DIR}` +
+                (informational ? ' o una URL https://learn.microsoft.com/' : '')
+        );
+    }
+}
+
+function runDecisionChecks(text) {
+    const checker = createChecker();
+    decisionStructureChecks(checker, normalize(text));
+    return checker.result();
+}
+
+export function checkDecisions(text) {
+    return runDecisionChecks(text).reasons;
 }
 
 // ---- CLI --------------------------------------------------------------------------------
@@ -802,8 +849,10 @@ const COMMANDS = {
     },
     decisions: {
         flags: { trace: 'boolean', file: 'string', manifest: 'string' },
-        run() {
-            return { reasons: checkDecisions(), total: 1 };
+        run({ root, flags }) {
+            const rel = flags.file ?? DECISIONS_PATH;
+            const text = readText(root, rel);
+            return text === null ? missingFile(rel) : runDecisionChecks(text);
         },
     },
     gitignore: {
@@ -817,7 +866,8 @@ const COMMANDS = {
 function usage() {
     return (
         `Usage: node ${SPIKE_DIR}/validate-docs.mjs ` +
-        `<${Object.keys(COMMANDS).join('|')}> [--final] [--file <path>]\n`
+        `<${Object.keys(COMMANDS).join('|')}> [--final] [--trace] [--file <path>] ` +
+        '[--manifest <path>]\n'
     );
 }
 
