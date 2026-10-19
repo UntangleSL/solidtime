@@ -34,6 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: Tenant Setup & Outlook Spike
+
 **Goal**: As a fork maintainer, I want to have Untangle's Entra app registration consented and real Outlook calendar responses recorded, so that sign-in and meeting sync are built on verified tenant facts instead of assumptions.
 **Mode:** mvp
 **Depends on**: Nothing (first phase), but blocked on the Untangle M365 admin actions listed below
@@ -44,15 +45,37 @@ Decimal phases appear between their surrounding integers in numeric order.
 - Create a client secret, record its expiry date, and hand over tenant ID, client ID and secret through a secure channel (never committed to the repo)
 - Confirm which Conditional Access policies (MFA, sign-in frequency, device rules) apply to the app, because they affect token refresh
 - Provide a test mailbox containing a single meeting, a recurring series with an edited occurrence, a cancelled meeting, a declined meeting, a moved meeting, a private meeting, an all-day event and a personal block without attendees
+
 **Requirements**: SETUP-01, SETUP-02, SETUP-03
 **Success Criteria** (what must be TRUE):
   1. A runbook in the repo documents the app registration (tenant ID, client ID, redirect URIs, scopes, assignment-required group, admin consent) and the client-secret expiry date, with a renewal reminder set at least 30 days before expiry.
   2. An Untangle account in the assigned group can authorize the app without a per-user consent prompt and receives exactly the configured delegated scopes; an account outside the group is blocked by Entra.
   3. Sanitized `calendarView` fixtures recorded from a real Untangle mailbox exist for all eight scenarios: single meeting, recurring occurrences plus an exception, cancelled, declined, moved, private, all-day, and a personal block without attendees.
   4. A decision document backed by those fixtures fixes the occurrence key, the series key (`seriesMasterId` vs alternatives) and exactly how cancelled, declined and moved meetings show up, including with immutable ids and across `@odata.nextLink` continuation requests.
-**Plans**: TBD
+
+**Plans**: 8 plans
+
+Plans:
+**Wave 1**
+- [ ] 01-01-PLAN.md — Spanish Entra admin guide, runbook skeleton and offline doc gates (wave 1)
+- [ ] 01-02-PLAN.md — Capture harness: PKCE loopback sign-in, auth checks, paged calendarView passes and experiments, offline fake-Microsoft tests (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 01-03-PLAN.md — Sanitizer, indexed fixture manifest and fixture gate with Node replay of the paged fixtures (wave 2)
+- [ ] 01-04-PLAN.md — Decision-document gate: `validate-docs.mjs decisions [--trace]` (wave 2)
+- [ ] 01-05-PLAN.md — Admin registers the app; assigned/outsider sign-in verification; production-secret Valor check; final runbook values (wave 2, admin checkpoint)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 01-06-PLAN.md — Ronda A scenarios captured, sanitized and committed (wave 3, admin checkpoint)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 01-07-PLAN.md — Ronda B mutations captured; full fixture set; PHPUnit replay test (wave 4, admin checkpoint)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 01-08-PLAN.md — Fixture-backed decision document; replay-gated spike cleanup; full phase gate (wave 5, admin checkpoint)
 
 ### Phase 2: Sign in with Microsoft
+
 **Goal**: As a member of the Untangle team, I want to sign in to solidtime with my Microsoft 365 account, so that I get in with my work identity and Entra MFA while email/password login keeps working for everyone else.
 **Mode:** mvp
 **Depends on**: Phase 1
@@ -63,11 +86,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Accounts from another tenant, guest (#EXT#) users and emails outside the allowed domain are rejected with a clear message; returning users are recognized by their Microsoft identity (`tid` + `oid`) rather than by email, and two simultaneous first sign-ins produce exactly one user.
   4. User sees their Microsoft connection status in their profile and can disconnect it; disconnecting deletes the stored Microsoft tokens and leaves all time entries untouched.
   5. Microsoft tokens exist only encrypted in the dedicated table and never appear in the `users` table, session, cache, logs, audits, API responses or Inertia props; the integration is configured purely through documented env vars, including the Dokploy setup for the HTTPS redirect URI and trusted proxies.
+
 **Plans**: TBD
 **Research focus**: SocialiteProviders registration on Laravel 13; Socialite under Octane (no driver state leaking between users); consent at login with admin consent pre-granted
 **UI hint**: yes
 
 ### Phase 3: Outlook Meetings in the Calendar
+
 **Goal**: As a team member tracking time, I want to see my Outlook meetings as suggestions in the solidtime calendar, so that I can see which meetings still need logging without switching to Outlook.
 **Mode:** mvp
 **Depends on**: Phase 2 (and the fixtures and decision document from Phase 1)
@@ -78,11 +103,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Ghost blocks cannot be dragged or resized, do not get in the way of creating or editing time entries, and are not counted in tracked time, totals, reports or exports; other members and managers never see another user's meetings.
   4. User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it.
   5. When Graph is slow, down or throttled, the calendar keeps working and shows a non-blocking status (last synced time, retry later); expired access tokens refresh silently, and when refresh is impossible (revoked, expired, Conditional Access) the user sees a "Reconnect Microsoft" prompt instead of an error.
+
 **Plans**: TBD
 **Research focus**: real `calendarView` response shapes vs the Phase 1 fixtures; `Retry-After` behaviour on Outlook 429s; pointer handling in `useSlotSelection.ts` / `useEventDrag.ts` so ghost blocks stay non-interactive
 **UI hint**: yes
 
 ### Phase 4: Assign Meetings to Projects
+
 **Goal**: As a team member tracking time, I want to turn one or several meeting suggestions into time entries on a project in a single action, so that logging meeting time takes one click instead of re-typing it from Outlook.
 **Mode:** mvp
 **Depends on**: Phase 3
@@ -93,10 +120,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Entries created from meetings obey the same permissions, billable rates, rounding, overlap checks and project-total recalculation as entries created manually.
   4. Double clicks or concurrent requests on the same meeting occurrence never create more than one time entry.
   5. Entries created from meetings stay normal time entries the user can edit or delete; deleting one brings the meeting back as a suggestion.
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 5: Recurring Meeting Rules
+
 **Goal**: As a team member with recurring meetings, I want to decide once which project a meeting series belongs to or that it should be ignored, so that each new occurrence needs only a one-click confirmation or nothing at all.
 **Mode:** mvp
 **Depends on**: Phase 4 (can run in parallel with Phase 6)
@@ -106,11 +135,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. User confirms a pre-assigned occurrence with one click, or confirms several at once (for example all visible in the week), and each confirmed occurrence becomes a time entry.
   3. From an occurrence of a recurring meeting, user creates "always ignore this series" and its occurrences stop appearing as suggestions.
   4. User can list, edit and delete their rules; editing or deleting a rule never changes time entries already created, and rules whose series no longer exists in Outlook are shown as orphaned.
+
 **Plans**: TBD
 **Research focus**: series identity in practice (series splits, edited occurrences) checked against the Phase 1 decision document
 **UI hint**: yes
 
 ### Phase 6: Out-of-Sync Detection
+
 **Goal**: As a team member who already logged a meeting, I want to be told when Outlook moves or cancels it and choose what happens to my entry, so that my logged hours are never changed behind my back.
 **Mode:** mvp
 **Depends on**: Phase 4 (can run in parallel with Phase 5)
@@ -119,11 +150,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. After a converted meeting is moved, cancelled or removed in Outlook and the calendar syncs, its time entry shows an "out of sync" marker describing what changed (old vs new time, or cancelled/removed).
   2. For a flagged entry, user can keep it as is (the flag clears), adjust it to the new Outlook time, or delete it.
   3. No sync ever modifies or deletes a time entry; editing an entry's time in solidtime alone never flags it, and Graph errors or outages never flag it.
+
 **Plans**: TBD
 **Research focus**: how cancelled, declined and removed meetings appear in `calendarView` vs direct event lookups, per the Phase 1 decision document
 **UI hint**: yes
 
 ### Phase 7: Hardening & Release
+
 **Goal**: As a fork maintainer, I want to ship the integration with complete data cleanup, impersonation safety, a clean off switch and a rehearsed upstream merge, so that the whole Untangle team can rely on it and the fork keeps taking solidtime updates.
 **Mode:** mvp
 **Depends on**: Phase 5, Phase 6
@@ -133,6 +166,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. An admin impersonating a user cannot see that user's meetings or trigger any Graph call with that user's Microsoft token.
   3. With the M365 env vars unset, solidtime shows no Microsoft sign-in button, no meeting suggestions, no Sync button and no rules management, and every core feature works as it does upstream.
   4. Fork code sits in its own module with a documented list of touched core files, and a rehearsed merge of current upstream solidtime conflicts only within that list.
+
 **Plans**: TBD
 
 ## Progress
@@ -142,7 +176,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tenant Setup & Outlook Spike | 0/TBD | Not started | - |
+| 1. Tenant Setup & Outlook Spike | 0/7 | Not started | - |
 | 2. Sign in with Microsoft | 0/TBD | Not started | - |
 | 3. Outlook Meetings in the Calendar | 0/TBD | Not started | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |

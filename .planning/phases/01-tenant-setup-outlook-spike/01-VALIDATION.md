@@ -19,7 +19,7 @@ created: "2026-10-19"
 |----------|-------|
 | **Framework** | Node built-in test runner (`node --test`) for offline gates; PHPUnit 12 for fixture replay (only where PHP exists) |
 | **Config file** | none for Node; `phpunit.xml` (Unit suite = `tests/Unit`) |
-| **Quick run command** | `node --test tests/Tools/m365-spike/` |
+| **Quick run command** | `node --test "tests/Tools/m365-spike/test/*.test.mjs"` |
 | **Full suite command** | `node tests/Tools/m365-spike/validate-docs.mjs all && node tests/Tools/m365-spike/validate-fixtures.mjs && npm run format:check` (+ `vendor/bin/phpunit --filter CalendarViewFixturesTest` where PHP exists) |
 | **Estimated runtime** | ~20 seconds |
 
@@ -27,7 +27,7 @@ created: "2026-10-19"
 
 ## Sampling Rate
 
-- **After every task commit:** `node --test tests/Tools/m365-spike/` + the validator subcommand for the touched artifact
+- **After every task commit:** `node --test "tests/Tools/m365-spike/test/*.test.mjs"` + the validator subcommand for the touched artifact
 - **After every plan wave:** full suite command
 - **Before `/gsd-verify-work`:** full suite green + human-verify checkpoints signed off
 - **Max feedback latency:** 30 seconds

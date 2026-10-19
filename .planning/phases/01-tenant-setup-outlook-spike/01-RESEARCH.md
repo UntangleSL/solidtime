@@ -623,18 +623,25 @@ record({ scenario, status: r.status, isCancelled: r.ok ? (await r.json()).isCanc
 | A13 | Event ids need URL-encoding in `GET /me/events/{id}` | Code Examples | 404 caused by bad encoding misread as "deleted"; harness should encode |
 | A14 | Test users need an Exchange Online licence and untangle.es-style UPNs are available | Guide spec | Plan blocked waiting for licences (Open Question 2) |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does Untangle have Entra ID P1/P2 (e.g. Microsoft 365 Business Premium) for group-based assignment?**
    - What we know: group assignment requires P1/P2; nested groups unsupported [CITED].
    - Unclear: the Untangle licence mix.
    - Recommendation: first line of the guide's Preparación asks the admin to check; fallback is assigning individual users (note this changes D-01's "assign the staff group" wording; escalate to the PO if needed).
+   - RESOLVED: 01-01 Task 2 (guide Preparación asks the admin to check P1/P2; Parte 5 documents the individual-assignment fallback) and 01-01 Task 1 (runbook key `Modo de asignación`); 01-05 Task 2 records the mode and, if `individual`, the licensing note for the PO.
 2. **Can the admin create two licensed test users (A in the group, B outside, both non-admin)?** Needs Exchange Online mailboxes. Recommendation: make this checkpoint 0; if licences are scarce, B can reuse an existing non-admin colleague's account only for organizer duties and the blocked test, never as a data source.
+   - RESOLVED: the plans require two dedicated licensed, non-admin test users (01-01 Task 2 Preparación, 01-01 Task 3 Parte 7); 01-05 Task 1 is the blocking checkpoint and fails closed (`capture.mjs status` must show both login hints SET and B blocked with AADSTS50105) if they do not exist. The shared-colleague fallback was not adopted, because B organizes meetings that end up in the fixtures.
 3. **Will Conditional Access let test user A sign in from the developer machine?** Unknown until the admin runs What If / the sign-in log. Recommendation: Round A is blocked on this; if blocked, the admin decides (device registration, named-location exception) outside this repo.
+   - RESOLVED: 01-01 Task 3 (guide Parte 6: policy review, What If and sign-in-log Conditional Access tab); 01-05 Task 1 troubleshooting (AADSTS53000/53003 = admin decides) and Task 2 (runbook row `Acceso condicional`); Round A (01-06) is gated behind 01-05.
 4. **Which Outlook client will the admin use (web / new Outlook / classic)?** Affects attendee-side cancel/decline representation and Spanish menu names. Recommendation: standardize on Outlook on the web; record the client in the manifest.
+   - RESOLVED: Outlook on the web standardized in 01-01 Task 3 (Parte 8); the client is recorded through `M365_SPIKE_OUTLOOK_CLIENT` (01-02 Task 3) into manifest `outlook_client` (01-03 Task 2) and reported in the 01-06 Task 1 resume signal.
 5. **Do the Spanish Outlook steps read correctly?** The guide's Outlook labels (*Repetir*, *Este evento*, *Todos los eventos de la serie*, *Todo el día*, *Privado*, *Rechazar*) come from Spanish support pages via search summaries [CITED: support.microsoft.com es-es pages], not from a live UI. Recommendation: human-verify checkpoint where the admin dry-runs Parts 8-9 and corrects labels.
+   - RESOLVED: every Spanish label carries its English label in parentheses (01-01 Tasks 2-3, enforced by `checkGuide`); 01-01 Task 3 has the dry-run human-check of Partes 6-9; the admin reports mismatching labels in the Parte 10 hand-back and 01-05 Task 2 applies the corrections.
 6. **Which production domain goes into the redirect URI?** Needs the Dokploy public domain before the guide is handed over (placeholder `<dominio-dokploy>` otherwise). Recommendation: first plan task asks the PO; the admin can add the URI later without blocking the rest.
+   - RESOLVED: the guide uses the marked token `<DOMINIO-DOKPLOY>` (01-01 Task 2); the PO decides the domain in 01-05 Task 1 step 1; 01-05 Task 2 replaces the token in the guide and runbook, and `runbook --final` (01-01 Task 1) rejects the token.
 7. **Is `Calendars.ReadBasic` worth an optional second consent to test?** Decision is informational (D-06). Recommendation: answer from documentation; skip the live test unless free.
+   - RESOLVED: documentation-only, no live test; answered in the `## Calendars.ReadBasic (informational)` section of the decision document (01-08 Task 1), whose presence is enforced by the decisions gate (01-04 Task 1); PROJECT.md keeps `Calendars.Read`.
 
 ## Environment Availability
 
