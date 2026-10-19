@@ -17,6 +17,7 @@ const RUNBOOK_PATH = 'docs/m365/RUNBOOK-entra-app.md';
 const SPIKE_DIR = 'tests/Tools/m365-spike';
 const DECISIONS_PATH = 'docs/m365/DECISIONS-graph.md';
 const FIXTURE_DIR = 'tests/Fixtures/M365/';
+const MANIFEST_PATH = `${FIXTURE_DIR}manifest.json`;
 
 export const SCOPES = 'openid profile email offline_access User.Read Calendars.Read';
 
@@ -793,14 +794,141 @@ function decisionStructureChecks(checker, text) {
     }
 }
 
-function runDecisionChecks(text) {
+// Claim: <SID>.<dotted.path> = <value> | Claim: experiments.<dotted.path> = <value>
+const CLAIM_LINE = /^Claim: (experiments|[A-Za-z0-9]+)\.([A-Za-z0-9_.-]+) = (.+)$/;
+const MAX_QUOTED_VALUE = 200;
+
+function collectStrings(value, found) {
+    if (typeof value === 'string') {
+        found.add(value);
+    } else if (value !== null && typeof value === 'object') {
+        for (const item of Object.values(value)) {
+            collectStrings(item, found);
+        }
+    }
+    return found;
+}
+
+// Every fixture path the manifest knows: the files index, each scenario's own files and the
+// Round B lookup file (all relative to tests/Fixtures/M365/).
+function indexManifestPaths(manifest) {
+    const known = collectStrings(manifest.files, new Set());
+    const ownFiles = new Map();
+    for (const [sid, entry] of Object.entries(manifest.scenarios ?? {})) {
+        const own = collectStrings(
+            [entry?.round_a?.files, entry?.round_b?.files, entry?.round_b?.lookup?.file],
+            new Set()
+        );
+        ownFiles.set(sid, own);
+        own.forEach((file) => known.add(file));
+    }
+    return { known, ownFiles };
+}
+
+function resolveManifestValue(start, dotted) {
+    let current = start;
+    for (const key of dotted.split('.')) {
+        if (current === null || typeof current !== 'object' || !Object.hasOwn(current, key)) {
+            return { found: false };
+        }
+        current = current[key];
+    }
+    return { found: true, value: current };
+}
+
+function claimMatches(actual, literal) {
+    let expected;
+    try {
+        expected = JSON.parse(literal);
+    } catch {
+        return typeof actual === 'string' && actual === literal;
+    }
+    return JSON.stringify(actual) === JSON.stringify(expected);
+}
+
+function quoteValue(value) {
+    const json = JSON.stringify(value) ?? 'undefined';
+    return json.length > MAX_QUOTED_VALUE ? `${json.slice(0, MAX_QUOTED_VALUE)}...` : json;
+}
+
+function claimChecks(checker, text, manifest) {
+    const claimedScenarios = new Set();
+    const scenarios = manifest.scenarios ?? {};
+    for (const raw of text.split('\n')) {
+        if (!raw.startsWith('Claim:')) {
+            continue;
+        }
+        const line = raw.trimEnd();
+        const match = CLAIM_LINE.exec(line);
+        if (!match) {
+            checker.check(false, `línea "Claim:" con sintaxis no válida: ${line}`);
+            continue;
+        }
+        const [, subject, dotted, literal] = match;
+        let start = manifest.experiments;
+        if (subject !== 'experiments') {
+            if (!Object.hasOwn(scenarios, subject)) {
+                checker.check(false, `${line}: el escenario ${subject} no existe en el manifiesto`);
+                continue;
+            }
+            claimedScenarios.add(subject);
+            start = scenarios[subject];
+        }
+        const resolved = resolveManifestValue(start, dotted);
+        if (!resolved.found) {
+            checker.check(false, `${line}: la ruta ${dotted} no existe en el manifiesto`);
+            continue;
+        }
+        checker.check(
+            claimMatches(resolved.value, literal.trim()),
+            `${line}: no coincide con el manifiesto (valor: ${quoteValue(resolved.value)})`
+        );
+    }
+    return claimedScenarios;
+}
+
+function decisionTraceChecks(checker, text, { manifest, exists }) {
+    if (manifest === null || typeof manifest !== 'object') {
+        checker.check(false, 'no hay un manifiesto legible: no se puede comprobar la trazabilidad');
+        return;
+    }
+    const { known, ownFiles } = indexManifestPaths(manifest);
+    const citations = [...new Set(citedFixturePaths(text))];
+    for (const cited of citations) {
+        checker.check(exists(cited), `la ruta citada ${cited} no existe`);
+        checker.check(
+            known.has(cited.slice(FIXTURE_DIR.length)),
+            `la ruta citada ${cited} no figura en el manifiesto`
+        );
+    }
+    const claimed = claimChecks(checker, text, manifest);
+    for (const [sid, entry] of Object.entries(manifest.scenarios ?? {})) {
+        if (entry?.synthetic === true) {
+            continue;
+        }
+        const own = ownFiles.get(sid);
+        checker.check(
+            claimed.has(sid) || citations.some((cited) => own.has(cited.slice(FIXTURE_DIR.length))),
+            `el escenario ${sid} no se cita (ni por ruta ni por una línea "Claim:")`
+        );
+    }
+}
+
+function runDecisionChecks(text, { trace = false, manifest = null, exists } = {}) {
     const checker = createChecker();
-    decisionStructureChecks(checker, normalize(text));
+    const normalized = normalize(text);
+    decisionStructureChecks(checker, normalized);
+    if (trace) {
+        decisionTraceChecks(checker, normalized, {
+            manifest,
+            exists: exists ?? ((rel) => existsSync(path.resolve(REPO_ROOT, rel))),
+        });
+    }
     return checker.result();
 }
 
-export function checkDecisions(text) {
-    return runDecisionChecks(text).reasons;
+export function checkDecisions(text, opts = {}) {
+    return runDecisionChecks(text, opts).reasons;
 }
 
 // ---- CLI --------------------------------------------------------------------------------
@@ -808,6 +936,22 @@ export function checkDecisions(text) {
 function readText(root, rel) {
     const absolute = path.resolve(root, rel);
     return existsSync(absolute) ? readFileSync(absolute, 'utf8') : null;
+}
+
+function loadManifest(root, rel) {
+    const text = readText(root, rel);
+    if (text === null) {
+        return { problem: `no se encuentra ${rel}` };
+    }
+    try {
+        const manifest = JSON.parse(text);
+        if (manifest !== null && typeof manifest === 'object' && !Array.isArray(manifest)) {
+            return { manifest };
+        }
+    } catch {
+        // falls through to the same message as a manifest that is not an object
+    }
+    return { problem: `${rel} no es un manifiesto JSON válido` };
 }
 
 function missingFile(rel) {
@@ -852,7 +996,17 @@ const COMMANDS = {
         run({ root, flags }) {
             const rel = flags.file ?? DECISIONS_PATH;
             const text = readText(root, rel);
-            return text === null ? missingFile(rel) : runDecisionChecks(text);
+            const loaded = flags.trace ? loadManifest(root, flags.manifest ?? MANIFEST_PATH) : null;
+            const opts = {
+                trace: Boolean(loaded?.manifest),
+                manifest: loaded?.manifest ?? null,
+                exists: (cited) => existsSync(path.resolve(root, cited)),
+            };
+            const result = text === null ? missingFile(rel) : runDecisionChecks(text, opts);
+            if (!loaded?.problem) {
+                return result;
+            }
+            return { reasons: [...result.reasons, loaded.problem], total: result.total + 1 };
         },
     },
     gitignore: {
