@@ -36,7 +36,8 @@ function addDays(iso, days) {
 const HAND_BACK_ITEMS = [
     '- [ ] Directory (tenant) ID (runbook)',
     '- [ ] Application (client) ID (runbook)',
-    '- [ ] Nombre del grupo asignado o "individual" (runbook)',
+    '- [ ] Modo de acceso: todo el tenant (asignación requerida = No) (runbook)',
+    '- [ ] Dominios del tenant (runbook)',
     '- [ ] Fecha de caducidad del secreto de producción (runbook)',
     '- [ ] Fecha del recordatorio y rol responsable (runbook)',
     '- [ ] Fecha de la comprobación del Valor del secreto de producción (runbook)',
@@ -74,7 +75,9 @@ function buildGuide({ handBack = HAND_BACK_ITEMS } = {}) {
         '',
         '## Preparación',
         '',
-        'Un Administrador global se salta la asignación (AADSTS50105). Se necesita Entra ID P1 o P2.',
+        'Dominios: untanglegrowth.com (primario) y untangle.es.',
+        'Sin Entra ID P1 o P2 no hay grupos; si alguien activa la asignación, el error es AADSTS50105.',
+        'Un Administrador global también puede configurar.',
         '',
         parte(
             1,
@@ -119,7 +122,7 @@ function buildGuide({ handBack = HAND_BACK_ITEMS } = {}) {
             'Aplicación empresarial',
             [
                 'Aplicaciones empresariales (Enterprise apps).',
-                '¿Asignación requerida? (Assignment required?) = Sí.',
+                '¿Asignación requerida? (Assignment required?) = No.',
                 'Usuarios y grupos (Users and groups).',
                 '¿Habilitado para que los usuarios inicien sesión? (Enabled for users to sign-in?)',
             ].join('\n')
@@ -170,8 +173,8 @@ const KEYS = [
     'Application (client) ID',
     'Redirect URIs',
     'Scopes delegados',
-    'Grupo asignado',
-    'Modo de asignación',
+    'Modo de acceso',
+    'Dominios',
     'Caducidad del secreto de producción',
     'Recordatorio de renovación',
     'Responsable del recordatorio',
@@ -202,8 +205,8 @@ function finalValues({ expiry = addDays(TODAY, 180), reminderGap = 45 } = {}) {
             '`https://solidtime.test/auth/microsoft/callback`',
             '`http://localhost/auth/microsoft/callback`',
         ].join('<br>'),
-        'Grupo asignado': 'staff-solidtime',
-        'Modo de asignación': 'grupo',
+        'Modo de acceso': 'tenant',
+        Dominios: 'untanglegrowth.com (primario), untangle.es',
         'Caducidad del secreto de producción': expiry,
         'Recordatorio de renovación': addDays(expiry, -reminderGap),
         'Responsable del recordatorio': 'Administrador M365',
@@ -223,23 +226,44 @@ const FINAL_PROD_LINE =
     '(tres primeros caracteres). El token se obtiene en Fase 2, en el primer inicio de ' +
     'sesión de Microsoft en Dokploy; AADSTS7000215 significa valor incorrecto.';
 
+const PENDING_B_LINE =
+    '- Usuaria B (sin rol de administrador, no asignada) inicia sesión sin pantalla de permisos ' +
+    'y recibe los seis permisos: PENDIENTE';
+
+const FINAL_B_LINE =
+    '- Usuaria B (sin rol de administrador, no asignada) inicia sesión sin pantalla de permisos ' +
+    'y recibe los seis permisos: sí, comprobado el 2026-10-20';
+
 const FINAL_VERIFICATION = [
     '- Fecha: 2026-10-20',
     '- scopeMatches: true',
-    '- Usuaria fuera del grupo bloqueada con AADSTS50105.',
+    FINAL_B_LINE,
     FINAL_PROD_LINE,
 ].join('\n');
 
 const PENDING_VERIFICATION = [
     '- Fecha: PENDIENTE',
-    '- scopeMatches: PENDIENTE (AADSTS50105 para la usuaria B)',
+    '- scopeMatches: PENDIENTE',
+    PENDING_B_LINE,
     PENDING_PROD_LINE,
+].join('\n');
+
+const DOPPLER_SECTION = [
+    'Proyecto `vps`, configuraciones `dev` y `prd`.',
+    '',
+    '| Configuración | Clave |',
+    '| --- | --- |',
+    '| prd | `SOLIDTIME_MICROSOFT_CLIENT_SECRET` |',
+    '| dev | `SOLIDTIME_M365_SPIKE_CLIENT_SECRET` |',
+    '| dev, prd | `SOLIDTIME_MICROSOFT_TENANT_ID` |',
+    '| dev, prd | `SOLIDTIME_MICROSOFT_CLIENT_ID` |',
 ].join('\n');
 
 function buildRunbook({
     values = skeletonValues(),
     verification = PENDING_VERIFICATION,
     renewal = 'Procedimiento. ### Secreto spike: si caduca (AADSTS7000222) se crea otro spike.',
+    doppler = DOPPLER_SECTION,
 } = {}) {
     const rows = KEYS.map((key) => `| ${key} | ${values[key]} |`);
     return [
@@ -254,6 +278,10 @@ function buildRunbook({
         '## Verificación',
         '',
         verification,
+        '',
+        '## Doppler',
+        '',
+        doppler,
         '',
         '## Renovación del secreto',
         '',
@@ -382,6 +410,34 @@ test('guide: Parte 9 must cover the Ronda B scenarios and Parte 10 the notificat
     assert.ok(checkGuide(noNotice).some((reason) => reason.includes('Ronda B lista')));
 });
 
+test('guide: Assignment required? = Sí or = Yes fails (tenant-wide access is the decision)', () => {
+    for (const wrong of ['= Sí.', '= Yes.']) {
+        const broken = GUIDE.replace(
+            '(Assignment required?) = No.',
+            `(Assignment required?) ${wrong}`
+        );
+        const reasons = checkGuide(broken);
+        assert.ok(
+            reasons.some((reason) => reason.includes('Assignment required?')),
+            wrong
+        );
+    }
+});
+
+test('guide: every Assignment required? line must say No and the label must exist', () => {
+    const extra = `${GUIDE}\nActiva ¿Asignación requerida? (Assignment required?) = Sí.\n`;
+    assert.ok(checkGuide(extra).some((reason) => reason.includes('Assignment required?')));
+    const unlabelled = GUIDE.replaceAll('Assignment required?', 'Asignación');
+    assert.ok(checkGuide(unlabelled).some((reason) => reason.includes('Assignment required?')));
+});
+
+test('guide: both tenant domains must be named', () => {
+    const noPrimary = GUIDE.replaceAll('untanglegrowth.com', 'otro-dominio.test');
+    assert.ok(checkGuide(noPrimary).some((reason) => reason.includes('untanglegrowth.com')));
+    const noSecond = GUIDE.replaceAll('untangle.es', 'otro-dominio.test');
+    assert.ok(checkGuide(noSecond).some((reason) => reason.includes('untangle.es')));
+});
+
 // ---- runbook ----------------------------------------------------------------------------
 
 test('runbook: the skeleton with PENDIENTE passes', () => {
@@ -427,6 +483,69 @@ test('runbook: --final whose secreto de producción line lacks an ISO date or Fa
         const reasons = checkRunbook(text, finalOpts());
         assert.ok(reasons.some((reason) => reason.includes('Secreto de producción')));
     }
+});
+
+test('runbook: the old group and assignment-mode rows are unknown rows now', () => {
+    const text = buildRunbook().replace(
+        '| Modo de acceso | PENDIENTE |',
+        '| Grupo asignado | PENDIENTE |\n| Modo de asignación | PENDIENTE |\n| Modo de acceso | PENDIENTE |'
+    );
+    const reasons = checkRunbook(text, skeletonOpts());
+    assert.ok(reasons.some((reason) => reason.includes('Grupo asignado')));
+});
+
+test('runbook: --final needs the B success line filled, not PENDIENTE', () => {
+    const text = buildRunbook({
+        values: finalValues(),
+        verification: FINAL_VERIFICATION.replace(FINAL_B_LINE, PENDING_B_LINE),
+    });
+    const reasons = checkRunbook(text, finalOpts());
+    assert.ok(reasons.some((reason) => reason.includes('Usuaria B')));
+});
+
+test('runbook: --final does not require AADSTS50105 any more', () => {
+    assert.equal(FINAL_VERIFICATION.includes('AADSTS50105'), false);
+    const text = buildRunbook({ values: finalValues(), verification: FINAL_VERIFICATION });
+    assert.deepEqual(checkRunbook(text, finalOpts()), []);
+});
+
+test('runbook: a Verificación without the Usuaria B line fails in both modes', () => {
+    const verification = PENDING_VERIFICATION.replace(`${PENDING_B_LINE}\n`, '');
+    const skeleton = buildRunbook({ verification });
+    assert.ok(checkRunbook(skeleton, skeletonOpts()).some((r) => r.includes('Usuaria B')));
+    const final = buildRunbook({
+        values: finalValues(),
+        verification: FINAL_VERIFICATION.replace(`${FINAL_B_LINE}\n`, ''),
+    });
+    assert.ok(checkRunbook(final, finalOpts()).some((r) => r.includes('Usuaria B')));
+});
+
+test('runbook: --final needs Dominios with untanglegrowth.com and Modo de acceso tenant', () => {
+    const noDomain = buildRunbook({
+        values: { ...finalValues(), Dominios: 'untangle.es' },
+        verification: FINAL_VERIFICATION,
+    });
+    assert.ok(checkRunbook(noDomain, finalOpts()).some((r) => r.includes('untanglegrowth.com')));
+    const noMode = buildRunbook({
+        values: { ...finalValues(), 'Modo de acceso': 'individual' },
+        verification: FINAL_VERIFICATION,
+    });
+    assert.ok(checkRunbook(noMode, finalOpts()).some((r) => r.includes('Modo de acceso')));
+});
+
+test('runbook: a Doppler section naming vps and the four SOLIDTIME_ keys is required', () => {
+    const missingSection = buildRunbook().replace('## Doppler', '## Otra cosa');
+    assert.ok(checkRunbook(missingSection, skeletonOpts()).some((r) => r.includes('Doppler')));
+    const missingKey = buildRunbook({
+        doppler: DOPPLER_SECTION.replace('SOLIDTIME_MICROSOFT_CLIENT_ID', 'OTRA'),
+    });
+    assert.ok(
+        checkRunbook(missingKey, skeletonOpts()).some((r) =>
+            r.includes('SOLIDTIME_MICROSOFT_CLIENT_ID')
+        )
+    );
+    const noProject = buildRunbook({ doppler: DOPPLER_SECTION.replace('`vps`', 'otro') });
+    assert.ok(checkRunbook(noProject, skeletonOpts()).some((r) => r.includes('vps')));
 });
 
 test('runbook: a renewal section without AADSTS7000222 fails in both modes', () => {
@@ -497,7 +616,7 @@ test('scanSecrets: GUID rules for the runbook rows and the fixtures', () => {
     ];
     assert.deepEqual(scanSecrets(ok), []);
     const bad = [
-        { path: 'docs/m365/RUNBOOK-entra-app.md', text: `| Grupo asignado | ${GUID_A} |` },
+        { path: 'docs/m365/RUNBOOK-entra-app.md', text: `| Modo de acceso | ${GUID_A} |` },
         { path: 'tests/Fixtures/M365/me.json', text: GUID_B },
         { path: 'docs/m365/GUIA-ADMIN-ENTRA.md', text: runbookRow },
     ];
