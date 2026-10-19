@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Tenant Setup & Outlook Spike
 status: executing
-stopped_at: 01-06 Task 2 blocked at gate (S8); fixtures not committed
-last_updated: "2026-10-19T16:31:40.091Z"
+stopped_at: Completed 01-06-PLAN.md; Round A fixtures committed, waiting for owner to apply Round B (S2, S3, S4, S5, S5b)
+last_updated: "2026-10-19T16:37:30.445Z"
 last_activity: 2026-10-19
 last_activity_desc: Phase 1 execution started
-state_head: 77d555a47fb52d0b49f900c8fe5ea0eabda90f91
+state_head: 781626415248e3d33e98495dac8fbb77b13afc04
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 1 (Tenant Setup & Outlook Spike) — EXECUTING
-Plan: 6 of 8
+Plan: 7 of 8
 Status: Ready to execute
 Last activity: 2026-10-19 — Phase 1 execution started
 
@@ -61,6 +61,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P03 | 31min | 3 tasks | 8 files |
 | Phase 1 P04 | 4min | 2 tasks | 2 files |
 | Phase 1 P05 | 25min | 2 tasks | 3 files |
+| Phase 01 P06 | 25min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -88,6 +89,8 @@ Recent decisions affecting current work:
 - [Phase 1]: [01-05] Tenant-wide access (2026-10-19): enterprise app Assignment required = No (Business Standard has no Entra P1, guests rejected in code, AUTH-02); the B check is now auth --as B (non-admin Alejandro Cava signs in without consent prompt, six scopes) replacing auth --expect-blocked; harness reads Doppler vps/dev SOLIDTIME_* names, never SOLIDTIME_MICROSOFT_CLIENT_SECRET (auth/capture exit 2, status warns); runbook rows Modo de acceso/Dominios replace Grupo asignado/Modo de asignación
 - [Phase 1]: 01-05: Production secret expires in 24 months (2028-10-19), deviating from the 180-day guide recommendation; single admin, secret only in Doppler vps/prd; reminder 2028-09-04
 - [Phase 1]: 01-05: Access mode tenant (Assignment required = No); Security Defaults MFA is the Conditional Access state; admin consent on behalf of the organisation avoids consent prompts for ordinary users
+- [Phase 01]: 01-06: Graph/Outlook web lists the organizer as sole attendee of an event created without invitees (S7, S8); the S8 gate accepts [] or [organizer only] and rejects any other attendee; evidence: personal blocks, organizer appears as sole attendee
+- [Phase 01]: 01-06: S8 created Tue 2026-10-27 instead of Wed 2026-10-28 accepted; optional scenarios S7b and E1-E6 not created
 
 ### Pending Todos
 
@@ -98,7 +101,6 @@ None yet.
 - [Phase 1]: Blocked on the Untangle M365 admin: app registration, admin consent, tenant-wide access (Assignment required = No), client-secret handover, Conditional Access check, and real mailboxes (A and B) with sample meetings
 - [Phase 1]: Series identity, cancelled/moved representation and immutable-id stability stay unknown until real fixtures exist; the findings may change the Phase 3-6 schema
 - [Phase 2]: SocialiteProviders on Laravel 13 and Socialite under Octane need a smoke test before building on them
-- 01-06: Round A gate fails on S8 (attendees contains A). Owner must fix S8 in A's mailbox, developer re-runs capture --round A, then Task 2 repeats. Round B must not start.
 
 ## Deferred Items
 
@@ -110,6 +112,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19T16:31:40.058Z
-Stopped at: 01-06 Task 2 blocked at gate (S8); fixtures not committed
-Resume file: .planning/phases/01-tenant-setup-outlook-spike/01-06-SUMMARY.md
+Last session: 2026-10-19T16:37:30.416Z
+Stopped at: Completed 01-06-PLAN.md; Round A fixtures committed, waiting for owner to apply Round B (S2, S3, S4, S5, S5b)
+Resume file: None
