@@ -71,6 +71,9 @@ export async function startFakeMicrosoft({
     grantedScope = FAKE_SCOPE,
     issueRefreshToken = true,
     idTokenTid,
+    masters = {},
+    rejectExperimentSelect = false,
+    instancesPageSize = 2,
 } = {}) {
     const tenantId = randomUUID();
     const clientId = randomUUID();
@@ -183,34 +186,72 @@ export async function startFakeMicrosoft({
             calendarView(req, url, select, res);
             return;
         }
+        const eventRoute = /^\/me\/events\/([^/]+)(\/instances)?$/.exec(route);
+        if (eventRoute) {
+            // The id arrives percent-encoded in a single path segment (/ + = are escaped).
+            const id = decodeURIComponent(eventRoute[1]);
+            if (eventRoute[2]) {
+                instances(req, url, id, select, res);
+            } else {
+                singleEvent(req, id, select, res);
+            }
+            return;
+        }
         sendJson(res, 404, { error: { code: 'ErrorInvalidRequest' } });
     };
 
-    const calendarView = (req, url, select, res) => {
+    const currentEvents = () => (pagesByRound[fake.round] ?? []).flat();
+
+    // Honours the Prefer headers the way Graph does: UTC times and immutable ids only when asked.
+    const shape = (event, req, select) => {
         const prefer = headerValues(req.rawHeaders, 'prefer').join(', ');
         const immutable = prefer.includes('IdType="ImmutableId"');
         const utc = prefer.includes('outlook.timezone="UTC"');
-        const pages = pagesByRound[fake.round] ?? [];
-        const index = Number(url.searchParams.get('$skiptoken') ?? 0);
-        const events = (pages[index] ?? []).map((event) => {
-            const shaped = { ...event, id: immutable ? event.id : `mutable-${event.id}` };
-            for (const key of ['start', 'end']) {
-                if (shaped[key]) {
-                    shaped[key] = {
-                        ...shaped[key],
-                        timeZone: utc ? 'UTC' : 'Romance Standard Time',
-                    };
-                }
+        const shaped = { ...event, id: immutable ? event.id : `mutable-${event.id}` };
+        for (const key of ['start', 'end']) {
+            if (shaped[key]) {
+                shaped[key] = { ...shaped[key], timeZone: utc ? 'UTC' : 'Romance Standard Time' };
             }
-            return project(shaped, select);
-        });
-        const body = { '@odata.context': 'fake', value: events };
+        }
+        return project(shaped, select);
+    };
+
+    const pageResponse = (url, pages, index, req, select, res) => {
+        const value = (pages[index] ?? []).map((event) => shape(event, req, select));
+        const body = { '@odata.context': 'fake', value };
         if (index + 1 < pages.length) {
             const next = new URL(url);
             next.searchParams.set('$skiptoken', String(index + 1));
             body['@odata.nextLink'] = next.toString();
         }
         sendJson(res, 200, body);
+    };
+
+    const calendarView = (req, url, select, res) => {
+        if (rejectExperimentSelect && select?.includes('lastModifiedDateTime')) {
+            sendJson(res, 400, { error: { code: 'ErrorInvalidProperty', message: 'rejected' } });
+            return;
+        }
+        const pages = pagesByRound[fake.round] ?? [];
+        pageResponse(url, pages, Number(url.searchParams.get('$skiptoken') ?? 0), req, select, res);
+    };
+
+    const singleEvent = (req, id, select, res) => {
+        const found = currentEvents().find((event) => event.id === id) ?? masters[id];
+        if (!found) {
+            sendJson(res, 404, { error: { code: 'ErrorItemNotFound', message: 'gone' } });
+            return;
+        }
+        sendJson(res, 200, shape(found, req, select));
+    };
+
+    const instances = (req, url, id, select, res) => {
+        const occurrences = currentEvents().filter((event) => event.seriesMasterId === id);
+        const pages = [];
+        for (let i = 0; i < occurrences.length; i += instancesPageSize) {
+            pages.push(occurrences.slice(i, i + instancesPageSize));
+        }
+        pageResponse(url, pages, Number(url.searchParams.get('$skiptoken') ?? 0), req, select, res);
     };
 
     const server = createServer(async (req, res) => {

@@ -216,15 +216,59 @@ function writeJson(dir, name, data) {
     writeFileSync(path.join(dir, name), `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
 }
 
+const isSuccess = (status) => status >= 200 && status <= 299;
+
+// First failing status, else the first success; null when nothing was requested.
+function overallStatus(statuses, isData = isSuccess) {
+    if (statuses.length === 0) {
+        return null;
+    }
+    return statuses.find((status) => !isData(status)) ?? statuses.find(isSuccess) ?? statuses[0];
+}
+
+// One meta.json entry per raw file: calendarView passes, series (masters + instances) and the
+// Round B lookups (one entry per Round A id, 404 counted as data).
 function summarizeDocument(doc) {
+    if (doc.masters) {
+        const pages = doc.instances.flatMap((entry) => entry.pages);
+        const statuses = [
+            ...doc.masters.map((master) => master.request.status),
+            ...pages.map((page) => page.request.status),
+        ];
+        return {
+            status: overallStatus(statuses),
+            pages: pages.length,
+            events: countEvents(pages),
+        };
+    }
+    if (doc.lookups) {
+        const statuses = doc.lookups.map((lookup) => lookup.request.status);
+        return {
+            status: overallStatus(statuses, (status) => isSuccess(status) || status === 404),
+            pages: 0,
+            events: doc.lookups.length,
+        };
+    }
     const pages = doc.pages ?? [];
-    const failed = pages.find((page) => page.request.status < 200 || page.request.status > 299);
-    const last = pages.at(-1);
     return {
-        status: failed ? failed.request.status : (last?.request.status ?? null),
+        status: overallStatus(pages.map((page) => page.request.status)),
         pages: pages.length,
         events: countEvents(pages),
     };
+}
+
+// Round B looks up every id Round A saw, so Round A's raw capture must exist before signing in.
+function loadRoundAIds(rawDir) {
+    let document;
+    try {
+        const file = path.join(rawDir, 'roundA', 'prod-select.json');
+        document = JSON.parse(readFileSync(file, 'utf8'));
+    } catch {
+        throw new Error('Round A raw capture not found: run "capture --round A" first');
+    }
+    return (document.pages ?? []).flatMap((page) =>
+        (page.body?.value ?? []).map((event) => event.id).filter((id) => typeof id === 'string')
+    );
 }
 
 // ---- commands ---------------------------------------------------------------------------
@@ -243,6 +287,7 @@ export async function runCapture({
     assertEndpoints(endpoints);
     const window = parseWindow(env);
     const loginHint = requireEnv(env, 'M365_SPIKE_LOGIN_HINT');
+    const roundAIds = round === 'B' ? loadRoundAIds(rawDir) : undefined;
 
     const session = await signIn({ env, endpoints, loginHint, openUrl, timeoutMs });
     const me = await fetchMe(session.accessToken, endpoints.graphBase);
@@ -267,6 +312,7 @@ export async function runCapture({
         graphBase: endpoints.graphBase,
         window,
         round,
+        roundAIds,
     });
     const capturedAt = new Date().toISOString();
     writeJson(roundDir, 'me.json', me);
