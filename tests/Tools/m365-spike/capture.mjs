@@ -288,6 +288,19 @@ export async function runCapture({
     return meta;
 }
 
+// RED stubs: replaced by the real commands in the GREEN commit.
+export async function runAuth() {
+    return {};
+}
+
+export async function runExpectBlocked() {
+    return {};
+}
+
+export function runStatus() {
+    return '';
+}
+
 // ---- CLI --------------------------------------------------------------------------------
 
 const USAGE = `Usage: node --env-file=tests/Tools/m365-spike/.env.local tests/Tools/m365-spike/capture.mjs <command>
