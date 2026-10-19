@@ -85,7 +85,8 @@ se niega a ejecutarse.
 Procedimiento sin corte de servicio (Entra admite dos secretos a la vez):
 
 1. Con el secreto antiguo todavía vigente, crea un secreto nuevo (guía, Parte 4 a): descripción
-   `produccion-AAAA-MM`, 180 días, y copia el Valor al gestor de contraseñas.
+   `produccion-AAAA-MM`, 24 meses (decisión de la propietaria, 2026-10-19), y copia el Valor al gestor de
+   contraseñas (Doppler `vps`, entorno `prd`, `SOLIDTIME_MICROSOFT_CLIENT_SECRET`). Recordatorio 45 días antes.
 2. Comprueba el Valor el mismo día (tres primeros caracteres, no es el Id. de secreto).
 3. Actualiza la variable de entorno del secreto en Dokploy y redespliega.
 4. Verifica que el inicio de sesión con Microsoft funciona.
