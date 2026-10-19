@@ -217,7 +217,9 @@ function coreGuideChecks(checker, text) {
         checker.check(text.includes(uri), `falta el URI de redirección ${uri}`);
     }
     const callbackHosts = [
-        ...text.matchAll(/https:\/\/(<DOMINIO-DOKPLOY>|[A-Za-z0-9.-]+)\/auth\/microsoft\/callback/g),
+        ...text.matchAll(
+            /https:\/\/(<DOMINIO-DOKPLOY>|[A-Za-z0-9.-]+)\/auth\/microsoft\/callback/g
+        ),
     ].map((match) => match[1]);
     checker.check(
         callbackHosts.some(
@@ -641,10 +643,7 @@ function handBackChecks(checker, { values, verification, guideText }) {
         .split('\n')
         .map((line) => /^\s*[-*]\s*\[[ xX]\]\s*(.*\(runbook\).*)$/.exec(line)?.[1])
         .filter(Boolean);
-    checker.check(
-        items.length > 0,
-        'la Parte 10 de la guía no tiene ningún elemento "(runbook)"'
-    );
+    checker.check(items.length > 0, 'la Parte 10 de la guía no tiene ningún elemento "(runbook)"');
     for (const item of items) {
         const mapping = HAND_BACK_SLOTS.find((entry) => entry.test.test(item));
         if (!mapping) {

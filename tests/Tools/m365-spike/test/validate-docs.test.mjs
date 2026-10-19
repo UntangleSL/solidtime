@@ -355,8 +355,10 @@ test('guide: public client flows enabled fails', () => {
 
 test('guide: spike URI line with TEMPORAL passes and with RETIRADO passes', () => {
     assert.deepEqual(checkGuide(GUIDE), []);
-    const retired = GUIDE.replace(`${SPIKE_URI}\` TEMPORAL`, `${SPIKE_URI}\` RETIRADO 2026-11-20`)
-        .replace('(TEMPORAL)', '(RETIRADO 2026-11-20)');
+    const retired = GUIDE.replace(
+        `${SPIKE_URI}\` TEMPORAL`,
+        `${SPIKE_URI}\` RETIRADO 2026-11-20`
+    ).replace('(TEMPORAL)', '(RETIRADO 2026-11-20)');
     assert.ok(retired.includes('RETIRADO 2026-11-20'));
     assert.deepEqual(checkGuide(retired), []);
 });
@@ -452,6 +454,19 @@ test('runbook: --final with PENDIENTE fails', () => {
 test('runbook: a complete final runbook passes', () => {
     const text = buildRunbook({ values: finalValues(), verification: FINAL_VERIFICATION });
     assert.deepEqual(checkRunbook(text, finalOpts()), []);
+});
+
+test('runbook: --final accepts the spike URI and secret kept in Entra with a deferred cleanup', () => {
+    // Owner decision 2026-10-19: Entra cleanup is deferred until production (Phase 7), so the
+    // temporary URI stays in the table and the guide keeps its TEMPORAL lines.
+    const values = finalValues();
+    values['Redirect URIs'] +=
+        '<br>`http://localhost/m365-spike/callback` (TEMPORAL: eliminación APLAZADA hasta producción)';
+    values['Caducidad del secreto spike'] =
+        `${addDays(TODAY, 180)} (APLAZADO hasta producción, pendiente en Fase 7)`;
+    const text = buildRunbook({ values, verification: FINAL_VERIFICATION });
+    assert.deepEqual(checkRunbook(text, finalOpts()), []);
+    assert.deepEqual(checkGuide(GUIDE), []);
 });
 
 test('runbook: reminder 29 days before expiry fails and 45 days passes', () => {
@@ -1041,8 +1056,12 @@ test('cli: decisions fails loudly and names the file when the document does not 
     assert.match(result.stdout, /^FAIL decisions: .*does-not-exist\.md/m);
 });
 
-test('cli: decisions without --file fails on a tree without the document and names it', () => {
-    const result = run('decisions');
+test('cli: decisions fails and names DECISIONS-graph.md when that file is missing', async () => {
+    // Does not depend on the repository tree: the document exists since Phase 1 plan 01-08.
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'validate-docs-'));
+    const result = run('decisions', '--file', join(dir, 'DECISIONS-graph.md'));
     assert.equal(result.status, 1);
     assert.match(result.stdout, /^FAIL decisions: .*DECISIONS-graph\.md/m);
 });

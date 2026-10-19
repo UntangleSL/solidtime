@@ -151,15 +151,12 @@ test('a wrong client secret fails with the status and AADSTS code, never the sec
     const { fake, rawDir, logged } = await setup(t);
     const wrong = 'wrong-secret-value-for-the-test';
 
-    await assert.rejects(
-        capture(fake, rawDir, { env: { M365_CLIENT_SECRET: wrong } }),
-        (error) => {
-            assert.match(error.message, /HTTP 401/);
-            assert.match(error.message, /AADSTS7000215/);
-            assert.equal(error.message.includes(wrong), false);
-            return true;
-        }
-    );
+    await assert.rejects(capture(fake, rawDir, { env: { M365_CLIENT_SECRET: wrong } }), (error) => {
+        assert.match(error.message, /HTTP 401/);
+        assert.match(error.message, /AADSTS7000215/);
+        assert.equal(error.message.includes(wrong), false);
+        return true;
+    });
     assert.equal(logged.join('\n').includes(wrong), false);
 });
 

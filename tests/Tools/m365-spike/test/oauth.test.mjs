@@ -1,14 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-    existsSync,
-    mkdirSync,
-    mkdtempSync,
-    readFileSync,
-    rmSync,
-    writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -44,8 +37,7 @@ async function setup(t, options = {}) {
 }
 
 const endpointsOf = (fake) => ({ authorityBase: fake.authorityBase, graphBase: fake.graphBase });
-const env = (fake, extra = {}) =>
-    buildEnv(fake, { M365_SPIKE_B_LOGIN_HINT: B_HINT, ...extra });
+const env = (fake, extra = {}) => buildEnv(fake, { M365_SPIKE_B_LOGIN_HINT: B_HINT, ...extra });
 
 // ---- pure helpers -----------------------------------------------------------------------
 
@@ -255,10 +247,7 @@ test('runAuth --as B: a non-assigned non-admin Member gets the six scopes, no co
 test('runAuth --as B: without the B hint nothing is contacted and the variable is named', async (t) => {
     const { fake, rawDir } = await setup(t, { user: userB });
 
-    await assert.rejects(
-        authAsB(fake, rawDir, { env: buildEnv(fake) }),
-        /M365_SPIKE_B_LOGIN_HINT/
-    );
+    await assert.rejects(authAsB(fake, rawDir, { env: buildEnv(fake) }), /M365_SPIKE_B_LOGIN_HINT/);
 
     assert.equal(fake.authorizeRequests.length, 0);
 });
