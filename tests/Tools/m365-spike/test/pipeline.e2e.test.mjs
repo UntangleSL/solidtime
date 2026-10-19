@@ -18,6 +18,13 @@ import { runCapture } from '../capture.mjs';
 import { buildLeakSet, findLeaks } from '../lib/sanitize.mjs';
 import { REQUIRED_SCENARIOS, findUntaggedEvents } from '../lib/scenarios.mjs';
 import { run } from '../sanitize.mjs';
+import {
+    checkLeaks,
+    checkSchema,
+    checkSemantic,
+    main as validateFixtures,
+    replayReport,
+} from '../validate-fixtures.mjs';
 import { buildEnv, followRedirects, makeEvent, startFakeMicrosoft } from './fake-microsoft.mjs';
 
 const SPIKE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -629,6 +636,49 @@ test('an event without a scenario tag in any output fails the run', () => {
     } finally {
         rmSync(outDir, { recursive: true, force: true });
     }
+});
+
+test('a link to a foreign host in an output fails the run even though it is no raw value', () => {
+    const outDir = temp('host');
+    try {
+        const plant = (written) => {
+            const document = written.get('scenarios/S1.roundA.json');
+            document.value[0].webLink = 'https://evil.example.org/page';
+        };
+
+        const result = sanitize(ctx.dirs.raw, outDir, { mutateOutputs: plant });
+
+        assert.equal(result.exitCode, 1);
+        assert.match(result.stderr, /scenarios\/S1\.roundA\.json.*URL host/);
+        assert.equal(result.stderr.includes('evil.example.org'), false);
+        assert.deepEqual(listFiles(outDir), []);
+    } finally {
+        rmSync(outDir, { recursive: true, force: true });
+    }
+});
+
+test('the fixture gate accepts the sanitizer output and replays every complete page sequence', () => {
+    const { dirs } = ctx;
+
+    assert.deepEqual(checkSchema(dirs.out), []);
+    assert.deepEqual(checkSemantic(dirs.out), []);
+    assert.deepEqual(checkLeaks(dirs.out, { rawDir: dirs.raw }), []);
+    const report = replayReport(dirs.out);
+    assert.deepEqual(report.reasons, []);
+    const completePasses = ['prod-select', 'prefer-separate', 'no-immutableid'];
+    completePasses.push('experiment-select', 'full-shape');
+    const expected = [];
+    for (const [round, requests, events] of [
+        ['A', 16, 13],
+        ['B', 14, 11],
+    ]) {
+        completePasses.forEach((pass) => expected.push({ round, pass, requests, events }));
+    }
+    assert.deepEqual(report.passes, expected);
+    const gate = io();
+    const args = ['--dir', dirs.out, '--raw', dirs.raw];
+    assert.equal(validateFixtures(args, gate.streams), 0, gate.out.stdout);
+    assert.match(gate.out.stdout, /validate-fixtures: OK \(\d+ checks\)/);
 });
 
 test('the CLI names a missing Round A file, rejects odd arguments and never echoes them', () => {

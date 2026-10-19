@@ -8,18 +8,16 @@
 // identifying value of the raw data. On any hit nothing stays on disk (previously generated
 // outputs are removed too), the report names the output file and the kind of field only, never
 // the value, and the exit code is 1. Success prints counts only.
-import {
-    existsSync,
-    mkdirSync,
-    readFileSync,
-    readdirSync,
-    realpathSync,
-    rmSync,
-    writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { buildLeakSet, createSanitizer, findLeaks, loadOrCreateSalt } from './lib/sanitize.mjs';
+import {
+    buildLeakSet,
+    collectRawDocuments,
+    createSanitizer,
+    findLeaks,
+    loadOrCreateSalt,
+} from './lib/sanitize.mjs';
 import {
     OUTPUT_DIRS,
     OUTPUT_FILES,
@@ -29,12 +27,12 @@ import {
     extractRound,
     findUntaggedEvents,
 } from './lib/scenarios.mjs';
+import { scanText } from './validate-fixtures.mjs';
 
 const SPIKE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SPIKE_DIR, '..', '..', '..');
 const DEFAULT_RAW_DIR = path.join(SPIKE_DIR, 'raw');
 const DEFAULT_OUT_DIR = path.join(REPO_ROOT, 'tests', 'Fixtures', 'M365');
-const NOT_RAW_DATA = ['salt', 'identity-map.json'];
 const USAGE = 'Usage: node tests/Tools/m365-spike/sanitize.mjs [--raw <dir>] [--out <dir>]';
 
 const serialize = (data) => `${JSON.stringify(data, null, 2)}\n`;
@@ -74,20 +72,6 @@ function loadRound(rawDir, round) {
     };
 }
 
-// Every JSON document under raw/, except the salt and the identity map.
-function collectRawDocuments(dir) {
-    const docs = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-            docs.push(...collectRawDocuments(full));
-        } else if (entry.name.endsWith('.json') && !NOT_RAW_DATA.includes(entry.name)) {
-            docs.push(readJsonIfPresent(full));
-        }
-    }
-    return docs;
-}
-
 function cleanOutputs(outDir) {
     for (const name of OUTPUT_DIRS) {
         rmSync(path.join(outDir, name), { recursive: true, force: true });
@@ -102,11 +86,14 @@ const isInside = (child, parent) => {
     return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 };
 
-// The leak guard: raw values in any output, and any event without a scenario tag.
+// The leak guard: raw values in any output, any event without a scenario tag, and the generic
+// patterns of the fixture gate (foreign e-mail, link host, GUID, token), which need no raw data.
 function findProblems(written, leakSet) {
     const problems = [];
     for (const [file, data] of written) {
-        const hits = findLeaks(serialize(data), leakSet);
+        const text = serialize(data);
+        problems.push(...scanText(file, text).map((reason) => `${reason} (in the output)`));
+        const hits = findLeaks(text, leakSet);
         const kinds = new Set(hits.map((hit) => leakSet.kinds.get(hit)));
         for (const kind of [...kinds].sort()) {
             problems.push(`${file}: a ${kind} value from the raw data is in the output`);

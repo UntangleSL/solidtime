@@ -9,7 +9,7 @@
 //  - Collections (calendarView pages) keep only events whose subject carries a scenario tag
 //    "[M365-TEST <ID>]". An event without the tag never reaches an output, not even pseudonymized.
 import { createHmac, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { SCENARIO_TAG, scenarioIdOf } from './scenarios.mjs';
 
@@ -773,6 +773,27 @@ export function buildLeakSet(rawDocs) {
         walk(doc, '');
     }
     return leakSet;
+}
+
+const NOT_RAW_DATA = ['salt', 'identity-map.json'];
+
+// Every JSON document under a raw directory, except the salt and the identity map. Throws when a
+// file is not valid JSON, naming the file.
+export function collectRawDocuments(dir) {
+    const docs = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            docs.push(...collectRawDocuments(full));
+        } else if (entry.name.endsWith('.json') && !NOT_RAW_DATA.includes(entry.name)) {
+            try {
+                docs.push(JSON.parse(readFileSync(full, 'utf8')));
+            } catch {
+                throw new Error(`${full} is not valid JSON`);
+            }
+        }
+    }
+    return docs;
 }
 
 // A plain substring scan (case-insensitive for e-mails). Returns the leaked values, so a caller

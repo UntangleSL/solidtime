@@ -107,9 +107,12 @@ function makeFixtures() {
     const scenarios = {};
     for (const sid of REQUIRED_SCENARIOS) {
         const entry = { extra: false, synthetic: false, observed: `Observed ${sid}.` };
-        const sides = [['a', 'A', ROUND_A], ['b', 'B', ROUND_B]];
+        const sides = [
+            ['a', 'A', ROUND_A],
+            ['b', 'B', ROUND_B],
+        ];
         for (const [key, round, data] of sides) {
-            const value = data[sid];
+            const value = structuredClone(data[sid]);
             const list = [];
             if (value.length > 0) {
                 files[scenarioFile(sid, round)] = { scenario: sid, round, value };
@@ -134,10 +137,11 @@ function makeFixtures() {
     }
 
     for (const round of ['A', 'B']) {
-        const events = Object.values(round === 'A' ? ROUND_A : ROUND_B).flat();
+        const events = structuredClone(Object.values(round === 'A' ? ROUND_A : ROUND_B).flat());
         const chunks = [events.slice(0, 4), events.slice(4, 8), events.slice(8)];
         const bodies = chunks.map((value, i) => {
-            const body = { '@odata.context': `${GRAPH}/$metadata#users('${FAKE_GUID}')/calendarView` };
+            const context = `${GRAPH}/$metadata#users('${FAKE_GUID}')/calendarView`;
+            const body = { '@odata.context': context };
             if (i + 1 < chunks.length) {
                 body['@odata.nextLink'] = link(i + 2);
             }
@@ -414,33 +418,31 @@ test('semantic: an S2 series needs DST evidence and an edited occurrence in roun
 });
 
 test('semantic: the single-scenario facts are checked', (t) => {
-    const setA = (fixtures, sid, events) => {
-        fixtures.files[scenarioFile(sid, 'A')].value = events;
+    const replaceA = (sid, overrides) => (fixtures) => {
+        fixtures.files[scenarioFile(sid, 'A')].value = [event(sid, overrides)];
     };
     const cases = [
-        ['S1', /S1 round A/, (fixtures) => setA(fixtures, 'S1', [event('S1', { isOrganizer: true })])],
-        ['S1b', /S1b round A/, (fixtures) => setA(fixtures, 'S1b', [event('S1b', { attendees: [] })])],
-        ['S6', /S6 round A/, (fixtures) => setA(fixtures, 'S6', [event('S6', { isOrganizer: true })])],
-        ['S6b', /S6b round A/, (fixtures) => setA(fixtures, 'S6b', [event('S6b', { sensitivity: '' })])],
-        ['S7', /S7 round A/, (fixtures) => setA(fixtures, 'S7', [event('S7', { attendees: [] })])],
-        ['S8', /S8 round A/, (fixtures) => setA(fixtures, 'S8', [event('S8', { isOrganizer: true })])],
-        ['S5', /S5 round B/, (fixtures) => {
-            setRoundB(fixtures, 'S5', ROUND_A.S5, { id_equal: null });
-        }],
-        ['S5b', /S5b round B/, (fixtures) => {
-            fixtures.manifest.scenarios.S5b.round_b.lookup = null;
-        }],
+        ['S1', replaceA('S1', { isOrganizer: true })],
+        ['S1b', replaceA('S1b', { attendees: [] })],
+        ['S6', replaceA('S6', { isOrganizer: true })],
+        ['S6b', replaceA('S6b', { sensitivity: '' })],
+        ['S7', replaceA('S7', { attendees: [] })],
+        ['S8', replaceA('S8', { isOrganizer: true })],
+        ['S5', (fixtures) => setRoundB(fixtures, 'S5', ROUND_A.S5, { id_equal: null })],
+        ['S5b', (fixtures) => (fixtures.manifest.scenarios.S5b.round_b.lookup = null)],
     ];
 
-    for (const [sid, pattern, change] of cases) {
+    for (const [sid, change] of cases) {
         const reasons = checkSemantic(fixtureDir(t, change));
+        const pattern = new RegExp(`^${sid} round [AB]`);
         assert.ok(hasReason(reasons, pattern), `${sid}: ${reasons.join(' | ')}`);
     }
 });
 
 test('semantic: an optional scenario is checked only when listed', (t) => {
     const addE2 = (fixtures, masters) => {
-        const events = masters.map((id, i) => event('E2', { id: fakeId(`E2${i}`), seriesMasterId: id }));
+        const make = (id, i) => event('E2', { id: fakeId(`E2${i}`), seriesMasterId: id });
+        const events = masters.map(make);
         fixtures.files[scenarioFile('E2', 'B')] = { scenario: 'E2', round: 'B', value: events };
         fixtures.manifest.scenarios.E2 = {
             extra: true,
@@ -472,12 +474,14 @@ const withS1 = (fixtures, change) => {
 
 test('leaks: an e-mail, a link host, a GUID, a token or an id that is not allowed fails', (t) => {
     const jwt = ['eyJ', 'hbGciOiJub25lIn0', '.eyJ', 'zdWIiOiIxIn0'].join('');
+    const foreign = mail('x', 'contoso.com');
+    const stray = guidOf('1b9e7a52', '66c1', '4d3f', 'a0b7', '5c2d9e41f8aa');
     const cases = [
-        [/e-mail/, (event) => (event.organizer = { emailAddress: { address: mail('x', 'contoso.com') } })],
-        [/URL host/, (event) => (event.webLink = 'https://outlook.office365.com/owa/item')],
-        [/GUID/, (event) => (event.extra = guidOf('1b9e7a52', '66c1', '4d3f', 'a0b7', '5c2d9e41f8aa'))],
-        [/JWT/, (event) => (event.extra = jwt)],
-        [/id value/, (event) => (event.id = 'AAMkAGI2NTRealLookingId=')],
+        [/e-mail/, (item) => (item.organizer = { emailAddress: { address: foreign } })],
+        [/URL host/, (item) => (item.webLink = 'https://outlook.office365.com/owa/item')],
+        [/GUID/, (item) => (item.extra = stray)],
+        [/JWT/, (item) => (item.extra = jwt)],
+        [/id value/, (item) => (item.id = 'AAMkAGI2NTRealLookingId=')],
     ];
 
     for (const [pattern, change] of cases) {
@@ -499,7 +503,8 @@ test('leaks: body keys, untagged events and README content are checked too', (t)
         withS1(fixtures, (_, document) => document.value.push(event('S1', { subject: 'Event 1' })));
     });
     const readme = fixtureDir(t);
-    write(readme, 'README.md', `Contact ${mail('someone', 'contoso.com')} at https://contoso.com/x\n`);
+    const text = `Contact ${mail('someone', 'contoso.com')} at https://contoso.com/x\n`;
+    write(readme, 'README.md', text);
     const goodReadme = fixtureDir(t);
     write(goodReadme, 'README.md', `See ${GRAPH}/me/calendarView and person-1@example.test\n`);
 
@@ -515,7 +520,8 @@ test('leaks: a value from the raw data found in an output fails, a missing raw d
     const secretName = 'Ana Garcia Ruiz';
     const rawDir = mkdtempSync(path.join(os.tmpdir(), 'm365-raw-'));
     t.after(() => rmSync(rawDir, { recursive: true, force: true }));
-    write(rawDir, 'roundA/prod-select.json', { pages: [{ body: { value: [{ displayName: secretName }] } }] });
+    const doc = { pages: [{ body: { value: [{ displayName: secretName }] } }] };
+    write(rawDir, 'roundA/prod-select.json', doc);
     write(rawDir, 'salt', 'ignored\n');
     const clean = fixtureDir(t);
     const dirty = fixtureDir(t, (fixtures) => {
@@ -541,7 +547,8 @@ test('replay: a three-page pass replays as three requests and sums its events', 
 
     assert.deepEqual(report.reasons, []);
     const eventCount = Object.values(ROUND_A).flat().length;
-    assert.deepEqual(report.passes, [{ round: 'A', pass: 'prod-select', requests: 3, events: eventCount }]);
+    const expected = { round: 'A', pass: 'prod-select', requests: 3, events: eventCount };
+    assert.deepEqual(report.passes, [expected]);
 });
 
 test('replay: a middle page without a next link fails', (t) => {
@@ -585,10 +592,7 @@ test('replay: a pass marked incomplete is skipped, an unlisted page file is igno
     const report = replayReport(dir, 'A');
 
     assert.deepEqual(report.reasons, []);
-    assert.deepEqual(
-        report.passes.map((entry) => entry.pass),
-        ['prod-select']
-    );
+    assert.deepEqual(report.passes.map((entry) => entry.pass), ['prod-select']);
 });
 
 test('replay: a pages count that differs from the requests file fails', (t) => {
