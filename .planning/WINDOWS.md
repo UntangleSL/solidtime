@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 4
+open_count: 5
 waived_count: 0
 fixed_count: 0
-total_count: 4
-last_updated: 2026-10-19T15:13:36.278Z
+total_count: 5
+last_updated: 2026-10-19T15:21:50.752Z
 ---
 
 # Broken Windows Ledger
@@ -19,6 +19,7 @@ last_updated: 2026-10-19T15:13:36.278Z
 | 2 | 1 | stub | docs/m365/GUIA-ADMIN-ENTRA.md |  | Guide uses the marked token <DOMINIO-DOKPLOY> until the product owner decides the Dokploy public domain (replaced in 01-05) | open |  | 2026-10-19T14:02:26.604Z |  |
 | 3 | 1 | unrun-verify | tests/Tools/m365-spike/capture.mjs |  | 01-02: npx --no-install prettier --check on tests/Tools/m365-spike/**/*.mjs not run (no node_modules on this host); files formatted by hand to .prettierrc.json, watch CI npm-format-check | open |  | 2026-10-19T14:17:44.637Z |  |
 | 4 | 1 | unrun-verify | tests/Tools/m365-spike/validate-fixtures.mjs |  | 01-03: npx --no-install prettier --check on the seven new .mjs files not run (no node_modules on this host); formatted by hand to .prettierrc.json, watch CI npm-format-check | open |  | 2026-10-19T15:13:36.278Z |  |
+| 5 | 1 | unrun-verify | tests/Tools/m365-spike/validate-docs.mjs |  | 01-04: npx --no-install prettier --check on validate-docs.mjs and its test not run (no node_modules on this host); formatted by hand to .prettierrc.json, watch CI npm-format-check | open |  | 2026-10-19T15:21:50.752Z |  |
 
 ````json
 [
@@ -71,6 +72,19 @@ last_updated: 2026-10-19T15:13:36.278Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-10-19T15:13:36.278Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 5,
+    "kind": "unrun-verify",
+    "phase": "1",
+    "file": "tests/Tools/m365-spike/validate-docs.mjs",
+    "line": null,
+    "description": "01-04: npx --no-install prettier --check on validate-docs.mjs and its test not run (no node_modules on this host); formatted by hand to .prettierrc.json, watch CI npm-format-check",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-19T15:21:50.752Z",
     "resolved_at": null,
     "milestone": null
   }

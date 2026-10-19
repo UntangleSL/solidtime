@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Tenant Setup & Outlook Spike
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-10-19T15:15:15.474Z"
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-10-19T15:22:39.700Z"
 last_activity: 2026-10-19
 last_activity_desc: Phase 1 execution started
-state_head: afd32bf13a2bd40239a7d0fc6a09fe4e0121f350
+state_head: dd08bde827dfa4b61aee329c95001e4632bc6297
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 1 (Tenant Setup & Outlook Spike) — EXECUTING
-Plan: 4 of 8
+Plan: 5 of 8
 Status: Ready to execute
 Last activity: 2026-10-19 — Phase 1 execution started
 
@@ -59,6 +59,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P01 | 25min | 3 tasks | 4 files |
 | Phase 1 P02 | 12min | 3 tasks | 9 files |
 | Phase 1 P03 | 31min | 3 tasks | 8 files |
+| Phase 1 P04 | 4min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,7 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-03: events without a [M365-TEST <ID>] subject tag are dropped from every committed fixture (pages, series, lookups), enforced in the sanitizer, the sanitize CLI guard and validate-fixtures --leaks
 - [Phase 1]: 01-03: next link and request URLs are rewritten onto the graph.microsoft.com origin with SANITIZED-PAGE-<n> tokens, so fixtures replay as Http::sequence pages and a fake host never leaks
 - [Phase 1]: 01-03: series master files are { scenario, round, value } and instances files { scenario, round, pages }; the manifest files index is the only source of fixture file lists
+- [Phase 1]: 01-04: A line starting with Claim: that breaks the syntax fails; unknown scenarios and paths fail instead of being skipped
 
 ### Pending Todos
 
@@ -103,6 +105,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19T15:15:06.307Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-10-19T15:22:39.670Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None
