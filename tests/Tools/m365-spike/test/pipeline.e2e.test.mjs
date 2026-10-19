@@ -246,9 +246,10 @@ const PLANTED = [
 ];
 
 const SANITIZE_ENV = {
+    // Mixed on purpose: the sanitizer accepts the M365_* names and the Doppler names.
     M365_SPIKE_LOGIN_HINT: OWNER,
-    M365_SPIKE_BLOCKED_LOGIN_HINT: BLOCKED,
-    M365_SPIKE_OUTLOOK_CLIENT: 'web',
+    SOLIDTIME_M365_SPIKE_B_LOGIN_HINT: BLOCKED,
+    SOLIDTIME_M365_SPIKE_OUTLOOK_CLIENT: 'web',
 };
 
 // ---- helpers ----------------------------------------------------------------------------

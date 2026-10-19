@@ -441,6 +441,11 @@ test('a nextLink to another host is never followed with the bearer token', async
     assert.equal(pages[1].errorCode, 'next_link_origin_mismatch');
 });
 
+test('ENV_NAMES replaces the blocked hint with the B hint', () => {
+    assert.ok(ENV_NAMES.includes('M365_SPIKE_B_LOGIN_HINT'));
+    assert.equal(ENV_NAMES.includes('M365_SPIKE_BLOCKED_LOGIN_HINT'), false);
+});
+
 test('.env.local.example lists exactly the harness variables and no value', () => {
     const template = readFileSync(path.join(SPIKE_DIR, '.env.local.example'), 'utf8');
 

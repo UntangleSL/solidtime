@@ -63,7 +63,8 @@ function defaultUser() {
 }
 
 // pagesByRound: { A: [[event, ...], [event, ...]], B: [...] } — one inner array per Graph page.
-// mode: 'ok' | 'not-blocked' (authorize issues a code) | 'blocked' (AADSTS50105 on the redirect).
+// mode: 'ok' (authorize issues a code) | 'blocked' (AADSTS50105 on the redirect, as when
+// assignment is turned on for the app and the user is not assigned).
 export async function startFakeMicrosoft({
     pagesByRound = { A: [] },
     user = defaultUser(),
