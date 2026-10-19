@@ -1088,8 +1088,16 @@ const SMALL_MANIFEST = JSON.stringify({
     experiments: { prefer_combined: { status: 200 } },
 });
 
+// Explicit missing paths keep this independent of the committed fixtures and of the real document.
 test('cli: decisions --trace on a tree without document and manifest names both files', () => {
-    const result = run('decisions', '--trace');
+    const result = run(
+        'decisions',
+        '--trace',
+        '--file',
+        'nope/DECISIONS-graph.md',
+        '--manifest',
+        'nope/manifest.json'
+    );
     assert.equal(result.status, 1);
     assert.match(result.stdout, /^FAIL decisions: .*DECISIONS-graph\.md/m);
     assert.match(result.stdout, /^FAIL decisions: .*manifest\.json/m);

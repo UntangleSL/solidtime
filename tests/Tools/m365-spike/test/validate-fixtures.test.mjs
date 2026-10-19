@@ -458,7 +458,7 @@ test('semantic: S8 accepts an organizer-only attendee list and rejects any other
         [],
         'the organizer as sole attendee passes'
     );
-    const shouting = { emailAddress: { name: 'x', address: 'PERSON-A@Example.Test' } };
+    const shouting = { emailAddress: { name: 'x', address: mail('PERSON-A', 'Example.Test') } };
     assert.deepEqual(
         s8Reasons(withS8({ attendees: [attendee(shouting)] })),
         [],
