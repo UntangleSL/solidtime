@@ -53,7 +53,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Sanitized `calendarView` fixtures recorded from a real Untangle mailbox exist for all eight scenarios: single meeting, recurring occurrences plus an exception, cancelled, declined, moved, private, all-day, and a personal block without attendees.
   4. A decision document backed by those fixtures fixes the occurrence key, the series key (`seriesMasterId` vs alternatives) and exactly how cancelled, declined and moved meetings show up, including with immutable ids and across `@odata.nextLink` continuation requests.
 
-**Plans**: 6/8 plans executed
+**Plans**: 7/8 plans executed
 
 Plans:
 **Wave 1**
@@ -69,7 +69,7 @@ Plans:
 - [x] 01-06-PLAN.md — Ronda A scenarios captured, sanitized and committed (wave 3, admin checkpoint)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 01-07-PLAN.md — Ronda B mutations captured; full fixture set; PHPUnit replay test (wave 4, admin checkpoint)
+- [x] 01-07-PLAN.md — Ronda B mutations captured; full fixture set; PHPUnit replay test (wave 4, admin checkpoint)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 01-08-PLAN.md — Fixture-backed decision document; replay-gated spike cleanup; full phase gate (wave 5, admin checkpoint)
@@ -176,7 +176,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tenant Setup & Outlook Spike | 6/8 | In Progress | - |
+| 1. Tenant Setup & Outlook Spike | 7/8 | In Progress | - |
 | 2. Sign in with Microsoft | 0/TBD | Not started | - |
 | 3. Outlook Meetings in the Calendar | 0/TBD | Not started | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |

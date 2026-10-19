@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Tenant Setup & Outlook Spike
 status: executing
-stopped_at: Completed 01-06-PLAN.md; Round A fixtures committed, waiting for owner to apply Round B (S2, S3, S4, S5, S5b)
-last_updated: "2026-10-19T16:37:30.445Z"
+stopped_at: Completed 01-07-PLAN.md
+last_updated: "2026-10-19T17:08:53.401Z"
 last_activity: 2026-10-19
 last_activity_desc: Phase 1 execution started
-state_head: 781626415248e3d33e98495dac8fbb77b13afc04
+state_head: e1cb75ee83a262ae77552e03f958fc953870075a
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 6
+  completed_plans: 7
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 1 (Tenant Setup & Outlook Spike) — EXECUTING
-Plan: 7 of 8
+Plan: 8 of 8
 Status: Ready to execute
 Last activity: 2026-10-19 — Phase 1 execution started
 
@@ -62,6 +62,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P04 | 4min | 2 tasks | 2 files |
 | Phase 1 P05 | 25min | 2 tasks | 3 files |
 | Phase 01 P06 | 25min | 2 tasks | 6 files |
+| Phase 1 P07 | 20min | 3 tasks | 143 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,8 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-05: Access mode tenant (Assignment required = No); Security Defaults MFA is the Conditional Access state; admin consent on behalf of the organisation avoids consent prompts for ordinary users
 - [Phase 01]: 01-06: Graph/Outlook web lists the organizer as sole attendee of an event created without invitees (S7, S8); the S8 gate accepts [] or [organizer only] and rejects any other attendee; evidence: personal blocks, organizer appears as sole attendee
 - [Phase 01]: 01-06: S8 created Tue 2026-10-27 instead of Wed 2026-10-28 accepted; optional scenarios S7b and E1-E6 not created
+- [Phase 1]: 01-07: S2 round B gate takes originalStart from prod-select pages (Graph omits it in the default shape)
+- [Phase 1]: 01-07: Outlook reports a declined meeting (response sent) as absent from calendarView with lookup 404, and a cancelled-unprocessed meeting as present with isCancelled=true
 
 ### Pending Todos
 
@@ -112,6 +115,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19T16:37:30.416Z
-Stopped at: Completed 01-06-PLAN.md; Round A fixtures committed, waiting for owner to apply Round B (S2, S3, S4, S5, S5b)
+Last session: 2026-10-19T17:08:53.372Z
+Stopped at: Completed 01-07-PLAN.md
 Resume file: None
