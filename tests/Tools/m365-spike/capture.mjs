@@ -7,8 +7,9 @@
 // process memory; nothing printed or written by this file contains a token, the secret or an
 // address. The CLI always talks to Microsoft: only tests can inject different `endpoints`.
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { countEvents, graphGet, runCapturePasses } from './lib/graph.mjs';
 import {
@@ -92,7 +93,9 @@ export function parseWindow(env) {
         throw new Error('M365_SPIKE_WINDOW_START must be before M365_SPIKE_WINDOW_END');
     }
     if (days > MAX_WINDOW_DAYS) {
-        throw new Error(`M365_SPIKE_WINDOW_END is more than ${MAX_WINDOW_DAYS} days after the start`);
+        throw new Error(
+            `M365_SPIKE_WINDOW_END is more than ${MAX_WINDOW_DAYS} days after the start`
+        );
     }
     return { start, end };
 }
@@ -101,7 +104,9 @@ export function parseWindow(env) {
 
 function printAuthorizeUrl(userLabel) {
     return (url) => {
-        console.log(`\nÁbrala en una ventana InPrivate/privada e inicie sesión con ${userLabel}:\n`);
+        console.log(
+            `\nÁbrala en una ventana InPrivate/privada e inicie sesión con ${userLabel}:\n`
+        );
         console.log(url);
         console.log('');
     };
@@ -288,17 +293,313 @@ export async function runCapture({
     return meta;
 }
 
-// RED stubs: replaced by the real commands in the GREEN commit.
-export async function runAuth() {
-    return {};
+// ---- operator prompts -------------------------------------------------------------------
+
+// Reads one line from the terminal. Resolves null when stdin ends or `signal` aborts.
+async function askOnStdin(question, { signal } = {}) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const closed = new Promise((resolve) => rl.once('close', () => resolve(null)));
+    const answer = rl.question(question, { signal }).catch(() => null);
+    try {
+        return await Promise.race([answer, closed]);
+    } finally {
+        rl.close();
+    }
 }
 
-export async function runExpectBlocked() {
-    return {};
+async function askYesNo(ask, question) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const answer = await ask(question, {});
+        if (answer === null || answer === undefined) {
+            break;
+        }
+        const normalized = answer.trim().toLowerCase();
+        if (['s', 'si', 'sí', 'y', 'yes'].includes(normalized)) {
+            return true;
+        }
+        if (['n', 'no'].includes(normalized)) {
+            return false;
+        }
+    }
+    throw new Error('No valid answer to the consent question (expected s or n)');
 }
 
-export function runStatus() {
-    return '';
+// ---- auth -------------------------------------------------------------------------------
+
+const CONSENT_QUESTION = '¿Se mostró una pantalla de consentimiento de permisos? (s/n) ';
+const BLOCKED_QUESTION =
+    'Si Microsoft muestra una página de error, escriba aquí el código AADSTS ' +
+    '(o pulse Intro para seguir esperando): ';
+const BLOCKED_CODE = 'AADSTS50105';
+
+function authFailures(check) {
+    const failures = [];
+    if (check.missingScopes.length > 0 || check.extraScopes.length > 0) {
+        failures.push(
+            'the granted scopes differ from the configured ones ' +
+                `(missing: ${check.missingScopes.join(', ') || 'none'}; ` +
+                `extra: ${check.extraScopes.join(', ') || 'none'})`
+        );
+    }
+    if (!check.refreshTokenIssued) {
+        failures.push('no refresh token was issued (offline_access was not granted)');
+    }
+    if (!check.tidMatches) {
+        failures.push('the token tenant is not M365_TENANT_ID');
+    }
+    if (check.userType !== 'Member') {
+        failures.push('the signed-in account is not a Member');
+    }
+    if (!check.signedInMatchesLoginHint) {
+        failures.push('the signed-in account is not the one in M365_SPIKE_LOGIN_HINT');
+    }
+    if (check.consentPromptShown) {
+        failures.push('a consent prompt was shown (admin consent is missing or incomplete)');
+    }
+    return failures;
+}
+
+export async function runAuth({
+    env,
+    endpoints = MICROSOFT_ENDPOINTS,
+    openUrl = printAuthorizeUrl('la usuaria de prueba A'),
+    ask = askOnStdin,
+    rawDir = DEFAULT_RAW_DIR,
+    timeoutMs = DEFAULT_CALLBACK_TIMEOUT_MS,
+}) {
+    assertEndpoints(endpoints);
+    const loginHint = requireEnv(env, 'M365_SPIKE_LOGIN_HINT');
+    const session = await signIn({ env, endpoints, loginHint, openUrl, timeoutMs });
+    const me = await fetchMe(session.accessToken, endpoints.graphBase);
+    const identity = evaluateIdentity({
+        me,
+        claims: session.idTokenClaims,
+        tenantId: session.config.tenantId,
+        loginHint,
+    });
+    const consentPromptShown = await askYesNo(ask, CONSENT_QUESTION);
+    const { summary } = session;
+    const check = {
+        checkedAt: new Date().toISOString(),
+        grantedScopes: summary.grantedScopes,
+        scopeMatches: summary.scopeMatches,
+        missingScopes: summary.missingScopes,
+        extraScopes: summary.extraScopes,
+        refreshTokenIssued: summary.refreshTokenIssued,
+        idTokenIssued: summary.idTokenIssued,
+        tidMatches: identity.tidMatches,
+        userType: identity.userType,
+        signedInMatchesLoginHint: identity.signedInMatchesLoginHint,
+        consentPromptShown,
+    };
+    writeJson(rawDir, 'auth-check.json', check);
+    writeJson(rawDir, 'me.json', me);
+
+    const failures = authFailures(check);
+    const rows = [
+        ['scopeMatches', check.scopeMatches],
+        ['refreshTokenIssued', check.refreshTokenIssued],
+        ['tidMatches', check.tidMatches],
+        ['userType', check.userType],
+        ['signedInMatchesLoginHint', check.signedInMatchesLoginHint],
+        ['consentPromptShown', check.consentPromptShown],
+    ];
+    for (const [name, value] of rows) {
+        console.log(`${name.padEnd(26)}${value}`);
+    }
+    console.log(`${'grantedScopes'.padEnd(26)}${check.grantedScopes.join(' ')}`);
+    for (const failure of failures) {
+        console.log(`FAIL: ${failure}`);
+    }
+    return { ...check, failures, exitCode: failures.length === 0 ? 0 : 1 };
+}
+
+// The outcome of the callback, or of the code the operator typed, whichever comes first.
+function fromCallback(outcome) {
+    if (outcome.code !== undefined) {
+        // A code means Microsoft let the user in. It is never redeemed.
+        return { source: 'callback', errorCode: null, blocked: false };
+    }
+    const safeName = /^[a-z_]{1,64}$/.test(outcome.error ?? '') ? outcome.error : null;
+    return {
+        source: 'callback',
+        errorCode: outcome.aadstsCodes[0] ?? safeName,
+        blocked: outcome.aadstsCodes.includes(BLOCKED_CODE),
+    };
+}
+
+async function watchOperator(ask, signal) {
+    try {
+        for (;;) {
+            const answer = await ask(BLOCKED_QUESTION, { signal });
+            if (answer === null || answer === undefined) {
+                break; // stdin ended or the prompt was aborted: only the callback can decide
+            }
+            const code = /AADSTS\d+/i.exec(answer)?.[0].toUpperCase();
+            if (code) {
+                return { source: 'operator', errorCode: code, blocked: code === BLOCKED_CODE };
+            }
+        }
+    } catch {
+        // an unusable prompt behaves like a closed stdin
+    }
+    return new Promise(() => {});
+}
+
+export async function runExpectBlocked({
+    env,
+    endpoints = MICROSOFT_ENDPOINTS,
+    openUrl = printAuthorizeUrl('la usuaria de prueba B'),
+    ask = askOnStdin,
+    rawDir = DEFAULT_RAW_DIR,
+    timeoutMs = DEFAULT_CALLBACK_TIMEOUT_MS,
+}) {
+    assertEndpoints(endpoints);
+    const loginHint = requireEnv(env, 'M365_SPIKE_BLOCKED_LOGIN_HINT');
+    const { server } = await beginAuthorization({
+        env,
+        endpoints,
+        loginHint,
+        openUrl,
+        timeoutMs,
+        needSecret: false,
+    });
+    const prompt = new AbortController();
+    let outcome;
+    try {
+        outcome = await Promise.race([
+            server.result.then(fromCallback),
+            watchOperator(ask, prompt.signal),
+        ]);
+    } finally {
+        prompt.abort();
+        server.close();
+    }
+    const doc = {
+        checkedAt: new Date().toISOString(),
+        blocked: outcome.blocked,
+        errorCode: outcome.errorCode,
+        source: outcome.source,
+    };
+    writeJson(rawDir, 'auth-blocked.json', doc);
+    if (outcome.blocked) {
+        console.log(`La usuaria B fue bloqueada como se esperaba (${BLOCKED_CODE}).`);
+    } else if (outcome.errorCode) {
+        console.log(
+            `Se recibió ${outcome.errorCode} y no ${BLOCKED_CODE}. Compruebe que la usuaria B no ` +
+                'está asignada a la aplicación y que no tiene ningún rol de administrador.'
+        );
+    } else {
+        console.log(
+            'La usuaria B NO fue bloqueada: Microsoft la dejó entrar (código sin canjear).'
+        );
+    }
+    return { ...doc, exitCode: doc.blocked ? 0 : 1 };
+}
+
+// ---- status -----------------------------------------------------------------------------
+
+const SAFE = {
+    name: /^[A-Za-z0-9_-]{1,40}$/,
+    userType: /^(?:Member|Guest)$/,
+    timestamp: /^\d{4}-\d{2}-\d{2}T[\d:.]{8,16}Z$/,
+};
+
+function readJsonIfPresent(file) {
+    try {
+        return JSON.parse(readFileSync(file, 'utf8'));
+    } catch {
+        return null;
+    }
+}
+
+function gitIgnoreStatus(repoRoot, relativePath) {
+    try {
+        execFileSync('git', ['check-ignore', '-q', relativePath], {
+            cwd: repoRoot,
+            stdio: 'ignore',
+        });
+        return 'yes';
+    } catch (error) {
+        return error?.status === 1 ? 'NO' : 'unknown (git unavailable)';
+    }
+}
+
+// Only booleans, whitelisted shapes, status codes and counts are printed. Anything else in the
+// raw files (addresses, ids, names) is ignored on purpose.
+const show = {
+    flag: (value) => (value === true ? 'true' : value === false ? 'false' : 'unknown'),
+    count: (value) => (Number.isInteger(value) ? String(value) : '?'),
+    match: (value, pattern) => (typeof value === 'string' && pattern.test(value) ? value : '?'),
+};
+
+function describeRound(label, meta) {
+    const start = show.match(meta.window?.start, SAFE.timestamp);
+    const end = show.match(meta.window?.end, SAFE.timestamp);
+    const lines = [
+        `  ${label}: captured ${show.match(meta.capturedAt, SAFE.timestamp)}`,
+        `    window ${start} to ${end}`,
+    ];
+    for (const [name, entry] of Object.entries(meta.passes ?? {})) {
+        if (SAFE.name.test(name)) {
+            lines.push(
+                `    ${name}: status ${show.count(entry?.status)}, ` +
+                    `${show.count(entry?.pages)} pages, ${show.count(entry?.events)} events`
+            );
+        }
+    }
+    return lines;
+}
+
+function describeAuthCheck(check) {
+    if (!check) {
+        return '  auth: not run yet';
+    }
+    return (
+        `  auth: scopeMatches=${show.flag(check.scopeMatches)} ` +
+        `refreshTokenIssued=${show.flag(check.refreshTokenIssued)} ` +
+        `tidMatches=${show.flag(check.tidMatches)} ` +
+        `userType=${show.match(check.userType, SAFE.userType)} ` +
+        `signedInMatchesLoginHint=${show.flag(check.signedInMatchesLoginHint)} ` +
+        `consentPromptShown=${show.flag(check.consentPromptShown)}`
+    );
+}
+
+function describeBlocked(blocked) {
+    if (!blocked) {
+        return '  auth --expect-blocked: not run yet';
+    }
+    const code = blocked.errorCode === null ? 'none' : show.match(blocked.errorCode, SAFE.name);
+    return `  auth --expect-blocked: blocked=${show.flag(blocked.blocked)} errorCode=${code}`;
+}
+
+export function runStatus({ env, rawDir = DEFAULT_RAW_DIR, repoRoot = REPO_ROOT }) {
+    const lines = ['Environment (values are never printed)'];
+    for (const name of ENV_NAMES) {
+        const set = typeof env[name] === 'string' && env[name].trim() !== '';
+        lines.push(`  ${name}: ${set ? 'SET' : 'MISSING'}`);
+    }
+    const envFile = 'tests/Tools/m365-spike/.env.local';
+    lines.push(
+        '',
+        'Git',
+        `  tests/Tools/m365-spike/raw/ is git-ignored: ${gitIgnoreStatus(repoRoot, RAW_PROBE)}`,
+        `  ${envFile} is git-ignored: ${gitIgnoreStatus(repoRoot, envFile)}`,
+        '',
+        'Registration checks',
+        describeAuthCheck(readJsonIfPresent(path.join(rawDir, 'auth-check.json'))),
+        describeBlocked(readJsonIfPresent(path.join(rawDir, 'auth-blocked.json'))),
+        '',
+        'Captures'
+    );
+    for (const round of ['A', 'B']) {
+        const meta = readJsonIfPresent(path.join(rawDir, `round${round}`, 'meta.json'));
+        const described = meta
+            ? describeRound(`round${round}`, meta)
+            : [`  round${round}: not captured yet`];
+        lines.push(...described);
+    }
+    return `${lines.join('\n')}\n`;
 }
 
 // ---- CLI --------------------------------------------------------------------------------
@@ -368,12 +669,17 @@ export async function main(argv, { env = process.env, repoRoot = REPO_ROOT } = {
     }
     try {
         assertNodeVersion();
+        if (parsed.command === 'status') {
+            process.stdout.write(runStatus({ env, repoRoot }));
+            return 0;
+        }
+        assertRawDirIgnored(repoRoot);
         if (parsed.command === 'capture') {
-            assertRawDirIgnored(repoRoot);
             await runCapture({ env, round: parsed.round });
             return 0;
         }
-        throw new Error('This command is not available yet');
+        const run = parsed.expectBlocked ? runExpectBlocked : runAuth;
+        return (await run({ env })).exitCode;
     } catch (error) {
         // Messages are built from statuses, error codes and variable names only.
         console.error(`Error: ${error.message}`);

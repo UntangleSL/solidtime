@@ -10,7 +10,8 @@ import { REDIRECT_PATH, SCOPES } from '../lib/oauth.mjs';
 const GRAPH_PATH = '/graph/v1.0';
 // Entra returns the scope without offline_access, and the harness must cope with that.
 const FAKE_SCOPE = 'openid profile email User.Read Calendars.Read';
-const BLOCKED_DESCRIPTION = 'AADSTS50105: The signed in user is not assigned to a role for the app.';
+const BLOCKED_DESCRIPTION =
+    'AADSTS50105: The signed in user is not assigned to a role for the app.';
 
 const b64url = (value) => Buffer.from(value).toString('base64url');
 const randomToken = (bytes = 24) => randomBytes(bytes).toString('base64url');

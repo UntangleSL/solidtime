@@ -70,7 +70,9 @@ test('summarizeTokenResponse: an extra Calendars.ReadWrite scope does not match'
 });
 
 test('summarizeTokenResponse: without a refresh token offline_access is not proven', () => {
-    const summary = summarizeTokenResponse({ scope: 'openid profile email User.Read Calendars.Read' });
+    const summary = summarizeTokenResponse({
+        scope: 'openid profile email User.Read Calendars.Read',
+    });
 
     assert.equal(summary.scopeMatches, false);
     assert.equal(summary.refreshTokenIssued, false);
@@ -330,8 +332,8 @@ test('runStatus prints SET/MISSING and booleans but never a value', () => {
 
         assert.match(report, /M365_CLIENT_SECRET\s*:?\s*SET/);
         assert.match(report, /M365_CLIENT_ID\s*:?\s*MISSING/);
-        assert.match(report, /\.env\.local\b.*\bignored\b/i);
-        assert.match(report, /raw\/.*\bignored\b/i);
+        assert.match(report, /\.env\.local is git-ignored: yes/);
+        assert.match(report, /raw\/ is git-ignored: yes/);
         assert.match(report, /scopeMatches\W+true/);
         assert.match(report, /AADSTS50105/);
         assert.match(report, /prod-select/);
