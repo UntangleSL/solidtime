@@ -4,7 +4,9 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+    DECISION_HEADINGS,
     SCOPES,
+    checkDecisions,
     checkGuide,
     checkRunbook,
     isAllowedGuid,
@@ -512,6 +514,125 @@ test('scanSecrets: fails when .env.local or raw/ would be committed', () => {
     assert.equal(scanSecrets(files).length, 2);
 });
 
+// ---- decisions --------------------------------------------------------------------------
+
+const READBASIC = '## Calendars.ReadBasic (informational)';
+const SCENARIO_CITATION = '`tests/Fixtures/M365/scenarios/S2.roundA.json`';
+
+function defaultDecisionLines(heading) {
+    return [`Decision: Rule for ${heading.slice(3)}.`, `Evidence: ${SCENARIO_CITATION}`];
+}
+
+function buildDecisions({ skip = [], rename = {}, lines = {}, extra = [] } = {}) {
+    const out = ['# Decisions for the Graph sync', ''];
+    for (const heading of DECISION_HEADINGS) {
+        if (skip.includes(heading)) {
+            continue;
+        }
+        out.push(rename[heading] ?? heading, '');
+        out.push(...(lines[heading] ?? defaultDecisionLines(heading)), '');
+    }
+    out.push(...extra);
+    return out.join('\n');
+}
+
+test('decisions: the twelve required headings are exported in order', () => {
+    assert.equal(DECISION_HEADINGS.length, 12);
+    assert.equal(DECISION_HEADINGS[0], '## Occurrence key');
+    assert.equal(DECISION_HEADINGS[10], READBASIC);
+    assert.equal(DECISION_HEADINGS[11], '## Corrections to earlier research');
+});
+
+test('decisions: a document with every section, Decision and Evidence line passes', () => {
+    assert.deepEqual(checkDecisions(buildDecisions()), []);
+});
+
+test('decisions: extra sections are allowed', () => {
+    const text = buildDecisions({ extra: ['## Open questions', '', 'Nothing yet.', ''] });
+    assert.deepEqual(checkDecisions(text), []);
+});
+
+test('decisions: removing any required heading fails and names it', () => {
+    for (const heading of DECISION_HEADINGS) {
+        const reasons = checkDecisions(buildDecisions({ skip: [heading] }));
+        assert.ok(
+            reasons.some((reason) => reason.includes(heading)),
+            `expected a reason naming ${heading}`
+        );
+    }
+});
+
+test('decisions: a heading with different text fails', () => {
+    const text = buildDecisions({ rename: { '## Series key': '## Series Key' } });
+    assert.ok(checkDecisions(text).some((reason) => reason.includes('## Series key')));
+});
+
+test('decisions: a required heading that appears twice fails', () => {
+    const text = buildDecisions({ extra: ['## Series key', '', ...defaultDecisionLines('## x')] });
+    assert.ok(checkDecisions(text).some((reason) => reason.includes('## Series key')));
+});
+
+test('decisions: a section without a Decision line fails and names the section', () => {
+    const heading = '## Moved meetings';
+    const text = buildDecisions({ lines: { [heading]: [`Evidence: ${SCENARIO_CITATION}`] } });
+    const reasons = checkDecisions(text);
+    assert.equal(reasons.length, 1);
+    assert.ok(reasons[0].includes(heading) && reasons[0].includes('Decision:'));
+});
+
+test('decisions: a section without an Evidence line fails and names the section', () => {
+    const heading = '## Private meetings';
+    const text = buildDecisions({ lines: { [heading]: ['Decision: Keep them.'] } });
+    const reasons = checkDecisions(text);
+    assert.equal(reasons.length, 1);
+    assert.ok(reasons[0].includes(heading) && reasons[0].includes('Evidence:'));
+});
+
+test('decisions: an Evidence line with an unbackticked fixture path fails', () => {
+    const heading = '## All-day events';
+    const bare = 'Evidence: tests/Fixtures/M365/scenarios/S6.roundA.json';
+    const text = buildDecisions({ lines: { [heading]: ['Decision: Keep them.', bare] } });
+    assert.ok(checkDecisions(text).some((reason) => reason.includes(heading)));
+});
+
+test('decisions: an Evidence path outside tests/Fixtures/M365/ does not count', () => {
+    const heading = '## Occurrence key';
+    const other = 'Evidence: `docs/m365/notes.md`';
+    const text = buildDecisions({ lines: { [heading]: ['Decision: Use the id.', other] } });
+    assert.ok(checkDecisions(text).some((reason) => reason.includes(heading)));
+});
+
+test('decisions: one Evidence line with a fixture path is enough among several', () => {
+    const heading = '## Occurrence key';
+    const lines = ['Decision: Use the id.', 'Evidence: see notes', `Evidence: ${SCENARIO_CITATION}`];
+    assert.deepEqual(checkDecisions(buildDecisions({ lines: { [heading]: lines } })), []);
+});
+
+test('decisions: the ReadBasic section may cite a learn.microsoft.com URL instead', () => {
+    const url = 'Evidence: https://learn.microsoft.com/en-us/graph/permissions-reference';
+    const text = buildDecisions({ lines: { [READBASIC]: ['Decision: Informational.', url] } });
+    assert.deepEqual(checkDecisions(text), []);
+});
+
+test('decisions: any other section citing only a URL fails', () => {
+    const heading = '## Series key';
+    const url = 'Evidence: https://learn.microsoft.com/en-us/graph/api/event-get';
+    const text = buildDecisions({ lines: { [heading]: ['Decision: Use it.', url] } });
+    const reasons = checkDecisions(text);
+    assert.equal(reasons.length, 1);
+    assert.ok(reasons[0].includes(heading));
+});
+
+test('decisions: a URL from another host does not satisfy the ReadBasic section', () => {
+    const url = 'Evidence: https://example.test/permissions';
+    const text = buildDecisions({ lines: { [READBASIC]: ['Decision: Informational.', url] } });
+    assert.ok(checkDecisions(text).some((reason) => reason.includes(READBASIC)));
+});
+
+test('decisions: CRLF line endings are accepted', () => {
+    assert.deepEqual(checkDecisions(buildDecisions().replace(/\n/g, '\r\n')), []);
+});
+
 // ---- CLI --------------------------------------------------------------------------------
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'validate-docs.mjs');
@@ -541,4 +662,33 @@ test('cli: prints "<sub>: OK (<n> checks)" and exits 0 on a valid document', asy
     const result = run('guide', '--file', file);
     assert.equal(result.status, 0, result.stdout);
     assert.match(result.stdout, /^guide: OK \(\d+ checks\)$/m);
+});
+
+test('cli: decisions fails loudly and names the file when the document does not exist', () => {
+    const result = run('decisions', '--file', 'docs/m365/does-not-exist.md');
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /^FAIL decisions: .*does-not-exist\.md/m);
+});
+
+test('cli: decisions without --file fails on a tree without the document and names it', () => {
+    const result = run('decisions');
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /^FAIL decisions: .*DECISIONS-graph\.md/m);
+});
+
+test('cli: decisions prints OK and exits 0 on a valid document', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'validate-docs-'));
+    const file = join(dir, 'decisions.md');
+    writeFileSync(file, buildDecisions());
+    const result = run('decisions', '--file', file);
+    assert.equal(result.status, 0, result.stdout);
+    assert.match(result.stdout, /^decisions: OK \(\d+ checks\)$/m);
+});
+
+test('cli: decisions rejects an unknown flag with usage and exit 2', () => {
+    const result = run('decisions', '--nope');
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /Usage/i);
 });

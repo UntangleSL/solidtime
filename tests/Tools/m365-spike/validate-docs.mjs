@@ -735,6 +735,27 @@ function runGitignoreChecks(repoRoot) {
     return checker.result();
 }
 
+// ---- decisions --------------------------------------------------------------------------
+
+export const DECISION_HEADINGS = [
+    '## Occurrence key',
+    '## Series key',
+    '## Cancelled meetings',
+    '## Declined meetings',
+    '## Moved meetings',
+    '## Private meetings',
+    '## All-day events',
+    '## Eligibility signals',
+    '## Time zone and DST',
+    '## ImmutableId and nextLink',
+    '## Calendars.ReadBasic (informational)',
+    '## Corrections to earlier research',
+];
+
+export function checkDecisions() {
+    return ['no implementado'];
+}
+
 // ---- CLI --------------------------------------------------------------------------------
 
 function readText(root, rel) {
@@ -777,6 +798,12 @@ const COMMANDS = {
             const files = loadFiles(root, rels);
             const reasons = scanSecrets(files);
             return { reasons, total: files.length };
+        },
+    },
+    decisions: {
+        flags: { trace: 'boolean', file: 'string', manifest: 'string' },
+        run() {
+            return { reasons: checkDecisions(), total: 1 };
         },
     },
     gitignore: {
