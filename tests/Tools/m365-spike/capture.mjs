@@ -1,16 +1,29 @@
 // Capture harness for the Microsoft 365 spike (phase 01). Zero dependencies (node: built-ins).
 //
-//   node --env-file=tests/Tools/m365-spike/.env.local tests/Tools/m365-spike/capture.mjs \
-//        <auth [--expect-blocked] | capture --round A|B | status>
+//   doppler run -p vps -c dev -- node tests/Tools/m365-spike/capture.mjs \
+//        <auth [--as A|B] | capture --round A|B | status>
+//   node --env-file=tests/Tools/m365-spike/.env.local tests/Tools/m365-spike/capture.mjs <...>
 //
 // Sign-in is authorization code + PKCE + client secret on a loopback redirect. Tokens stay in
 // process memory; nothing printed or written by this file contains a token, the secret or an
 // address. The CLI always talks to Microsoft: only tests can inject different `endpoints`.
+//
+// Settings come from the M365_* names or, when those are unset, from the Doppler names (see
+// lib/env.mjs). The production client secret is never read: if SOLIDTIME_MICROSOFT_CLIENT_SECRET
+// is in the environment, `auth` and `capture` refuse to run (exit 2) and `status` warns.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+    DEPRECATED_NAMES,
+    ENV_SOURCES,
+    PRODUCTION_SECRET_NAME,
+    ProductionSecretError,
+    assertNoProductionSecret,
+    resolveEnv,
+} from './lib/env.mjs';
 import { countEvents, graphGet, runCapturePasses } from './lib/graph.mjs';
 import {
     MICROSOFT_ENDPOINTS,
@@ -34,24 +47,40 @@ const ME_SELECT =
     'id,displayName,givenName,surname,mail,userPrincipalName,userType,preferredLanguage';
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 
-export const ENV_NAMES = [
-    'M365_TENANT_ID',
-    'M365_CLIENT_ID',
-    'M365_CLIENT_SECRET',
-    'M365_SPIKE_LOGIN_HINT',
-    'M365_SPIKE_BLOCKED_LOGIN_HINT',
-    'M365_SPIKE_WINDOW_START',
-    'M365_SPIKE_WINDOW_END',
-    'M365_SPIKE_OUTLOOK_CLIENT',
-    'M365_SPIKE_PORT',
-];
+export const ENV_NAMES = Object.keys(ENV_SOURCES);
+
+// The two people the sign-in checks run as. B is a real non-admin colleague who is not assigned
+// to the app: the point of her run is that she gets in without a consent prompt.
+const USERS = {
+    A: {
+        label: 'la usuaria de prueba A',
+        hint: 'M365_SPIKE_LOGIN_HINT',
+        file: 'auth-check.json',
+    },
+    B: {
+        label: 'la usuaria B (sin rol de administrador, no asignada)',
+        hint: 'M365_SPIKE_B_LOGIN_HINT',
+        file: 'auth-check-b.json',
+    },
+};
 
 // ---- configuration ----------------------------------------------------------------------
+
+// Refuses the production secret, then maps the Doppler names onto the M365_* names. The returned
+// object holds the logical names only, so nothing else in the process can see the raw environment.
+function prepareEnv(env) {
+    assertNoProductionSecret(env);
+    return resolveEnv(env).env;
+}
 
 function requireEnv(env, name) {
     const value = env[name];
     if (typeof value !== 'string' || value.trim() === '') {
-        throw new Error(`${name} is missing (see tests/Tools/m365-spike/.env.local.example)`);
+        const alternative = ENV_SOURCES[name]?.find(
+            (source) => source !== name && !DEPRECATED_NAMES.has(source)
+        );
+        const or = alternative ? ` (or ${alternative}` : ' (';
+        throw new Error(`${name} is missing${or}; see tests/Tools/m365-spike/.env.local.example)`);
     }
     return value.trim();
 }
@@ -67,13 +96,13 @@ function parsePort(value) {
     return port;
 }
 
-function readConfig(env, { needSecret = true } = {}) {
+function readConfig(env) {
     const tenantId = requireEnv(env, 'M365_TENANT_ID');
     assertTenantId(tenantId);
     return {
         tenantId,
         clientId: requireEnv(env, 'M365_CLIENT_ID'),
-        clientSecret: needSecret ? requireEnv(env, 'M365_CLIENT_SECRET') : null,
+        clientSecret: requireEnv(env, 'M365_CLIENT_SECRET'),
         port: parsePort(env.M365_SPIKE_PORT),
     };
 }
@@ -112,8 +141,8 @@ function printAuthorizeUrl(userLabel) {
     };
 }
 
-async function beginAuthorization({ env, endpoints, loginHint, openUrl, timeoutMs, needSecret }) {
-    const config = readConfig(env, { needSecret });
+async function beginAuthorization({ env, endpoints, loginHint, openUrl, timeoutMs }) {
+    const config = readConfig(env);
     const { verifier, challenge } = createPkcePair();
     const state = createState();
     const server = await startCallbackServer({ port: config.port, state, timeoutMs });
@@ -149,7 +178,6 @@ async function signIn({ env, endpoints, loginHint, openUrl, timeoutMs }) {
         loginHint,
         openUrl,
         timeoutMs,
-        needSecret: true,
     });
     try {
         const outcome = await server.result;
@@ -195,10 +223,10 @@ function evaluateIdentity({ me, claims, tenantId, loginHint }) {
     };
 }
 
-function identityFailures(identity) {
+function identityFailures(identity, hintName = 'M365_SPIKE_LOGIN_HINT') {
     const failures = [];
     if (!identity.signedInMatchesLoginHint) {
-        failures.push('the signed-in account is not the one in M365_SPIKE_LOGIN_HINT');
+        failures.push(`the signed-in account is not the one in ${hintName}`);
     }
     if (identity.userType !== 'Member') {
         failures.push('the signed-in account is not a Member (a Guest cannot be test user A)');
@@ -274,13 +302,14 @@ function loadRoundAIds(rawDir) {
 // ---- commands ---------------------------------------------------------------------------
 
 export async function runCapture({
-    env,
+    env: rawEnv,
     round,
     endpoints = MICROSOFT_ENDPOINTS,
     openUrl = printAuthorizeUrl('la usuaria de prueba A'),
     rawDir = DEFAULT_RAW_DIR,
     timeoutMs = DEFAULT_CALLBACK_TIMEOUT_MS,
 }) {
+    const env = prepareEnv(rawEnv);
     if (round !== 'A' && round !== 'B') {
         throw new Error('--round must be A or B');
     }
@@ -373,12 +402,8 @@ async function askYesNo(ask, question) {
 // ---- auth -------------------------------------------------------------------------------
 
 const CONSENT_QUESTION = '¿Se mostró una pantalla de consentimiento de permisos? (s/n) ';
-const BLOCKED_QUESTION =
-    'Si Microsoft muestra una página de error, escriba aquí el código AADSTS ' +
-    '(o pulse Intro para seguir esperando): ';
-const BLOCKED_CODE = 'AADSTS50105';
 
-function authFailures(check) {
+function authFailures(check, hintName) {
     const failures = [];
     if (check.missingScopes.length > 0 || check.extraScopes.length > 0) {
         failures.push(
@@ -397,7 +422,7 @@ function authFailures(check) {
         failures.push('the signed-in account is not a Member');
     }
     if (!check.signedInMatchesLoginHint) {
-        failures.push('the signed-in account is not the one in M365_SPIKE_LOGIN_HINT');
+        failures.push(`the signed-in account is not the one in ${hintName}`);
     }
     if (check.consentPromptShown) {
         failures.push('a consent prompt was shown (admin consent is missing or incomplete)');
@@ -405,16 +430,26 @@ function authFailures(check) {
     return failures;
 }
 
+// `as` picks who signs in: A (the owner, Global Administrator) or B (Alejandro Cava, a non-admin
+// colleague who is not assigned to the app). The assertions are identical; B's file is separate so
+// it never overwrites A's.
 export async function runAuth({
-    env,
+    env: rawEnv,
+    as = 'A',
     endpoints = MICROSOFT_ENDPOINTS,
-    openUrl = printAuthorizeUrl('la usuaria de prueba A'),
+    openUrl,
     ask = askOnStdin,
     rawDir = DEFAULT_RAW_DIR,
     timeoutMs = DEFAULT_CALLBACK_TIMEOUT_MS,
 }) {
+    const env = prepareEnv(rawEnv);
+    if (!Object.hasOwn(USERS, as)) {
+        throw new Error('--as must be A or B');
+    }
+    const user = USERS[as];
     assertEndpoints(endpoints);
-    const loginHint = requireEnv(env, 'M365_SPIKE_LOGIN_HINT');
+    const loginHint = requireEnv(env, user.hint);
+    openUrl ??= printAuthorizeUrl(user.label);
     const session = await signIn({ env, endpoints, loginHint, openUrl, timeoutMs });
     const me = await fetchMe(session.accessToken, endpoints.graphBase);
     const identity = evaluateIdentity({
@@ -438,10 +473,12 @@ export async function runAuth({
         signedInMatchesLoginHint: identity.signedInMatchesLoginHint,
         consentPromptShown,
     };
-    writeJson(rawDir, 'auth-check.json', check);
-    writeJson(rawDir, 'me.json', me);
+    writeJson(rawDir, user.file, check);
+    if (as === 'A') {
+        writeJson(rawDir, 'me.json', me);
+    }
 
-    const failures = authFailures(check);
+    const failures = authFailures(check, user.hint);
     const rows = [
         ['scopeMatches', check.scopeMatches],
         ['refreshTokenIssued', check.refreshTokenIssued],
@@ -457,90 +494,7 @@ export async function runAuth({
     for (const failure of failures) {
         console.log(`FAIL: ${failure}`);
     }
-    return { ...check, failures, exitCode: failures.length === 0 ? 0 : 1 };
-}
-
-// The outcome of the callback, or of the code the operator typed, whichever comes first.
-function fromCallback(outcome) {
-    if (outcome.code !== undefined) {
-        // A code means Microsoft let the user in. It is never redeemed.
-        return { source: 'callback', errorCode: null, blocked: false };
-    }
-    const safeName = /^[a-z_]{1,64}$/.test(outcome.error ?? '') ? outcome.error : null;
-    return {
-        source: 'callback',
-        errorCode: outcome.aadstsCodes[0] ?? safeName,
-        blocked: outcome.aadstsCodes.includes(BLOCKED_CODE),
-    };
-}
-
-async function watchOperator(ask, signal) {
-    try {
-        for (;;) {
-            const answer = await ask(BLOCKED_QUESTION, { signal });
-            if (answer === null || answer === undefined) {
-                break; // stdin ended or the prompt was aborted: only the callback can decide
-            }
-            const code = /AADSTS\d+/i.exec(answer)?.[0].toUpperCase();
-            if (code) {
-                return { source: 'operator', errorCode: code, blocked: code === BLOCKED_CODE };
-            }
-        }
-    } catch {
-        // an unusable prompt behaves like a closed stdin
-    }
-    return new Promise(() => {});
-}
-
-export async function runExpectBlocked({
-    env,
-    endpoints = MICROSOFT_ENDPOINTS,
-    openUrl = printAuthorizeUrl('la usuaria de prueba B'),
-    ask = askOnStdin,
-    rawDir = DEFAULT_RAW_DIR,
-    timeoutMs = DEFAULT_CALLBACK_TIMEOUT_MS,
-}) {
-    assertEndpoints(endpoints);
-    const loginHint = requireEnv(env, 'M365_SPIKE_BLOCKED_LOGIN_HINT');
-    const { server } = await beginAuthorization({
-        env,
-        endpoints,
-        loginHint,
-        openUrl,
-        timeoutMs,
-        needSecret: false,
-    });
-    const prompt = new AbortController();
-    let outcome;
-    try {
-        outcome = await Promise.race([
-            server.result.then(fromCallback),
-            watchOperator(ask, prompt.signal),
-        ]);
-    } finally {
-        prompt.abort();
-        server.close();
-    }
-    const doc = {
-        checkedAt: new Date().toISOString(),
-        blocked: outcome.blocked,
-        errorCode: outcome.errorCode,
-        source: outcome.source,
-    };
-    writeJson(rawDir, 'auth-blocked.json', doc);
-    if (outcome.blocked) {
-        console.log(`La usuaria B fue bloqueada como se esperaba (${BLOCKED_CODE}).`);
-    } else if (outcome.errorCode) {
-        console.log(
-            `Se recibió ${outcome.errorCode} y no ${BLOCKED_CODE}. Compruebe que la usuaria B no ` +
-                'está asignada a la aplicación y que no tiene ningún rol de administrador.'
-        );
-    } else {
-        console.log(
-            'La usuaria B NO fue bloqueada: Microsoft la dejó entrar (código sin canjear).'
-        );
-    }
-    return { ...doc, exitCode: doc.blocked ? 0 : 1 };
+    return { ...check, as, failures, exitCode: failures.length === 0 ? 0 : 1 };
 }
 
 // ---- status -----------------------------------------------------------------------------
@@ -597,12 +551,12 @@ function describeRound(label, meta) {
     return lines;
 }
 
-function describeAuthCheck(check) {
+function describeAuthCheck(label, check) {
     if (!check) {
-        return '  auth: not run yet';
+        return `  ${label}: not run yet`;
     }
     return (
-        `  auth: scopeMatches=${show.flag(check.scopeMatches)} ` +
+        `  ${label}: scopeMatches=${show.flag(check.scopeMatches)} ` +
         `refreshTokenIssued=${show.flag(check.refreshTokenIssued)} ` +
         `tidMatches=${show.flag(check.tidMatches)} ` +
         `userType=${show.match(check.userType, SAFE.userType)} ` +
@@ -611,19 +565,29 @@ function describeAuthCheck(check) {
     );
 }
 
-function describeBlocked(blocked) {
-    if (!blocked) {
-        return '  auth --expect-blocked: not run yet';
+// Names only: which variable supplied each setting, never what it holds.
+function describeSource(source) {
+    if (source === null) {
+        return 'MISSING';
     }
-    const code = blocked.errorCode === null ? 'none' : show.match(blocked.errorCode, SAFE.name);
-    return `  auth --expect-blocked: blocked=${show.flag(blocked.blocked)} errorCode=${code}`;
+    return `SET (from ${source}${DEPRECATED_NAMES.has(source) ? ', deprecated alias' : ''})`;
 }
 
 export function runStatus({ env, rawDir = DEFAULT_RAW_DIR, repoRoot = REPO_ROOT }) {
+    const resolved = resolveEnv(env);
     const lines = ['Environment (values are never printed)'];
     for (const name of ENV_NAMES) {
-        const set = typeof env[name] === 'string' && env[name].trim() !== '';
-        lines.push(`  ${name}: ${set ? 'SET' : 'MISSING'}`);
+        lines.push(`  ${name}: ${describeSource(resolved.sources[name])}`);
+    }
+    if (resolved.productionSecretPresent) {
+        lines.push(
+            '',
+            `WARNING: ${PRODUCTION_SECRET_NAME} está presente en el entorno (solo se muestra el ` +
+                'nombre; el valor nunca se lee) y no debe estar en la configuración dev: elimínelo. ' +
+                `/ ${PRODUCTION_SECRET_NAME} is present in the environment (name only; the value ` +
+                'is never read) and must not be in the dev config: remove it. ' +
+                '"auth" and "capture" refuse to run while it is there.'
+        );
     }
     const envFile = 'tests/Tools/m365-spike/.env.local';
     lines.push(
@@ -633,8 +597,8 @@ export function runStatus({ env, rawDir = DEFAULT_RAW_DIR, repoRoot = REPO_ROOT 
         `  ${envFile} is git-ignored: ${gitIgnoreStatus(repoRoot, envFile)}`,
         '',
         'Registration checks',
-        describeAuthCheck(readJsonIfPresent(path.join(rawDir, 'auth-check.json'))),
-        describeBlocked(readJsonIfPresent(path.join(rawDir, 'auth-blocked.json'))),
+        describeAuthCheck('auth (A)', readJsonIfPresent(path.join(rawDir, 'auth-check.json'))),
+        describeAuthCheck('auth --as B', readJsonIfPresent(path.join(rawDir, 'auth-check-b.json'))),
         '',
         'Captures'
     );
@@ -650,10 +614,11 @@ export function runStatus({ env, rawDir = DEFAULT_RAW_DIR, repoRoot = REPO_ROOT 
 
 // ---- CLI --------------------------------------------------------------------------------
 
-const USAGE = `Usage: node --env-file=tests/Tools/m365-spike/.env.local tests/Tools/m365-spike/capture.mjs <command>
+const USAGE = `Usage: doppler run -p vps -c dev -- node tests/Tools/m365-spike/capture.mjs <command>
+   or: node --env-file=tests/Tools/m365-spike/.env.local tests/Tools/m365-spike/capture.mjs <command>
 
   auth                   sign in as test user A and verify the registration
-  auth --expect-blocked  sign in as test user B and expect AADSTS50105
+  auth --as B            sign in as B (non-admin, not assigned): no consent prompt, six scopes
   capture --round A|B    record the calendarView experiments for a round
   status                 print what is configured and captured (never a value)
 `;
@@ -667,12 +632,15 @@ export function parseArgs(argv) {
     }
     if (command === 'auth') {
         if (rest.length === 0) {
-            return { command };
+            return { command, as: 'A' };
         }
-        if (rest.length === 1 && rest[0] === '--expect-blocked') {
-            return { command, expectBlocked: true };
+        if (rest[0] !== '--as') {
+            return { badPosition: 2 };
         }
-        return { badPosition: rest[0] === '--expect-blocked' ? 3 : 2 };
+        if (rest[1] !== 'A' && rest[1] !== 'B') {
+            return { badPosition: 3 };
+        }
+        return rest.length === 2 ? { command, as: rest[1] } : { badPosition: 4 };
     }
     if (command === 'capture') {
         if (rest[0] !== '--round') {
@@ -719,17 +687,17 @@ export async function main(argv, { env = process.env, repoRoot = REPO_ROOT } = {
             process.stdout.write(runStatus({ env, repoRoot }));
             return 0;
         }
+        assertNoProductionSecret(env);
         assertRawDirIgnored(repoRoot);
         if (parsed.command === 'capture') {
             await runCapture({ env, round: parsed.round });
             return 0;
         }
-        const run = parsed.expectBlocked ? runExpectBlocked : runAuth;
-        return (await run({ env })).exitCode;
+        return (await runAuth({ env, as: parsed.as })).exitCode;
     } catch (error) {
         // Messages are built from statuses, error codes and variable names only.
         console.error(`Error: ${error.message}`);
-        return 1;
+        return error instanceof ProductionSecretError ? error.exitCode : 1;
     }
 }
 

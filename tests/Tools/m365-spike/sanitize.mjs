@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveEnv } from './lib/env.mjs';
 import {
     buildLeakSet,
     collectRawDocuments,
@@ -108,7 +109,7 @@ function findProblems(written, leakSet) {
 export function run({
     rawDir = DEFAULT_RAW_DIR,
     outDir = DEFAULT_OUT_DIR,
-    env = process.env,
+    env: rawEnv = process.env,
     hooks = {},
     stdout = process.stdout,
     stderr = process.stderr,
@@ -117,6 +118,8 @@ export function run({
         stderr.write(`FAIL sanitize: ${message}\n`);
         return { exitCode };
     };
+    // M365_* names, or the Doppler names when those are unset (lib/env.mjs).
+    const { env } = resolveEnv(rawEnv);
     const metaA = path.join(rawDir, 'roundA', 'meta.json');
     if (!existsSync(metaA)) {
         return fail(`${metaA} not found: run "capture --round A" first`);
@@ -137,7 +140,7 @@ export function run({
             salt: loadOrCreateSalt(rawDir),
             identityMapPath: path.join(rawDir, 'identity-map.json'),
             loginHint: env.M365_SPIKE_LOGIN_HINT,
-            blockedHint: env.M365_SPIKE_BLOCKED_LOGIN_HINT,
+            blockedHint: env.M365_SPIKE_B_LOGIN_HINT,
         });
         const rawA = loadRound(rawDir, 'A');
         const rawB = loadRound(rawDir, 'B');
