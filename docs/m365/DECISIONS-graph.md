@@ -104,7 +104,7 @@ still `accepted`, and its subject now starts with `Canceled: `. A direct lookup 
 What happens once the attendee processes the cancellation (the event is deleted from the calendar) was not
 captured; the closest captured case is S4, where the event is removed and the lookup is 404.
 
-Decision: for SYNC-03 exclude every event with `isCancelled=true`; never detect cancellation from the
+Decision: SYNC-03 excludes every event with `isCancelled=true`; never detect cancellation from the
 subject prefix. For Phase 6, "cancelled" means either `isCancelled=true` in a window or lookup 200 with
 `isCancelled=true`; "removed" means lookup 404 `ErrorItemNotFound`; do not assume that an absent event was
 cancelled (see Moved meetings).
@@ -125,8 +125,10 @@ the calendarView and a direct lookup by the Round A id returns 404 `ErrorItemNot
 `responseStatus.response=declined` was ever seen in a calendarView in this capture. A decline that is kept
 in the calendar without sending a response (E6) was not captured.
 
-Decision: SYNC-03 keeps its `declined` filter in case Outlook ever returns that value, but Phase 3 must not
-rely on it: a normal decline simply makes the meeting disappear. For Phase 6 a declined meeting is
+Decision: SYNC-03 (revised 2026-10-19) excludes declined meetings, and Graph already does that for Phase 3: a
+normal decline simply makes the meeting disappear from the calendarView. Phase 3 may still skip
+`responseStatus.response=declined` defensively in case Outlook ever returns that value, but it must not
+rely on that filter. For Phase 6 a declined meeting is
 indistinguishable from a deleted one (both are 404), so a linked time entry is flagged as "removed in
 Outlook", not as "declined".
 
@@ -155,10 +157,12 @@ Decision: a meeting that is missing from a window is not cancelled. Phase 6 must
 with `GET /me/events/{id}` (same `Prefer` header) before flagging anything: 200 with `isCancelled=false`
 means moved (compare `start`/`end` with the stored values; outside the window is still "moved"); 200 with
 `isCancelled=true` means cancelled; 404 means removed; any other status (401, 429, 5xx) means unknown and
-never flags (OSYNC-02). Because a move resets `responseStatus` to `notResponded`, a linked meeting must be
-matched by id regardless of the SYNC-03 eligibility rules, otherwise every organizer reschedule would look
-like a removal. This also means a rescheduled meeting leaves the import list until the user accepts it
-again: raise that product question when Phase 3 is discussed.
+never flags (OSYNC-02). Because a move resets `responseStatus` to `notResponded`, the pre-2026-10-19
+SYNC-03 (accepted or organizer only) would have dropped every rescheduled meeting from the import list and
+made it look like a removal. The owner revised SYNC-03 so that `notResponded` meetings are shown as
+suggestions (see Eligibility signals), which closes that gap: a rescheduled meeting stays visible. A
+meeting linked to a time entry is still matched by id, not by the eligibility rules, so that a linked
+meeting that later becomes private or cancelled is detected as a change instead of silently disappearing.
 
 Evidence: `tests/Fixtures/M365/scenarios/S5.roundA.json`, `tests/Fixtures/M365/scenarios/S5.roundB.json`, `tests/Fixtures/M365/lookups/S5.roundB.json`, `tests/Fixtures/M365/scenarios/S5b.roundA.json`, `tests/Fixtures/M365/lookups/S5b.roundB.json`
 
@@ -224,15 +228,23 @@ Observed `isOrganizer` and `responseStatus.response` pairs:
   missing). The `tentativelyAccepted` spelling comes from the Microsoft Graph documentation, not from a
   fixture.
 
-Decision: keep SYNC-03 as written, expressed on the fields that were observed: eligible when
-`isCancelled=false`, `isAllDay=false`, `sensitivity=normal` and (`isOrganizer=true` or `responseStatus.response`
-in `accepted`, `tentativelyAccepted`). Use `isOrganizer` as the organizer signal and never
-`responseStatus.response == organizer`, which is not returned for personal blocks. Blocks without attendees
-(S8) are therefore eligible through `isOrganizer`; `attendees` is not needed to detect them.
+Decision: SYNC-03 was revised by the product owner on 2026-10-19 (REQUIREMENTS.md and PROJECT.md, commit
+6ecb6da0): every timed meeting is a suggestion regardless of `responseStatus.response` (`organizer`,
+`accepted`, `tentativelyAccepted`, `notResponded`, `none`). The response is therefore not an eligibility
+signal at all. The only exclusions, each backed by a fixture, are: declined (Graph removes the event, S4),
+cancelled (`isCancelled=true`, S3), all-day (`isAllDay=true`, S7) and private or confidential
+(`sensitivity` other than `normal`, S6). Eligible means `isCancelled=false`, `isAllDay=false` and
+`sensitivity=normal`. This is also what keeps a meeting visible after an organizer reschedule, which resets
+the response to `notResponded` (S5). Organizer-only blocks (S8) are timed events and need no special case;
+`isOrganizer` stays available as a display or labelling signal, never as a filter, and nothing may rely on
+`responseStatus.response == organizer`, which Graph does not return for personal blocks. `attendees` is not
+needed to detect any of these cases.
 
-Evidence: `tests/Fixtures/M365/scenarios/S1.roundA.json`, `tests/Fixtures/M365/scenarios/S1b.roundA.json`, `tests/Fixtures/M365/scenarios/S8.roundA.json`, `tests/Fixtures/M365/scenarios/S8.roundB.json`, `tests/Fixtures/M365/scenarios/S6b.roundA.json`
+Evidence: `tests/Fixtures/M365/scenarios/S1.roundA.json`, `tests/Fixtures/M365/scenarios/S1b.roundA.json`, `tests/Fixtures/M365/scenarios/S5.roundB.json`, `tests/Fixtures/M365/scenarios/S8.roundA.json`, `tests/Fixtures/M365/scenarios/S8.roundB.json`, `tests/Fixtures/M365/scenarios/S6b.roundA.json`
 
 Claim: S1.observed = Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal); direct lookup 200 (isCancelled=false).
+Claim: S5.round_b.present = true
+Claim: S5.observed = Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: present (type=singleInstance, isOrganizer=false, responseStatus=notResponded, sensitivity=normal); direct lookup 200 (isCancelled=false).
 Claim: S1b.observed = Round A: present (type=singleInstance, isOrganizer=true, responseStatus=organizer, sensitivity=normal, attendeesOtherThanOrganizer=1). Round B: present (type=singleInstance, isOrganizer=true, responseStatus=organizer, sensitivity=normal, attendeesOtherThanOrganizer=1); direct lookup 200 (isCancelled=false).
 Claim: S8.round_a.present = true
 Claim: S8.round_b.present = true
