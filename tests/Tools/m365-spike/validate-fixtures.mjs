@@ -293,11 +293,16 @@ const isAlone = (event) => event.isOrganizer === true && attendeesOtherThanOrgan
 const wasChanged = (event) =>
     event.isCancelled === true || event.responseStatus?.response === 'declined';
 
-function isMovedException(event) {
-    if (event.type !== 'exception' || [null, undefined].includes(event.originalStart)) {
+// Graph omits `originalStart` from the default (no `$select`) shape that the scenario files are
+// built from, and returns it only when selected. So the edited-occurrence evidence is the
+// event's own `originalStart` or, failing that, the one the same event carries in the
+// `prod-select` page (which selects it); `originalOf` supplies that lookup.
+function isMovedException(event, originalOf = () => undefined) {
+    const originalStart = event.originalStart ?? originalOf(event.id);
+    if (event.type !== 'exception' || [null, undefined].includes(originalStart)) {
         return false;
     }
-    const original = toMs(event.originalStart);
+    const original = toMs(originalStart);
     const current = toMs(event.start?.dateTime);
     return Number.isFinite(original) && Number.isFinite(current) && original !== current;
 }
@@ -333,10 +338,27 @@ function checkRoundA(checker, events, scenarios) {
     checker.check(shifts, 'S2 round A: one UTC time of day only, so there is no DST evidence');
 }
 
-function checkRoundB(checker, events, scenarios) {
+// `originalStart` by event id over one round's prod-select pages, in manifest page order.
+function selectedOriginals(dir, manifest, round) {
+    const originals = new Map();
+    const pages = manifest.files?.calendarview?.[round]?.['prod-select']?.pages;
+    for (const file of Array.isArray(pages) ? pages : []) {
+        const loaded = readJsonFile(dir, file);
+        for (const entry of Array.isArray(loaded.data?.value) ? loaded.data.value : []) {
+            if (isObject(entry) && typeof entry.id === 'string' && 'originalStart' in entry) {
+                originals.set(entry.id, entry.originalStart);
+            }
+        }
+    }
+    return originals;
+}
+
+function checkRoundB(checker, events, scenarios, originals = new Map()) {
     const lookupRecorded = (sid) => Number.isInteger(scenarios[sid]?.round_b?.lookup?.status);
     const isPresent = (sid) => scenarios[sid]?.round_b?.present === true;
-    const edited = events('S2', 'round_b').some(isMovedException);
+    const edited = events('S2', 'round_b').some((event) =>
+        isMovedException(event, (id) => originals.get(id))
+    );
     checker.check(edited, 'S2 round B: no exception whose originalStart differs from start');
     for (const sid of ['S3', 'S4']) {
         if (isPresent(sid)) {
@@ -378,7 +400,7 @@ function runSemantic(dir, round) {
         checkRoundA(checker, events, scenarios);
     }
     if (rounds.includes('B')) {
-        checkRoundB(checker, events, scenarios);
+        checkRoundB(checker, events, scenarios, selectedOriginals(dir, manifest, 'B'));
     }
     for (const [sid, entry] of Object.entries(scenarios)) {
         const sensitivity = /^SYN-(\w+)$/.exec(sid)?.[1];

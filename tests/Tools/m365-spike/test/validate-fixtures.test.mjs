@@ -417,6 +417,31 @@ test('semantic: an S2 series needs DST evidence and an edited occurrence in roun
     assert.ok(hasReason(checkSemantic(moved), /S2 round B.*originalStart/));
 });
 
+test('semantic: an edited occurrence is found through the prod-select originalStart (default shape omits it)', (t) => {
+    // Real Graph: the no-$select shape behind the scenario files has no originalStart; only the
+    // prod-select pages carry it.
+    const { originalStart: _omitted, ...bare } = EDITED;
+    const withBare = (change = () => {}) =>
+        fixtureDir(t, (fixtures) => {
+            setRoundB(fixtures, 'S2', [ROUND_A.S2[0], bare, ROUND_A.S2[2]], { id_equal: true });
+            const pages = fixtures.manifest.files.calendarview.B['prod-select'].pages;
+            for (const file of pages) {
+                for (const item of fixtures.files[file].value) {
+                    if (item.id === bare.id) {
+                        change(item);
+                    }
+                }
+            }
+        });
+    const selected = withBare();
+    const noOriginalAnywhere = withBare((item) => delete item.originalStart);
+    const unmovedInPage = withBare((item) => (item.originalStart = '2026-10-27T10:00:00Z'));
+
+    assert.ok(!hasReason(checkSemantic(selected), /S2 round B/), 'page originalStart is used');
+    assert.ok(hasReason(checkSemantic(noOriginalAnywhere), /S2 round B.*originalStart/));
+    assert.ok(hasReason(checkSemantic(unmovedInPage), /S2 round B.*originalStart/));
+});
+
 test('semantic: the single-scenario facts are checked', (t) => {
     const replaceA = (sid, overrides) => (fixtures) => {
         fixtures.files[scenarioFile(sid, 'A')].value = [event(sid, overrides)];
