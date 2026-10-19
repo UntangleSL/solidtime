@@ -253,7 +253,10 @@ test('guide: a complete minimal guide passes', () => {
 });
 
 test('guide: Calendars.ReadWrite in place of Calendars.Read in the scope string fails', () => {
-    const broken = GUIDE.replaceAll(SCOPES, SCOPES.replace('Calendars.Read', 'Calendars.ReadWrite'));
+    const broken = GUIDE.replaceAll(
+        SCOPES,
+        SCOPES.replace('Calendars.Read', 'Calendars.ReadWrite')
+    );
     const reasons = checkGuide(broken);
     assert.ok(reasons.length > 0);
     assert.ok(reasons.some((reason) => reason.includes('openid profile email')));
@@ -302,7 +305,10 @@ test('guide: a spike URI line with neither marker fails', () => {
 });
 
 test('guide: a spike-AAAA-MM line with neither marker fails', () => {
-    const broken = GUIDE.replace('Descripción `spike-AAAA-MM` (TEMPORAL).', 'Descripción `spike-AAAA-MM`.');
+    const broken = GUIDE.replace(
+        'Descripción `spike-AAAA-MM` (TEMPORAL).',
+        'Descripción `spike-AAAA-MM`.'
+    );
     const reasons = checkGuide(broken);
     assert.ok(reasons.some((reason) => reason.includes('spike-AAAA-MM')));
 });
@@ -363,7 +369,11 @@ test('runbook: a renewal section without AADSTS7000222 fails in both modes', () 
     const renewal = 'Procedimiento. ### Secreto spike: si caduca se crea otro spike.';
     const skeleton = buildRunbook({ renewal });
     assert.ok(checkRunbook(skeleton, skeletonOpts()).some((r) => r.includes('AADSTS7000222')));
-    const final = buildRunbook({ values: finalValues(), verification: FINAL_VERIFICATION, renewal });
+    const final = buildRunbook({
+        values: finalValues(),
+        verification: FINAL_VERIFICATION,
+        renewal,
+    });
     assert.ok(checkRunbook(final, finalOpts()).some((r) => r.includes('AADSTS7000222')));
 });
 
@@ -382,7 +392,9 @@ test('runbook: a Parte 10 (runbook) item with no runbook row or Verificación li
 test('runbook: a missing Verificación secreto de producción line fails', () => {
     const text = buildRunbook({ verification: '- Fecha: PENDIENTE' });
     assert.ok(
-        checkRunbook(text, skeletonOpts()).some((reason) => reason.includes('Secreto de producción'))
+        checkRunbook(text, skeletonOpts()).some((reason) =>
+            reason.includes('Secreto de producción')
+        )
     );
 });
 
