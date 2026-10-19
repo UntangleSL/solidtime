@@ -41,15 +41,15 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Admin actions (Untangle M365 admin, outside Claude's control)**:
 - Create the Entra ID app registration: Web platform, single tenant (Untangle), redirect URIs for local development and the Dokploy HTTPS URL
 - Add the delegated scopes `openid profile email offline_access User.Read Calendars.Read` and grant tenant-wide admin consent
-- Turn on "Assignment required" for the enterprise app and assign the Untangle staff group
+- Keep "Assignment required" = No (tenant-wide access, decision 2026-10-19: Business Standard has no Entra P1); guests are rejected in code (AUTH-02)
 - Create a client secret, record its expiry date, and hand over tenant ID, client ID and secret through a secure channel (never committed to the repo)
 - Confirm which Conditional Access policies (MFA, sign-in frequency, device rules) apply to the app, because they affect token refresh
 - Provide a test mailbox containing a single meeting, a recurring series with an edited occurrence, a cancelled meeting, a declined meeting, a moved meeting, a private meeting, an all-day event and a personal block without attendees
 
 **Requirements**: SETUP-01, SETUP-02, SETUP-03
 **Success Criteria** (what must be TRUE):
-  1. A runbook in the repo documents the app registration (tenant ID, client ID, redirect URIs, scopes, assignment-required group, admin consent) and the client-secret expiry date, with a renewal reminder set at least 30 days before expiry.
-  2. An Untangle account in the assigned group can authorize the app without a per-user consent prompt and receives exactly the configured delegated scopes; an account outside the group is blocked by Entra.
+  1. A runbook in the repo documents the app registration (tenant ID, client ID, redirect URIs, scopes, tenant-wide access setting, admin consent) and the client-secret expiry date, with a renewal reminder set at least 30 days before expiry.
+  2. Two Untangle accounts (the admin and a non-admin member, unassigned) can authorize the app without a per-user consent prompt and receive exactly the configured delegated scopes (tenant-wide access, "assignment required" = No).
   3. Sanitized `calendarView` fixtures recorded from a real Untangle mailbox exist for all eight scenarios: single meeting, recurring occurrences plus an exception, cancelled, declined, moved, private, all-day, and a personal block without attendees.
   4. A decision document backed by those fixtures fixes the occurrence key, the series key (`seriesMasterId` vs alternatives) and exactly how cancelled, declined and moved meetings show up, including with immutable ids and across `@odata.nextLink` continuation requests.
 

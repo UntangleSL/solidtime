@@ -63,7 +63,7 @@ A user opens the solidtime calendar and their Outlook meetings are already there
 ## Constraints
 
 - **Tech stack**: Laravel 13 / PHP 8.3, Vue 3 + Inertia, PostgreSQL 15 — follow existing conventions in `.planning/codebase/CONVENTIONS.md`
-- **Identity provider**: Microsoft Entra ID, single tenant (Untangle) — one app registration; tenant ID, client ID, secret via env
+- **Identity provider**: Microsoft Entra ID, single tenant (Untangle; domains untanglegrowth.com primary + untangle.es) — one app registration; tenant ID, client ID, secret via env (Doppler `vps`, `SOLIDTIME_*`)
 - **Graph scopes**: minimal — `openid profile email offline_access User.Read Calendars.Read` — least privilege
 - **Security**: refresh tokens encrypted at rest (`encrypted` cast), `$hidden`, excluded from audits/logs, state + PKCE validated, deleted with the user
 - **Deployment**: Docker image on Untangle's own Dokploy server — redirect URI must match the Dokploy public URL over HTTPS
@@ -88,6 +88,9 @@ A user opens the solidtime calendar and their Outlook meetings are already there
 | Out-of-sync actions: keep / adjust to Outlook / delete (user-triggered) | Explicit control, never automatic | — Pending |
 | "Always ignore this series" rule in v1 | Same rules table, avoids weekly dismissals | — Pending |
 | Auto-provisioned users get lowest (employee) role; Entra MFA replaces solidtime 2FA for Microsoft sign-ins | Least privilege; MFA enforced by Entra | — Pending |
+| Tenant-wide Microsoft sign-in (no Entra "assignment required"); guests rejected in code; allowed domains `untanglegrowth.com` (primary) + `untangle.es` | Business Standard has no Entra P1 (no group assignment); owner prefers convenience over per-person assignment | — Pending |
+| F1 (freelance) users can sign in with Microsoft but get no meeting suggestions (no Exchange mailbox) | F1 licence has no mailbox | — Pending |
+| Secrets in Doppler project `vps` (configs `dev`/`prd`), keys prefixed `SOLIDTIME_` | One vault for all VPS apps | — Pending |
 | Identity matched on Entra `tid`+`oid`, email only for one-time verified link | Prevent account takeover (nOAuth) | — Pending |
 
 ## Evolution

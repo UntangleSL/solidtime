@@ -7,14 +7,14 @@
 
 ### Setup & Verification (SETUP)
 
-- [ ] **SETUP-01**: An Entra ID app registration exists for the Untangle tenant (Web platform, single tenant, "assignment required" with an Untangle group, redirect URIs for local + Dokploy, delegated scopes `openid profile email offline_access User.Read Calendars.Read`, admin consent granted) and its setup is documented in a runbook including client-secret expiry date
+- [ ] **SETUP-01**: An Entra ID app registration exists for the Untangle tenant (Web platform, single tenant, tenant-wide access ("assignment required" = No; decision 2026-10-19: no Entra P1, Business Standard licences), redirect URIs for local + Dokploy, delegated scopes `openid profile email offline_access User.Read Calendars.Read`, admin consent granted) and its setup is documented in a runbook including client-secret expiry date
 - [ ] **SETUP-02**: Real Graph `calendarView` responses from an Untangle mailbox are recorded as test fixtures covering: single meeting, recurring series occurrences + exception, cancelled meeting, declined meeting, moved meeting, private meeting, all-day event, personal block without attendees
 - [ ] **SETUP-03**: A written decision documents the occurrence key, series key (`seriesMasterId` vs alternatives) and how cancelled/moved meetings appear, based on the fixtures
 
 ### Sign-in with Microsoft (AUTH)
 
 - [ ] **AUTH-01**: User can click "Sign in with Microsoft" on the login page and authenticate with their Untangle M365 account; email/password login keeps working unchanged
-- [ ] **AUTH-02**: Sign-in rejects accounts from other tenants, guest (B2B/#EXT#) users, and email domains outside the configured allowlist, with a clear error message
+- [ ] **AUTH-02**: Sign-in rejects accounts from other tenants, guest (B2B/#EXT#) users, and email domains outside the configured allowlist (default: `untanglegrowth.com` (primary) and `untangle.es`), with a clear error message
 - [ ] **AUTH-03**: On first Microsoft sign-in with no existing account, a solidtime user is created automatically (email verified, no password) and joined to the configured Untangle organization with the lowest (employee) role
 - [ ] **AUTH-04**: On first Microsoft sign-in where a verified non-placeholder solidtime user with the same email (case-insensitive) exists, the Microsoft identity is linked to that user instead of creating a duplicate; unverified password accounts are never silently linked
 - [ ] **AUTH-05**: Subsequent sign-ins match the user by Microsoft identity (`tid` + `oid`), not by email; concurrent first sign-ins never produce duplicate users
@@ -67,7 +67,7 @@
 
 ### Operations (OPS)
 
-- [ ] **OPS-01**: The M365 integration is configured entirely via environment variables (tenant, client id/secret, redirect URI, allowed domain, target organization) and documented for the Dokploy deployment (HTTPS redirect URI behind proxy, trusted proxies)
+- [ ] **OPS-01**: The M365 integration is configured entirely via environment variables (tenant, client id/secret, redirect URI, allowed domains list, target organization) and documented for the Dokploy deployment (HTTPS redirect URI behind proxy, trusted proxies)
 - [ ] **OPS-02**: The integration is disabled cleanly (no login button, no calendar overlay) when M365 env vars are not set
 - [ ] **OPS-03**: Fork code is isolated in its own module with a documented list of touched core files, and an upstream solidtime merge can be performed without conflicts beyond that list
 
