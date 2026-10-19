@@ -32,7 +32,7 @@ sirve para comprobar el bloqueo.
 
 **Regla de oro.** Un secreto o una contraseña **nunca** se pega en un chat, un correo, Teams, un
 ticket ni el repositorio. Solo viaja por el gestor de contraseñas de la empresa, que en Untangle es
-**Doppler** (proyecto `solidtime`) (Parte 10).
+**Doppler** (proyecto `vps`; todos los nombres empiezan por `SOLIDTIME_`) (Parte 10).
 
 Índice: Preparación, Parte 1 (registro), Parte 2 (URI de redirección), Parte 3 (permisos y
 consentimiento), Parte 4 (secretos de cliente), Parte 5 (aplicación empresarial), Parte 6 (acceso
@@ -53,9 +53,11 @@ condicional), Parte 7 (usuarias de prueba y buzón), Parte 8 (escenarios de Outl
    Sin P1 ni P2 no se pueden asignar grupos a una aplicación: en ese caso se asigna a las personas una
    a una (Parte 5) y en la entrega anotas `Modo de asignación: individual`. Con P1 o P2 se asigna un
    grupo, y solo cuentan sus **miembros directos**: los grupos anidados dentro de ese grupo no valen.
-3. **Gestor de contraseñas (Doppler).** En Doppler crea el proyecto `solidtime` con los entornos
-   `dev` y `prd` (si aún no existen). Ahí guardarás los secretos de la Parte 4: el secreto spike en
-   `dev` como `MICROSOFT_CLIENT_SECRET` y el de producción en `prd` con el mismo nombre.
+3. **Gestor de contraseñas (Doppler).** Se usa el proyecto `vps` de Doppler, con sus entornos `dev` y
+   `prd`. Todos los nombres de solidtime empiezan por `SOLIDTIME_` (Doppler los guarda en mayúsculas).
+   Ahí guardarás los secretos de la Parte 4: el de producción en `prd` como
+   `SOLIDTIME_MICROSOFT_CLIENT_SECRET` y el temporal (spike) en `dev` como
+   `SOLIDTIME_M365_SPIKE_CLIENT_SECRET`.
 4. **Usuarias A y B (personas reales).** Hacen falta dos personas con buzón de Exchange Online:
    - **A = tú.** Eres Administrador global: eso no impide hacer la prueba de inicio de sesión sin
      pantalla de permisos, pero un Administrador global se salta la opción «Asignación requerida», así
@@ -185,8 +187,8 @@ pestaña Secretos de cliente (Client secrets) > Nuevo secreto de cliente (New cl
    meses y recomienda menos de 12; nosotros fijamos 180 días.
 3. Pulsa Agregar (Add). Copia **en ese momento** la columna **Valor** (Value). No copies la columna Id.
    de secreto (Secret ID). El Valor solo se muestra una vez.
-4. Pégalo directamente en el gestor de contraseñas: Doppler, proyecto `solidtime`, entorno `prd`,
-   secreto `MICROSOFT_CLIENT_SECRET`. Es el único sitio donde vive: irá a Dokploy en la Fase 2, nunca a
+4. Pégalo directamente en el gestor de contraseñas: Doppler, proyecto `vps`, entorno `prd`,
+   secreto `SOLIDTIME_MICROSOFT_CLIENT_SECRET`. Es el único sitio donde vive: irá a Dokploy en la Fase 2, nunca a
    un portátil.
 5. Apunta la fecha exacta de caducidad y crea un recordatorio en el calendario 45 días antes (como
    mínimo 30), a nombre de un rol de administración y no de una persona concreta.
@@ -218,7 +220,7 @@ será la prueba definitiva de que el secreto funciona.
 2. TEMPORAL: Expira (Expires) también 180 días (6 meses). Debe seguir vigente durante el registro, la
    Ronda A y la Ronda B, y esas fechas dependen de cuándo se preparen los escenarios.
 3. TEMPORAL: lo usa solo la herramienta de captura del desarrollador. Guárdalo únicamente en el
-   gestor de contraseñas (Doppler, proyecto `solidtime`, entorno `dev`, secreto `MICROSOFT_CLIENT_SECRET`).
+   gestor de contraseñas (Doppler, proyecto `vps`, entorno `dev`, secreto `SOLIDTIME_M365_SPIKE_CLIENT_SECRET`).
    Se elimina en la limpieza, de modo que el secreto de producción nunca sale del gestor de contraseñas.
 4. TEMPORAL: si el equipo avisa de que caducó antes de terminar la Ronda B (error AADSTS7000222), crea
    otro igual y entrégalo igual; las capturas ya hechas siguen siendo válidas.
