@@ -7,24 +7,24 @@ Parte 10).
 
 **Nunca secretos aquí.** Este fichero no contiene valores de secretos de cliente, tokens, contraseñas
 ni direcciones de correo reales. Los secretos viajan solo por el gestor de contraseñas de la empresa.
-Mientras la administración no responda, cada valor lleva la marca `PENDIENTE`.
+Los valores se completaron el 2026-10-19, tras el registro y la verificación.
 
 ## Valores del registro
 
 | Clave | Valor |
 | --- | --- |
-| Directory (tenant) ID | PENDIENTE |
-| Application (client) ID | PENDIENTE |
+| Directory (tenant) ID | fad1cfee-2190-49da-ab7f-95c7ed3bd46a |
+| Application (client) ID | 3ec957c9-3350-4585-abaa-4793e28da27d |
 | Redirect URIs | `https://time.untangle.es/auth/microsoft/callback`<br>`https://solidtime.test/auth/microsoft/callback`<br>`http://localhost/auth/microsoft/callback`<br>`http://localhost/m365-spike/callback` (TEMPORAL: se elimina en la limpieza) |
 | Scopes delegados | `openid profile email offline_access User.Read Calendars.Read` |
-| Modo de acceso | PENDIENTE |
+| Modo de acceso | tenant (Asignación requerida = No; sin asignaciones) |
 | Dominios | untanglegrowth.com (primario), untangle.es |
-| Caducidad del secreto de producción | PENDIENTE |
-| Recordatorio de renovación | PENDIENTE |
-| Responsable del recordatorio | PENDIENTE |
-| Caducidad del secreto spike | PENDIENTE |
-| Acceso condicional | PENDIENTE |
-| Dominio Dokploy | PENDIENTE |
+| Caducidad del secreto de producción | 2028-10-19 (secreto `produccion-2026-10`, creado 2026-10-19; 24 meses, ver nota) |
+| Recordatorio de renovación | 2028-09-04 (calendario de Outlook de la administración) |
+| Responsable del recordatorio | Administración de Microsoft 365 (Global Administrator) |
+| Caducidad del secreto spike | 2027-04-19 (secreto `spike-2026-10`, creado 2026-10-19; 6 meses) |
+| Acceso condicional | Sin políticas de acceso condicional; el tenant usa Security Defaults (MFA obligatorio para toda la organización). Sin cambios. |
+| Dominio Dokploy | time.untangle.es |
 
 Notas sobre las claves:
 
@@ -39,18 +39,24 @@ Notas sobre las claves:
   caducidad (recomendado: 45).
 - `Responsable del recordatorio`: un rol de administración, no una persona concreta.
 - `Dominio Dokploy`: `time.untangle.es` (decidido 2026-10-19).
+- `Caducidad del secreto de producción`: desviación de la guía (recomienda 180 días). La propietaria
+  eligió 24 meses (2026-10-19) porque hay una sola persona administradora y el secreto vive solo en
+  Doppler `vps`/`prd`; el recordatorio (2028-09-04) está en su calendario de Outlook, más de 30 días
+  antes de la caducidad.
+- `Acceso condicional`: Security Defaults exige MFA a toda la organización, por eso los inicios de
+  sesión de verificación pasaron por MFA sin necesidad de políticas propias.
 
 ## Verificación
 
-Se rellena cuando la herramienta de captura comprueba el registro con la usuaria de prueba A y la
-usuaria B. Hasta entonces, todo es `PENDIENTE`. Se registra:
+Resultado de la comprobación del registro con la herramienta de captura (`capture.mjs auth` y
+`auth --as B`), con la usuaria de prueba A y la usuaria B. Se registra:
 
-- Fecha de la verificación: PENDIENTE
-- scopeMatches (los permisos devueltos coinciden con los configurados y se emitió refresh token): PENDIENTE
-- Sin pantalla de consentimiento para la usuaria A: PENDIENTE
-- Usuaria B (Alejandro Cava, sin rol de administrador, no asignada) inicia sesión sin pantalla de permisos y recibe los seis permisos: PENDIENTE
-- Acceso condicional (pestaña Acceso condicional del registro de inicio de sesión): PENDIENTE
-- Secreto de producción: Valor comprobado por la administración (tres primeros caracteres coinciden y no es el Id. de secreto): PENDIENTE. La obtención de un token con este secreto se prueba en la Fase 2, en el primer inicio de sesión con Microsoft en Dokploy (criterio 1 de la Fase 2 del ROADMAP); allí AADSTS7000215 indica que el valor guardado es incorrecto y se crea un secreto nuevo según `## Renovación del secreto`.
+- Fecha de la verificación: 2026-10-19
+- scopeMatches (los permisos devueltos coinciden con los configurados y se emitió refresh token): sí, para A y B (scopeMatches true, refreshTokenIssued true, tidMatches true, userType Member). Permisos concedidos: Calendars.Read, email, openid, profile, User.Read; offline_access se evidencia por el refresh token.
+- Sin pantalla de consentimiento para la usuaria A: sí (2026-10-19, segunda ejecución). La primera ejecución mostró la pantalla porque aún no se había concedido el consentimiento de administrador; la administración marcó «Consentir en nombre de su organización» y desde entonces no aparece para nadie.
+- Usuaria B (Alejandro Cava, sin rol de administrador, no asignada) inicia sesión sin pantalla de permisos y recibe los seis permisos: sí (2026-10-19; `auth --as B`: scopeMatches true, refresh token emitido, tid coincide, userType Member, consentPromptShown false)
+- Acceso condicional (pestaña Acceso condicional del registro de inicio de sesión): sin políticas aplicadas; Security Defaults activo (MFA para toda la organización). Sin bloqueos.
+- Secreto de producción: Valor comprobado por la administración (tres primeros caracteres coinciden y no es el Id. de secreto): 2026-10-19 (el primer intento guardó el Id. de secreto por error; se detectó por su formato de GUID de 36 caracteres, se recrearon los secretos y el valor guardado ahora tiene la forma de un Valor, 40 caracteres). La obtención de un token con este secreto se prueba en la Fase 2, en el primer inicio de sesión con Microsoft en Dokploy (criterio 1 de la Fase 2 del ROADMAP); allí AADSTS7000215 indica que el valor guardado es incorrecto y se crea un secreto nuevo según `## Renovación del secreto`.
 
 ## Doppler
 
@@ -118,4 +124,5 @@ secreto y siguen siendo válidos.
 
 | Fecha | Cambio | Quién |
 | --- | --- | --- |
-| 2026-10-19 | Esqueleto creado con valores PENDIENTE | Desarrollo |
+| 2026-10-19 | Esqueleto creado | Desarrollo |
+| 2026-10-19 | Registro creado y verificado | administrador M365 / desarrollador |
