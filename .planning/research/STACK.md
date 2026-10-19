@@ -161,6 +161,8 @@ GET /me/calendarView
     &$top=100
 ```
 
+> Correction (Phase 1 spike, 2026-10-19): see docs/m365/DECISIONS-graph.md § Corrections to earlier research. The production `$select` adds `originalStart` and drops `lastModifiedDateTime`; `Prefer` must be sent on every request, including each `@odata.nextLink`.
+
 Why calendarView and not delta:
 - calendarView expands recurring series server-side into `occurrence` / `exception` / `singleInstance` events, each with its own real start and end. You never have to evaluate RRULE-style recurrence or DST yourself.
 - Delta on calendarView (`/me/calendarView/delta`) does NOT support `$select`, `$filter`, `$orderby`, `$expand` or `$search`. It also returns `@removed` entries for events outside the date range, which you must filter. It needs a stored `deltaLink` per user per window and a re-baseline whenever the window changes, which is exactly what a calendar the user pages through does constantly.

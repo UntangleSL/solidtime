@@ -178,6 +178,8 @@ Mistakes that cause account takeover, data loss, or rewrites.
 - Never sleep on 429: on 429/503 read `Retry-After`, store `throttled_until` on the connection, return cached data immediately, and let the UI show "Outlook is busy, showing last sync".
 - Strict HTTP timeouts on the Graph client (`connectTimeout(3)`, `timeout(10)`), the same discipline CONCERNS.md asks for (Gotenberg lacks it today).
 - Cap window size (e.g. <= 42 days) and page count (e.g. 10 pages of 100 via `Prefer: odata.maxpagesize=100`); always `$select` only `id,iCalUId,seriesMasterId,type,subject,start,end,originalStart,isAllDay,isCancelled,isOrganizer,responseStatus,showAs,sensitivity,attendees(count only)`; never request `body`.
+
+> Correction (Phase 1 spike, 2026-10-19): see docs/m365/DECISIONS-graph.md § Corrections to earlier research. Graph has no `attendees(count only)` projection; the production `$select` does not need `attendees`.
 - Use `$batch` only for the linked-event lookups, and handle per-sub-request 429.
 **Detection:** Load test with a stubbed Graph returning 429; watch for focus-refetch storms in the browser network tab.
 **Phase:** P3 (client policy), P4 (endpoint + frontend query design).
