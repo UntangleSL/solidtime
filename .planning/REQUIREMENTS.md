@@ -105,13 +105,51 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (filled by roadmap) | | |
+| SETUP-01 | Phase 1 | Pending |
+| SETUP-02 | Phase 1 | Pending |
+| SETUP-03 | Phase 1 | Pending |
+| AUTH-01 | Phase 2 | Pending |
+| AUTH-02 | Phase 2 | Pending |
+| AUTH-03 | Phase 2 | Pending |
+| AUTH-04 | Phase 2 | Pending |
+| AUTH-05 | Phase 2 | Pending |
+| AUTH-06 | Phase 2 | Pending |
+| AUTH-07 | Phase 2 | Pending |
+| SEC-01 | Phase 2 | Pending |
+| SEC-02 | Phase 3 | Pending |
+| SEC-03 | Phase 7 | Pending |
+| SEC-04 | Phase 7 | Pending |
+| SYNC-01 | Phase 3 | Pending |
+| SYNC-02 | Phase 3 | Pending |
+| SYNC-03 | Phase 3 | Pending |
+| SYNC-04 | Phase 3 | Pending |
+| SYNC-05 | Phase 3 | Pending |
+| CAL-01 | Phase 3 | Pending |
+| CAL-02 | Phase 3 | Pending |
+| CAL-03 | Phase 3 | Pending |
+| CAL-04 | Phase 3 | Pending |
+| ASGN-01 | Phase 4 | Pending |
+| ASGN-02 | Phase 4 | Pending |
+| ASGN-03 | Phase 4 | Pending |
+| ASGN-04 | Phase 4 | Pending |
+| ASGN-05 | Phase 4 | Pending |
+| RULE-01 | Phase 5 | Pending |
+| RULE-02 | Phase 5 | Pending |
+| RULE-03 | Phase 5 | Pending |
+| RULE-04 | Phase 5 | Pending |
+| RULE-05 | Phase 5 | Pending |
+| OSYNC-01 | Phase 6 | Pending |
+| OSYNC-02 | Phase 6 | Pending |
+| OSYNC-03 | Phase 6 | Pending |
+| OPS-01 | Phase 2 | Pending |
+| OPS-02 | Phase 7 | Pending |
+| OPS-03 | Phase 7 | Pending |
 
 **Coverage:**
 - v1 requirements: 39 total
-- Mapped to phases: 0
-- Unmapped: 39 ⚠️
+- Mapped to phases: 39
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-19*
-*Last updated: 2026-10-19 after initial definition*
+*Last updated: 2026-10-19 after roadmap creation (traceability filled)*
