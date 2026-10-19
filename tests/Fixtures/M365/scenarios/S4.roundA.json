@@ -1,0 +1,82 @@
+{
+  "scenario": "S4",
+  "round": "A",
+  "source_pass": "full-shape",
+  "value": [
+    {
+      "@odata.etag": "W/\"FAKEvcdCVyGrwYrLD8udDbOaurF=\"",
+      "id": "FAKEWorCPwZBwOwZD2M1GRU1VyFKHfJVUY8nH9-VfTJRlE384goPycCG7OUsBg7Wek3_",
+      "changeKey": "FAKEvcdCVyGrwYrLD8udDbOaurF=",
+      "iCalUId": "040000008200E00074C5B7101A82E00803D1F6075E9E02F266F74553447BADBCE3243B7646D80E9C7FB2066472C67BB4CC1F4DFFC728BADF",
+      "subject": "[M365-TEST S4] declined",
+      "type": "singleInstance",
+      "seriesMasterId": null,
+      "occurrenceId": null,
+      "start": {
+        "dateTime": "2026-10-29T11:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-29T11:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "originalStartTimeZone": "Romance Standard Time",
+      "originalEndTimeZone": "Romance Standard Time",
+      "isAllDay": false,
+      "isCancelled": false,
+      "isOrganizer": false,
+      "isOnlineMeeting": false,
+      "isDraft": false,
+      "showAs": "busy",
+      "sensitivity": "normal",
+      "importance": "normal",
+      "responseRequested": true,
+      "allowNewTimeProposals": true,
+      "hideAttendees": false,
+      "responseStatus": {
+        "response": "accepted",
+        "time": "2026-10-19T16:25:00Z"
+      },
+      "recurrence": null,
+      "organizer": {
+        "emailAddress": {
+          "name": "Test User B",
+          "address": "person-b@example.test"
+        }
+      },
+      "attendees": [
+        {
+          "type": "required",
+          "status": {
+            "response": "none",
+            "time": "0001-01-01T00:00:00Z"
+          },
+          "emailAddress": {
+            "name": "Test User B",
+            "address": "person-b@example.test"
+          }
+        },
+        {
+          "type": "required",
+          "status": {
+            "response": "none",
+            "time": "0001-01-01T00:00:00Z"
+          },
+          "emailAddress": {
+            "name": "Test User A",
+            "address": "person-a@example.test"
+          }
+        }
+      ],
+      "location": {
+        "displayName": null
+      },
+      "locations": [],
+      "onlineMeeting": null,
+      "onlineMeetingUrl": null,
+      "webLink": "https://outlook.example.test/calendar/item/FAKEWorCPwZBwOwZD2M1GRU1VyFKHfJVUY8nH9-VfTJRlE384goPycCG7OUsBg7Wek3_",
+      "createdDateTime": "2026-10-19T16:25:41.4065616Z",
+      "lastModifiedDateTime": "2026-10-19T16:25:32.865Z"
+    }
+  ]
+}

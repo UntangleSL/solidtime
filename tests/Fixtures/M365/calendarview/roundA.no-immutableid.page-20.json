@@ -1,0 +1,40 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('00000000-0000-4000-8000-39679b5615fe')/calendarView(id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting)",
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$select=id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-21",
+  "value": [
+    {
+      "@odata.etag": "W/\"FAKEAEpRdxKRrCEb0tfzUUVABGE=\"",
+      "id": "FAKEb8QHiVqy4621Re0kbYVEgqdT3LUUxOd52sxP2rp7xalazKMHshiBAv1U3VPoMBad6Kj_XqqECjL6xcZzwchJeI5Q0GW3o3WrpadmsnBOVmG2oZ9w9AS_PE4PrS62BNfdoo8vgVwC_vZvOoyI8RNsB_veJSjA6BVkQn==",
+      "iCalUId": "040000008200E00074C5B7101A82E00815474E64C77AA93329915EF408C16F357229F05965FE96E1B789DB3984440353DF16F8FEB2802122",
+      "subject": "[M365-TEST S2] series",
+      "type": "occurrence",
+      "seriesMasterId": "FAKEkXsfN0z2yKNxxL7-NxE-FoMgBDLoYFthc5WB6dLz-uGSKISrQFrR4CdMCWbDobSQ1NgOvLiJvpYCt3DI0yNOLeQhnpsAAmkfQ0NHTK1lO6UtkVeOEiC4i6f480-pOePatbWy9O8i2d_aEkLm4M5=",
+      "start": {
+        "dateTime": "2026-11-10T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-10T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "originalStart": "2026-11-10T09:00:00Z",
+      "isAllDay": false,
+      "isCancelled": false,
+      "isOrganizer": false,
+      "isOnlineMeeting": false,
+      "showAs": "busy",
+      "sensitivity": "normal",
+      "responseStatus": {
+        "response": "accepted",
+        "time": "2026-10-19T16:25:00Z"
+      },
+      "organizer": {
+        "emailAddress": {
+          "name": "Test User B",
+          "address": "person-b@example.test"
+        }
+      },
+      "webLink": "https://outlook.example.test/calendar/item/FAKEb8QHiVqy4621Re0kbYVEgqdT3LUUxOd52sxP2rp7xalazKMHshiBAv1U3VPoMBad6Kj_XqqECjL6xcZzwchJeI5Q0GW3o3WrpadmsnBOVmG2oZ9w9AS_PE4PrS62BNfdoo8vgVwC_vZvOoyI8RNsB_veJSjA6BVkQn=="
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('00000000-0000-4000-8000-39679b5615fe')/calendarView",
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-9",
+  "value": [
+    {
+      "@odata.etag": "W/\"FAKEAEpRdxKRrCEb0tfzUUVABGE=\"",
+      "id": "FAKEQPwLSBq3JqdqoKK03SvkjTc_96ShXJ2E4lx7zJdYIWJCguVdt5fnJ9Iy7pIJiQIzrnJ0jV9DCGCYlNh=",
+      "changeKey": "FAKEAEpRdxKRrCEb0tfzUUVABGE=",
+      "iCalUId": "040000008200E00074C5B7101A82E0088987E860EEC3E848A08EE9762E0C6DBF6DBD9B162A41AB2C0B7F9C65D0BDB529CF9226A66095F64B",
+      "subject": "[M365-TEST S2] series",
+      "type": "occurrence",
+      "seriesMasterId": "FAKEGmtHegE7n6J3_6rGQHLKsfQ5bPHWeNIuX_QTpi9PPHv136lzuhveCjLabE-IkqqM",
+      "occurrenceId": "OID.FAKEGmtHegE7n6J3_6rGQHLKsfQ5bPHWeNIuX_QTpi9PPHv136lzuhveCjLabE-IkqqM.2026-10-27",
+      "start": {
+        "dateTime": "2026-10-27T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-27T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "originalStartTimeZone": "Romance Standard Time",
+      "originalEndTimeZone": "Romance Standard Time",
+      "isAllDay": false,
+      "isCancelled": false,
+      "isOrganizer": false,
+      "isOnlineMeeting": false,
+      "isDraft": false,
+      "showAs": "busy",
+      "sensitivity": "normal",
+      "importance": "normal",
+      "responseRequested": true,
+      "allowNewTimeProposals": true,
+      "hideAttendees": false,
+      "responseStatus": {
+        "response": "accepted",
+        "time": "2026-10-19T16:25:00Z"
+      },
+      "recurrence": null,
+      "organizer": {
+        "emailAddress": {
+          "name": "Test User B",
+          "address": "person-b@example.test"
+        }
+      },
+      "attendees": [
+        {
+          "type": "required",
+          "status": {
+            "response": "none",
+            "time": "0001-01-01T00:00:00Z"
+          },
+          "emailAddress": {
+            "name": "Test User B",
+            "address": "person-b@example.test"
+          }
+        },
+        {
+          "type": "required",
+          "status": {
+            "response": "none",
+            "time": "0001-01-01T00:00:00Z"
+          },
+          "emailAddress": {
+            "name": "Test User A",
+            "address": "person-a@example.test"
+          }
+        }
+      ],
+      "location": {
+        "displayName": null
+      },
+      "locations": [],
+      "onlineMeeting": null,
+      "onlineMeetingUrl": null,
+      "webLink": "https://outlook.example.test/calendar/item/FAKEQPwLSBq3JqdqoKK03SvkjTc_96ShXJ2E4lx7zJdYIWJCguVdt5fnJ9Iy7pIJiQIzrnJ0jV9DCGCYlNh=",
+      "createdDateTime": "2026-10-19T16:25:59.353932Z",
+      "lastModifiedDateTime": "2026-10-19T16:25:49.99Z"
+    },
+    {
+      "@odata.etag": "W/\"FAKE6uhzoJ4_eUsPBKhmRyabRpXg67==\"",
+      "id": "FAKE42gaSHxu6SRLn_JI2API2iM16ENMocLGrbHQlOC9tPAvrsqnyz5MGNn95JnD2Are",
+      "changeKey": "FAKE6uhzoJ4_eUsPBKhmRyabRpXg67==",
+      "iCalUId": "040000008200E00074C5B7101A82E008BF35A78E4329331F863A8D9FCC1924F4885ABA7B1931F1011CDB3D96F047DF242DD5B26E1A99C7AB",
+      "subject": "[M365-TEST S8] block",
+      "type": "singleInstance",
+      "seriesMasterId": null,
+      "occurrenceId": null,
+      "start": {
+        "dateTime": "2026-10-27T13:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-27T14:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "originalStartTimeZone": "Romance Standard Time",
+      "originalEndTimeZone": "Romance Standard Time",
+      "isAllDay": false,
+      "isCancelled": false,
+      "isOrganizer": true,
+      "isOnlineMeeting": false,
+      "isDraft": false,
+      "showAs": "busy",
+      "sensitivity": "normal",
+      "importance": "normal",
+      "responseRequested": true,
+      "allowNewTimeProposals": true,
+      "hideAttendees": false,
+      "responseStatus": {
+        "response": "none",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "recurrence": null,
+      "organizer": {
+        "emailAddress": {
+          "name": "Test User A",
+          "address": "person-a@example.test"
+        }
+      },
+      "attendees": [
+        {
+          "type": "required",
+          "status": {
+            "response": "none",
+            "time": "0001-01-01T00:00:00Z"
+          },
+          "emailAddress": {
+            "name": "Test User A",
+            "address": "person-a@example.test"
+          }
+        }
+      ],
+      "location": {
+        "displayName": null
+      },
+      "locations": [],
+      "onlineMeeting": null,
+      "onlineMeetingUrl": null,
+      "webLink": "https://outlook.example.test/calendar/item/FAKE42gaSHxu6SRLn_JI2API2iM16ENMocLGrbHQlOC9tPAvrsqnyz5MGNn95JnD2Are",
+      "createdDateTime": "2026-10-19T16:05:53.5128521Z",
+      "lastModifiedDateTime": "2026-10-19T16:05:54.542188Z"
+    }
+  ]
+}

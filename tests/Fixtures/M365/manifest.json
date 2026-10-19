@@ -1,0 +1,434 @@
+{
+  "captured_at": {
+    "A": "2026-10-19T16:27:59.629Z"
+  },
+  "window": {
+    "start": "2026-10-19T00:00:00Z",
+    "end": "2026-11-16T00:00:00Z"
+  },
+  "outlook_client": "web",
+  "mailbox_timezone": "Romance Standard Time",
+  "files": {
+    "calendarview": {
+      "A": {
+        "prod-select": {
+          "pages": [
+            "calendarview/roundA.prod-select.page-1.json",
+            "calendarview/roundA.prod-select.page-2.json",
+            "calendarview/roundA.prod-select.page-3.json",
+            "calendarview/roundA.prod-select.page-4.json",
+            "calendarview/roundA.prod-select.page-5.json",
+            "calendarview/roundA.prod-select.page-6.json",
+            "calendarview/roundA.prod-select.page-7.json",
+            "calendarview/roundA.prod-select.page-8.json",
+            "calendarview/roundA.prod-select.page-9.json",
+            "calendarview/roundA.prod-select.page-10.json",
+            "calendarview/roundA.prod-select.page-11.json",
+            "calendarview/roundA.prod-select.page-12.json",
+            "calendarview/roundA.prod-select.page-13.json",
+            "calendarview/roundA.prod-select.page-14.json",
+            "calendarview/roundA.prod-select.page-15.json",
+            "calendarview/roundA.prod-select.page-16.json",
+            "calendarview/roundA.prod-select.page-17.json",
+            "calendarview/roundA.prod-select.page-18.json",
+            "calendarview/roundA.prod-select.page-19.json",
+            "calendarview/roundA.prod-select.page-20.json",
+            "calendarview/roundA.prod-select.page-21.json",
+            "calendarview/roundA.prod-select.page-22.json"
+          ],
+          "requests": "calendarview/roundA.prod-select.requests.json",
+          "complete": true
+        },
+        "prefer-separate": {
+          "pages": [
+            "calendarview/roundA.prefer-separate.page-1.json",
+            "calendarview/roundA.prefer-separate.page-2.json",
+            "calendarview/roundA.prefer-separate.page-3.json",
+            "calendarview/roundA.prefer-separate.page-4.json",
+            "calendarview/roundA.prefer-separate.page-5.json",
+            "calendarview/roundA.prefer-separate.page-6.json",
+            "calendarview/roundA.prefer-separate.page-7.json",
+            "calendarview/roundA.prefer-separate.page-8.json",
+            "calendarview/roundA.prefer-separate.page-9.json",
+            "calendarview/roundA.prefer-separate.page-10.json",
+            "calendarview/roundA.prefer-separate.page-11.json",
+            "calendarview/roundA.prefer-separate.page-12.json",
+            "calendarview/roundA.prefer-separate.page-13.json",
+            "calendarview/roundA.prefer-separate.page-14.json",
+            "calendarview/roundA.prefer-separate.page-15.json",
+            "calendarview/roundA.prefer-separate.page-16.json",
+            "calendarview/roundA.prefer-separate.page-17.json",
+            "calendarview/roundA.prefer-separate.page-18.json",
+            "calendarview/roundA.prefer-separate.page-19.json",
+            "calendarview/roundA.prefer-separate.page-20.json",
+            "calendarview/roundA.prefer-separate.page-21.json",
+            "calendarview/roundA.prefer-separate.page-22.json"
+          ],
+          "requests": "calendarview/roundA.prefer-separate.requests.json",
+          "complete": true
+        },
+        "page2-no-prefer": {
+          "pages": [
+            "calendarview/roundA.page2-no-prefer.page-1.json",
+            "calendarview/roundA.page2-no-prefer.page-2.json"
+          ],
+          "requests": "calendarview/roundA.page2-no-prefer.requests.json",
+          "complete": false
+        },
+        "no-immutableid": {
+          "pages": [
+            "calendarview/roundA.no-immutableid.page-1.json",
+            "calendarview/roundA.no-immutableid.page-2.json",
+            "calendarview/roundA.no-immutableid.page-3.json",
+            "calendarview/roundA.no-immutableid.page-4.json",
+            "calendarview/roundA.no-immutableid.page-5.json",
+            "calendarview/roundA.no-immutableid.page-6.json",
+            "calendarview/roundA.no-immutableid.page-7.json",
+            "calendarview/roundA.no-immutableid.page-8.json",
+            "calendarview/roundA.no-immutableid.page-9.json",
+            "calendarview/roundA.no-immutableid.page-10.json",
+            "calendarview/roundA.no-immutableid.page-11.json",
+            "calendarview/roundA.no-immutableid.page-12.json",
+            "calendarview/roundA.no-immutableid.page-13.json",
+            "calendarview/roundA.no-immutableid.page-14.json",
+            "calendarview/roundA.no-immutableid.page-15.json",
+            "calendarview/roundA.no-immutableid.page-16.json",
+            "calendarview/roundA.no-immutableid.page-17.json",
+            "calendarview/roundA.no-immutableid.page-18.json",
+            "calendarview/roundA.no-immutableid.page-19.json",
+            "calendarview/roundA.no-immutableid.page-20.json",
+            "calendarview/roundA.no-immutableid.page-21.json",
+            "calendarview/roundA.no-immutableid.page-22.json"
+          ],
+          "requests": "calendarview/roundA.no-immutableid.requests.json",
+          "complete": true
+        },
+        "experiment-select": {
+          "pages": [
+            "calendarview/roundA.experiment-select.page-1.json",
+            "calendarview/roundA.experiment-select.page-2.json",
+            "calendarview/roundA.experiment-select.page-3.json",
+            "calendarview/roundA.experiment-select.page-4.json",
+            "calendarview/roundA.experiment-select.page-5.json",
+            "calendarview/roundA.experiment-select.page-6.json",
+            "calendarview/roundA.experiment-select.page-7.json",
+            "calendarview/roundA.experiment-select.page-8.json",
+            "calendarview/roundA.experiment-select.page-9.json",
+            "calendarview/roundA.experiment-select.page-10.json",
+            "calendarview/roundA.experiment-select.page-11.json",
+            "calendarview/roundA.experiment-select.page-12.json",
+            "calendarview/roundA.experiment-select.page-13.json",
+            "calendarview/roundA.experiment-select.page-14.json",
+            "calendarview/roundA.experiment-select.page-15.json",
+            "calendarview/roundA.experiment-select.page-16.json",
+            "calendarview/roundA.experiment-select.page-17.json",
+            "calendarview/roundA.experiment-select.page-18.json",
+            "calendarview/roundA.experiment-select.page-19.json",
+            "calendarview/roundA.experiment-select.page-20.json",
+            "calendarview/roundA.experiment-select.page-21.json",
+            "calendarview/roundA.experiment-select.page-22.json"
+          ],
+          "requests": "calendarview/roundA.experiment-select.requests.json",
+          "complete": true
+        },
+        "full-shape": {
+          "pages": [
+            "calendarview/roundA.full-shape.page-1.json",
+            "calendarview/roundA.full-shape.page-2.json",
+            "calendarview/roundA.full-shape.page-3.json",
+            "calendarview/roundA.full-shape.page-4.json",
+            "calendarview/roundA.full-shape.page-5.json",
+            "calendarview/roundA.full-shape.page-6.json",
+            "calendarview/roundA.full-shape.page-7.json",
+            "calendarview/roundA.full-shape.page-8.json",
+            "calendarview/roundA.full-shape.page-9.json",
+            "calendarview/roundA.full-shape.page-10.json",
+            "calendarview/roundA.full-shape.page-11.json",
+            "calendarview/roundA.full-shape.page-12.json",
+            "calendarview/roundA.full-shape.page-13.json",
+            "calendarview/roundA.full-shape.page-14.json",
+            "calendarview/roundA.full-shape.page-15.json",
+            "calendarview/roundA.full-shape.page-16.json",
+            "calendarview/roundA.full-shape.page-17.json",
+            "calendarview/roundA.full-shape.page-18.json",
+            "calendarview/roundA.full-shape.page-19.json",
+            "calendarview/roundA.full-shape.page-20.json",
+            "calendarview/roundA.full-shape.page-21.json",
+            "calendarview/roundA.full-shape.page-22.json"
+          ],
+          "requests": "calendarview/roundA.full-shape.requests.json",
+          "complete": true
+        }
+      }
+    },
+    "id_format": {
+      "A": "calendarview/roundA.id-format.json"
+    },
+    "series": {
+      "A": {
+        "S2": {
+          "master": "series/S2.master.roundA.json",
+          "instances": "series/S2.instances.roundA.json"
+        }
+      }
+    },
+    "me": "me.json",
+    "token_shape": "token-response.shape.json"
+  },
+  "scenarios": {
+    "S1": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S1.roundA.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+    },
+    "S1b": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S1b.roundA.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=organizer, sensitivity=normal, attendeesOtherThanOrganizer=1). Round B: not captured."
+    },
+    "S2": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S2.roundA.json"
+        ],
+        "present": true,
+        "count": 4
+      },
+      "observed": "Round A: present (4 events, first: type=occurrence, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+    },
+    "S3": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S3.roundA.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+    },
+    "S4": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S4.roundA.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+    },
+    "S5": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S5.roundA.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+    },
+    "S5b": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S5b.roundA.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+    },
+    "S6": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S6.roundA.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=organizer, sensitivity=private, attendeesOtherThanOrganizer=1). Round B: not captured."
+    },
+    "S6b": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S6b.roundA.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+    },
+    "S7": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S7.roundA.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=none, isAllDay=true, sensitivity=normal, attendeesOtherThanOrganizer=0). Round B: not captured."
+    },
+    "S8": {
+      "extra": false,
+      "synthetic": false,
+      "round_a": {
+        "files": [
+          "scenarios/S8.roundA.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=none, sensitivity=normal, attendeesOtherThanOrganizer=0). Round B: not captured."
+    },
+    "SYN-confidential": {
+      "extra": true,
+      "synthetic": true,
+      "round_a": {
+        "files": [
+          "scenarios/SYN-confidential.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Synthetic: derived from S6 round A with sensitivity set to confidential; not captured from Outlook."
+    },
+    "SYN-personal": {
+      "extra": true,
+      "synthetic": true,
+      "round_a": {
+        "files": [
+          "scenarios/SYN-personal.json"
+        ],
+        "present": true,
+        "count": 1
+      },
+      "observed": "Synthetic: derived from S6 round A with sensitivity set to personal; not captured from Outlook."
+    }
+  },
+  "experiments": {
+    "prefer_combined": {
+      "status": 200,
+      "utc_on_all_pages": true
+    },
+    "prefer_separate": {
+      "status": 200,
+      "utc_on_all_pages": true
+    },
+    "page2_without_prefer": {
+      "status": 200,
+      "page2_timezones": [
+        "UTC"
+      ],
+      "page2_ids_equal_to_combined": {
+        "equal": 0,
+        "different": 3
+      }
+    },
+    "id_format": {
+      "round": "A",
+      "immutable": {
+        "min_length": 68,
+        "max_length": 84,
+        "charset": "A-Za-z0-9-=_"
+      },
+      "default": {
+        "min_length": 152,
+        "max_length": 168,
+        "charset": "A-Za-z0-9-=_"
+      },
+      "same_value_count": 0,
+      "different_value_count": 14
+    },
+    "select_prod": {
+      "status": 200,
+      "error_code": null,
+      "lastModifiedDateTime_returned": false,
+      "attendees_returned": false
+    },
+    "select_experiment": {
+      "status": 200,
+      "error_code": null,
+      "lastModifiedDateTime_returned": true,
+      "attendees_returned": true
+    },
+    "full_shape_properties": [
+      "@odata.etag",
+      "allowNewTimeProposals",
+      "attendees",
+      "body",
+      "bodyPreview",
+      "categories",
+      "changeKey",
+      "createdDateTime",
+      "end",
+      "hasAttachments",
+      "hideAttendees",
+      "iCalUId",
+      "id",
+      "importance",
+      "isAllDay",
+      "isCancelled",
+      "isDraft",
+      "isOnlineMeeting",
+      "isOrganizer",
+      "isReminderOn",
+      "lastModifiedDateTime",
+      "location",
+      "locations",
+      "occurrenceId",
+      "onlineMeeting",
+      "onlineMeetingProvider",
+      "onlineMeetingUrl",
+      "organizer",
+      "originalEndTimeZone",
+      "originalStartTimeZone",
+      "recurrence",
+      "reminderMinutesBeforeStart",
+      "responseRequested",
+      "responseStatus",
+      "sensitivity",
+      "seriesMasterId",
+      "showAs",
+      "start",
+      "subject",
+      "transactionId",
+      "type",
+      "uid",
+      "webLink"
+    ],
+    "series_master": {
+      "status": 200,
+      "cancelledOccurrences_present": false,
+      "recurrence_present": true
+    },
+    "round_b_lookups": null
+  }
+}

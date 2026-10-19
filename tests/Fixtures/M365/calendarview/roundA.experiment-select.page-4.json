@@ -1,0 +1,65 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('00000000-0000-4000-8000-39679b5615fe')/calendarView(id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting,lastModifiedDateTime,attendees)",
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$select=id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting,lastModifiedDateTime,attendees&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-5",
+  "value": [
+    {
+      "@odata.etag": "W/\"FAKEWIuXytDNL6bFUtHaCECG1q3eow==\"",
+      "id": "FAKEvD-TV_xXmRuIkQIDLxpi-iTEAoVICoGPXY7s5IWKz0dcI6aRk3XBKLY1JOmheiF1",
+      "iCalUId": "040000008200E00074C5B7101A82E00889C2F51587258C2CCC03A30F6C93653AB5212A7E1CDBAF41F95EC37A7A0DC15B37AE9D1EEBC8A8EF",
+      "subject": "[M365-TEST S1b] organizer",
+      "type": "singleInstance",
+      "seriesMasterId": null,
+      "start": {
+        "dateTime": "2026-10-21T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-21T10:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "originalStart": null,
+      "isAllDay": false,
+      "isCancelled": false,
+      "isOrganizer": true,
+      "isOnlineMeeting": true,
+      "showAs": "busy",
+      "sensitivity": "normal",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "organizer": {
+        "emailAddress": {
+          "name": "Test User A",
+          "address": "person-a@example.test"
+        }
+      },
+      "attendees": [
+        {
+          "type": "required",
+          "status": {
+            "response": "none",
+            "time": "0001-01-01T00:00:00Z"
+          },
+          "emailAddress": {
+            "name": "Test User A",
+            "address": "person-a@example.test"
+          }
+        },
+        {
+          "type": "required",
+          "status": {
+            "response": "accepted",
+            "time": "2026-10-19T16:08:11.8763308Z"
+          },
+          "emailAddress": {
+            "name": "Test User B",
+            "address": "person-b@example.test"
+          }
+        }
+      ],
+      "webLink": "https://outlook.example.test/calendar/item/FAKEvD-TV_xXmRuIkQIDLxpi-iTEAoVICoGPXY7s5IWKz0dcI6aRk3XBKLY1JOmheiF1",
+      "lastModifiedDateTime": "2026-10-19T16:10:58.4665149Z"
+    }
+  ]
+}

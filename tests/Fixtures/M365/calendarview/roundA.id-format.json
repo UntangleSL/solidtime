@@ -1,0 +1,15 @@
+{
+  "round": "A",
+  "immutable": {
+    "min_length": 68,
+    "max_length": 84,
+    "charset": "A-Za-z0-9-=_"
+  },
+  "default": {
+    "min_length": 152,
+    "max_length": 168,
+    "charset": "A-Za-z0-9-=_"
+  },
+  "same_value_count": 0,
+  "different_value_count": 14
+}

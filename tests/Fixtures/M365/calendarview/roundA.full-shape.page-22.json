@@ -1,0 +1,4 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('00000000-0000-4000-8000-39679b5615fe')/calendarView",
+  "value": []
+}

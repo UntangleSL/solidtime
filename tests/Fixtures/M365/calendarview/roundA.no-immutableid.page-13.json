@@ -1,0 +1,74 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('00000000-0000-4000-8000-39679b5615fe')/calendarView(id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting)",
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$select=id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-14",
+  "value": [
+    {
+      "@odata.etag": "W/\"FAKEc4f2BAYRaA-lhW4A_NfWPYEWyZ==\"",
+      "id": "FAKEOrAqFywBhejIFvu-tClxOruovw2wjbFoyKeY00XquZ5SmK5p7laqOTY0ODsJKeBoWZ75uqPiTdD3f7lQHxHuHGkIS8rQGse1dyCXwlWw4u_VBiSkLSeDPniu3oY_l78wWYY2GOnJMns0Bopqt-M=",
+      "iCalUId": "040000008200E00074C5B7101A82E008F7154FA7174265C10806B6DD713642EA0A4EF9F8B8D23B94227FE77438C4B1C3A589D496CC0B1224",
+      "subject": "[M365-TEST S6] private",
+      "type": "singleInstance",
+      "seriesMasterId": null,
+      "start": {
+        "dateTime": "2026-11-02T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-02T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "originalStart": null,
+      "isAllDay": false,
+      "isCancelled": false,
+      "isOrganizer": true,
+      "isOnlineMeeting": true,
+      "showAs": "busy",
+      "sensitivity": "private",
+      "responseStatus": {
+        "response": "organizer",
+        "time": "0001-01-01T00:00:00Z"
+      },
+      "organizer": {
+        "emailAddress": {
+          "name": "Test User A",
+          "address": "person-a@example.test"
+        }
+      },
+      "webLink": "https://outlook.example.test/calendar/item/FAKEOrAqFywBhejIFvu-tClxOruovw2wjbFoyKeY00XquZ5SmK5p7laqOTY0ODsJKeBoWZ75uqPiTdD3f7lQHxHuHGkIS8rQGse1dyCXwlWw4u_VBiSkLSeDPniu3oY_l78wWYY2GOnJMns0Bopqt-M="
+    },
+    {
+      "@odata.etag": "W/\"FAKExBrUIyhBzvKSy5YAEwbcPpM_Q9==\"",
+      "id": "FAKE02C23OL1yIzM18RL5aFTX81kh9aJY86N9VcU2L1BX0NJGk735lWNDP2ENxqFLCRJTmaLJXRQ1aeL7FXl6T47B7adCcxTF0_NzaqmtoZ3oLQzddofzPhnkXpkUif2jotrdpkLV6nw2p2ATv1E0XN=",
+      "iCalUId": "040000008200E00074C5B7101A82E00841AF368FF06CB9552C8C31DCD35AA5EF3861A870A7F4E03A5D0BD51C3DDE879C9CCBA4B10DE7809F",
+      "subject": "[M365-TEST S6b] private attendee",
+      "type": "singleInstance",
+      "seriesMasterId": null,
+      "start": {
+        "dateTime": "2026-11-02T11:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-02T11:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "originalStart": null,
+      "isAllDay": false,
+      "isCancelled": false,
+      "isOrganizer": false,
+      "isOnlineMeeting": false,
+      "showAs": "busy",
+      "sensitivity": "normal",
+      "responseStatus": {
+        "response": "accepted",
+        "time": "2026-10-19T16:26:00Z"
+      },
+      "organizer": {
+        "emailAddress": {
+          "name": "Test User B",
+          "address": "person-b@example.test"
+        }
+      },
+      "webLink": "https://outlook.example.test/calendar/item/FAKE02C23OL1yIzM18RL5aFTX81kh9aJY86N9VcU2L1BX0NJGk735lWNDP2ENxqFLCRJTmaLJXRQ1aeL7FXl6T47B7adCcxTF0_NzaqmtoZ3oLQzddofzPhnkXpkUif2jotrdpkLV6nw2p2ATv1E0XN="
+    }
+  ]
+}

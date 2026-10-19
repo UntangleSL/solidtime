@@ -1,0 +1,25 @@
+[
+  {
+    "page": 1,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$select=id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting&$orderby=start/dateTime&$top=3",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 2,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$select=id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-2",
+    "headerNames": [
+      "Authorization",
+      "Accept"
+    ],
+    "preferMode": "none",
+    "status": 200,
+    "errorCode": null
+  }
+]

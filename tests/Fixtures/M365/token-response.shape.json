@@ -1,0 +1,16 @@
+{
+  "keys": [
+    "token_type",
+    "scope",
+    "expires_in",
+    "ext_expires_in",
+    "access_token",
+    "refresh_token",
+    "id_token"
+  ],
+  "tokenType": "Bearer",
+  "scope": "Calendars.Read email openid profile User.Read",
+  "expiresIn": 4202,
+  "refreshTokenIssued": true,
+  "idTokenIssued": true
+}

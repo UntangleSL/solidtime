@@ -1,0 +1,266 @@
+[
+  {
+    "page": 1,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 2,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-2",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 3,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-3",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 4,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-4",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 5,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-5",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 6,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-6",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 7,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-7",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 8,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-8",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 9,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-9",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 10,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-10",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 11,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-11",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 12,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-12",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 13,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-13",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 14,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-14",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 15,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-15",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 16,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-16",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 17,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-17",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 18,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-18",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 19,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-19",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 20,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-20",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 21,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-21",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  },
+  {
+    "page": 22,
+    "url": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-22",
+    "headerNames": [
+      "Authorization",
+      "Accept",
+      "Prefer"
+    ],
+    "preferMode": "combined",
+    "status": 200,
+    "errorCode": null
+  }
+]
