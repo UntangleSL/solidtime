@@ -475,6 +475,19 @@ test('runbook: expiry 800 days after today fails', () => {
     assert.ok(checkRunbook(text, finalOpts()).some((reason) => /730/.test(reason)));
 });
 
+test('runbook: expiry exactly 24 calendar months after today passes even across a leap day', () => {
+    const text = buildRunbook({
+        values: finalValues({ expiry: '2028-10-19', reminderGap: 45 }),
+        verification: FINAL_VERIFICATION,
+    });
+    assert.deepEqual(checkRunbook(text, finalOpts()), []);
+    const over = buildRunbook({
+        values: finalValues({ expiry: '2028-10-20', reminderGap: 45 }),
+        verification: FINAL_VERIFICATION,
+    });
+    assert.ok(checkRunbook(over, finalOpts()).some((reason) => /730/.test(reason)));
+});
+
 test('runbook: --final whose secreto de producción line lacks an ISO date or Fase 2 fails', () => {
     const noDate = FINAL_VERIFICATION.replace('el 2026-10-19 ', '');
     const noPhase = FINAL_VERIFICATION.replace('Fase 2', 'la siguiente fase');

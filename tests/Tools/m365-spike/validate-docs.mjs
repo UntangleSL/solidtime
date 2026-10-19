@@ -495,9 +495,13 @@ function finalRunbookChecks(checker, { values, verification, today }) {
     }
     if (expiry !== null && todayTime !== null) {
         checker.check(expiry > todayTime, 'el secreto de producción ya está caducado');
+        // Entra's maximum is 24 calendar months; across a leap day that is 731 days, so compare
+        // calendar months rather than a fixed 730-day count.
+        const limit = new Date(todayTime);
+        limit.setUTCMonth(limit.getUTCMonth() + 24);
         checker.check(
-            expiry - todayTime <= 730 * DAY_MS,
-            'la caducidad del secreto de producción supera los 730 días desde hoy'
+            expiry <= limit.getTime(),
+            'la caducidad del secreto de producción supera los 24 meses (730 días) desde hoy'
         );
     }
 
