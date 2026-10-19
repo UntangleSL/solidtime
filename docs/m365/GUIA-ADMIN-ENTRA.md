@@ -9,8 +9,9 @@ configuración el equipo podrá entrar con su cuenta de Microsoft 365 y ver sus 
 dentro de solidtime. La aplicación solo **lee** los calendarios: no puede crear, cambiar ni borrar
 nada en Outlook.
 
-**Cuánto tiempo lleva.** Unos 45 minutos para registrar la aplicación (Partes 1 a 5) y entregar los
-datos (Parte 10).
+**Cuánto tiempo lleva.** Unos 45 minutos para registrar la aplicación (Partes 1 a 5). Las Partes 6 a 9
+preparan las cuentas de prueba y los eventos de Outlook en dos rondas, y la Parte 10 es la entrega de
+datos.
 
 **Idioma del portal.** Las etiquetas en español de Microsoft cambian de una versión del portal a
 otra. Por eso cada etiqueta lleva la etiqueta en inglés entre paréntesis. Si algo no coincide,
@@ -29,8 +30,9 @@ ese único paso cuando lo tengas.
 ticket ni el repositorio. Solo viaja por el gestor de contraseñas de la empresa (Parte 10).
 
 Índice: Preparación, Parte 1 (registro), Parte 2 (URI de redirección), Parte 3 (permisos y
-consentimiento), Parte 4 (secretos de cliente), Parte 5 (aplicación empresarial) y Parte 10
-(entrega).
+consentimiento), Parte 4 (secretos de cliente), Parte 5 (aplicación empresarial), Parte 6 (acceso
+condicional), Parte 7 (usuarias de prueba y buzón), Parte 8 (escenarios de Outlook, Ronda A), Parte 9
+(modificaciones, Ronda B) y Parte 10 (entrega).
 
 ## Preparación
 
@@ -253,6 +255,155 @@ Administradores globales se saltan esta comprobación, por eso las usuarias de p
 Usuarios y grupos lista el grupo (o las personas) con el rol Acceso predeterminado, y Propiedades
 muestra ¿Asignación requerida? = Sí. Más adelante, el intento de la usuaria B debe fallar con
 AADSTS50105.
+
+## Parte 6 – Revisión de acceso condicional
+
+**Qué hacer**
+
+1. Entra ID > Acceso condicional (Conditional Access) > Directivas (Policies).
+2. Revisa cada directiva **activada** cuyos usuarios incluyan al grupo del personal o a «Todos los usuarios» y cuyos recursos de destino incluyan «Todos los recursos» (All resources), Office 365, Exchange Online o Microsoft Graph. De cada una apunta si exige:
+   - Autenticación multifactor (MFA).
+   - Frecuencia de inicio de sesión (sign-in frequency).
+   - Dispositivo compatible o unido de forma híbrida (compliant or hybrid-joined device).
+   - Ubicaciones con nombre (named locations).
+   - Riesgo de inicio de sesión o de usuario (sign-in or user risk).
+   - Protección de tokens (token protection).
+   - Bloqueo de la autenticación heredada (block legacy authentication).
+   - Bloqueo del flujo de código de dispositivo (block device code flow).
+3. Sin salir de Directivas, pulsa ¿Qué Pasaría Si? (What If) y rellena:
+   - Usuario (User): la usuaria A.
+   - Recursos de destino (Target resources): la aplicación `solidtime-m365`, buscándola por su Application (client) ID. No uses el grupo «Office 365»: no coincide con esta aplicación.
+   - Plataforma de dispositivo (Device platform): Windows.
+   - Aplicaciones cliente (Client apps): Explorador (Browser).
+   - Pulsa ¿Qué Pasaría Si? (What If) y apunta qué directivas se aplican y qué exigen.
+4. Cuando el equipo te avise de que ha hecho el primer inicio de sesión con la usuaria A (después de tu «Registro listo»; es la Entrega 1), entra en Supervisión y estado (Monitoring & health) > Registros de inicio de sesión (Sign-in logs), abre el inicio de sesión de A y mira la pestaña Acceso condicional (Conditional Access) y la columna Audiencia (Audience). Apunta las directivas aplicadas y el resultado. Comprueba también que el intento fallido de la usuaria B aparece con AADSTS50105.
+5. Anota todo como «hallazgos de acceso condicional» para la entrega. Esta guía no te pide ninguna exclusión: cualquier excepción es decisión tuya.
+
+**Por qué**
+
+Estas directivas deciden si el portátil de desarrollo puede iniciar sesión y cada cuánto tiempo hay que renovar las sesiones de la aplicación (se tendrá en cuenta en la Fase 3). Saberlo ahora evita bloqueos inesperados durante las capturas.
+
+**Cómo comprobarlo**
+
+Tienes una lista de las directivas que afectan a la aplicación (o la anotación «ninguna») y el resultado de ¿Qué Pasaría Si? para la usuaria A. Tras la Entrega 1, el registro de inicio de sesión de A muestra las mismas directivas con resultado Éxito (Success).
+
+## Parte 7 – Usuarias de prueba y buzón
+
+**Qué hacer**
+
+1. Crea o confirma las dos usuarias de prueba, A y B, en Entra ID > Usuarios (Users) > Todos los usuarios (All users). Las dos con licencia que incluya un buzón de Exchange Online y **sin ningún rol de administrador**.
+2. La usuaria A es miembro directo del grupo asignado en la Parte 5 (o está asignada una a una si no hay P1 ni P2). La usuaria B no está asignada.
+3. Entra con cada una en Outlook en la web, en una ventana privada (InPrivate): `https://outlook.office.com/calendar`. Usa una ventana privada distinta para cada cuenta.
+4. En cada buzón pon la zona horaria en (UTC+01:00) Bruselas, Copenhague, Madrid, París: Configuración (Settings, la rueda) > General > Idioma y hora (Language and time) > Zona horaria (Time zone); si no la encuentras, busca «zona horaria» en el cuadro de búsqueda de Configuración.
+5. Si alguna directiva de acceso condicional lo exige, registra el método de autenticación multifactor de las dos cuentas.
+6. Comparte las credenciales de A y de B con el desarrollador **solo** por el gestor de contraseñas.
+7. Envía el aviso «Registro listo» (Entrega 1) con los puntos de la Parte 10 que ya tengas.
+
+**Por qué**
+
+Con cuentas de prueba dedicadas, los calendarios de empleados reales no entran en los datos que se capturan.
+
+**Cómo comprobarlo**
+
+En una ventana privada, Outlook en la web muestra el calendario de A y el de B, con la zona horaria de Madrid. Ninguna de las dos aparece en Entra ID > Roles y administradores (Roles & administrators).
+
+## Parte 8 – Escenarios de Outlook (Ronda A)
+
+**Qué hacer**
+
+Usa **Outlook en la web** para todos los pasos y apunta qué cliente de Outlook usas (web, nuevo o clásico): los menús cambian. Trabaja con dos ventanas privadas, una con la sesión de A y otra con la de B.
+
+**Regla del asunto (obligatoria):** el asunto empieza con la etiqueta entre corchetes, exactamente como en la tabla, por ejemplo `[M365-TEST S1] single`. La etiqueta identifica cada escenario y evita que entren datos reales.
+
+Cómo se crea cada evento: Nuevo evento (New event) > escribe el asunto > fecha y hora (zona Madrid) > Invitar asistentes (Invite attendees) si la tabla lo pide > Enviar (Send) o Guardar. Opciones que aparecen en la tabla: Reunión de Teams (Teams meeting); Repetir (Repeat) > Semanalmente (Weekly); Privado (Private); Todo el día (All day); Mostrar como: Ocupado (Show as: Busy). Para responder una invitación, la persona invitada la abre y pulsa Aceptar (Accept) o Provisional (Tentative), y después Enviar (Send) la respuesta.
+
+**Escenarios obligatorios** (horas en Europe/Madrid):
+
+| ID | Asunto exacto | Quién lo crea | Cuándo | Qué hacer |
+| --- | --- | --- | --- | --- |
+| S1 | `[M365-TEST S1] single` | B organiza | miércoles 2026-10-21, 10:00-10:30 | Invita a A como asistente obligatoria y marca Reunión de Teams (Teams meeting). A pulsa Aceptar (Accept). |
+| S1b | `[M365-TEST S1b] organizer` | A organiza | miércoles 2026-10-21, 12:00-12:30 | A invita a B. |
+| S2 | `[M365-TEST S2] series` | B organiza | semanal, martes 10:00-10:30, desde el martes 2026-10-13, 5 repeticiones | Repetir (Repeat) > Semanalmente (Weekly), termina tras 5 repeticiones. A acepta toda la serie. |
+| S3 | `[M365-TEST S3] cancelled` | B organiza | jueves 2026-10-29, 10:00-10:30 | A pulsa Aceptar (Accept). |
+| S4 | `[M365-TEST S4] declined` | B organiza | jueves 2026-10-29, 12:00-12:30 | A pulsa Aceptar (Accept). Solo la rechazará en la Ronda B. |
+| S5 | `[M365-TEST S5] moved` | B organiza | viernes 2026-10-30, 10:00-10:30 | A pulsa Aceptar (Accept). |
+| S5b | `[M365-TEST S5b] moved week` | B organiza | viernes 2026-10-30, 12:00-12:30 | A pulsa Aceptar (Accept). |
+| S6 | `[M365-TEST S6] private` | A organiza | lunes 2026-11-02, 10:00-10:30 | A invita a B y marca Privado (Private). |
+| S6b | `[M365-TEST S6b] private attendee` | B organiza | lunes 2026-11-02, 12:00-12:30 | B marca Privado (Private) e invita a A. A pulsa Aceptar (Accept). |
+| S7 | `[M365-TEST S7] all day` | A crea | miércoles 2026-11-04 | Marca Todo el día (All day). Sin asistentes. |
+| S8 | `[M365-TEST S8] block` | A crea | miércoles 2026-10-28, 14:00-15:00 | Sin asistentes. Mostrar como: Ocupado (Show as: Busy). |
+
+**Escenarios opcionales (recomendados):**
+
+| ID | Asunto exacto | Quién lo crea | Cuándo | Qué hacer |
+| --- | --- | --- | --- | --- |
+| S7b | `[M365-TEST S7b] two days` | A crea | jueves 2026-11-05 a viernes 2026-11-06 | Marca Todo el día (All day) y pon dos días. Sin asistentes. |
+| E1 | `[M365-TEST E1] series cancel one` | B organiza | semanal, jueves 16:00-16:30, desde el jueves 2026-10-22, 4 repeticiones | A acepta la serie. |
+| E2 | `[M365-TEST E2] series split` | B organiza | semanal, lunes 16:00-16:30, desde el lunes 2026-10-19, 4 repeticiones | A acepta la serie. |
+| E3 | `[M365-TEST E3] tentative` | B organiza | martes 2026-10-27, 16:00-16:30 | A responde Provisional (Tentative). |
+| E4 | `[M365-TEST E4] no response` | B organiza | martes 2026-10-27, 17:00-17:30 | A **no** responde. |
+| E5 | `[M365-TEST E5] overnight` | A crea | viernes 2026-11-06 a las 22:00 hasta el sábado 2026-11-07 a las 02:00 | No es de todo el día. Sin asistentes. |
+| E6 | `[M365-TEST E6] series decline one` | B organiza | semanal, miércoles 16:00-16:30, desde el miércoles 2026-10-21, 4 repeticiones | A acepta la serie. |
+
+**Fechas y cambio de hora.** España sale del horario de verano el domingo 2026-10-25. La serie S2 tiene repeticiones antes y después de ese día, algo que las fechas de arriba ya garantizan. La ventana de captura va de 2026-10-19T00:00:00Z a 2026-11-16T00:00:00Z. No pasa nada porque las primeras fechas ya estén en el pasado: Outlook acepta reuniones y series cuya primera repetición ya pasó.
+
+**Alternativa de marzo de 2027.** Si preparas los escenarios después del 2026-11-16, usa estas mismas tablas sumando exactamente 22 semanas (154 días) a cada fecha. Los días de la semana no cambian. El cambio de hora pasa a ser el domingo 2027-03-28 y la ventana de captura va de 2027-03-22T00:00:00Z a 2027-04-19T00:00:00Z. Dile al equipo qué tabla has usado. Conversión de las fechas:
+
+| Fecha de la tabla | Fecha de marzo |
+| --- | --- |
+| 2026-10-13 | 2027-03-16 |
+| 2026-10-19 | 2027-03-22 |
+| 2026-10-21 | 2027-03-24 |
+| 2026-10-22 | 2027-03-25 |
+| 2026-10-27 | 2027-03-30 |
+| 2026-10-28 | 2027-03-31 |
+| 2026-10-29 | 2027-04-01 |
+| 2026-10-30 | 2027-04-02 |
+| 2026-11-02 | 2027-04-05 |
+| 2026-11-03 | 2027-04-06 |
+| 2026-11-04 | 2027-04-07 |
+| 2026-11-05 | 2027-04-08 |
+| 2026-11-06 | 2027-04-09 |
+| 2026-11-07 | 2027-04-10 |
+| 2026-12-09 | 2027-05-12 |
+
+**Al terminar.** Todo debe estar creado y respondido antes de enviar «Ronda A lista». Con ese aviso indica el cliente de Outlook y la zona horaria de los buzones. Después **detente**: no empieces la Parte 9 hasta que el equipo confirme «Ronda A capturada».
+
+**Por qué**
+
+Cada escenario enseña cómo informa Outlook de un tipo distinto de reunión (única, serie, cancelada, rechazada, movida, privada, de todo el día o sin asistentes). Con ellos, solidtime sabrá reconocerlas y tratarlas bien cuando lea los calendarios.
+
+**Cómo comprobarlo**
+
+En el calendario de A, en las semanas del 19 de octubre al 15 de noviembre de 2026 (o las de marzo si usas esa alternativa), aparecen todos los eventos con su etiqueta `[M365-TEST ...]`: S2 en cinco martes, S4, S5 y S3 como aceptadas, S6 y S6b con el candado de privado, S7 como evento de todo el día y S8 como Ocupado.
+
+## Parte 9 – Modificaciones (Ronda B)
+
+**Qué hacer**
+
+Haz esto **solo después** de que el equipo confirme «Ronda A capturada». Cada fila es un cambio que debes enviar de verdad (Enviar, Send) desde la cuenta indicada.
+
+| ID | Quién | Qué hacer |
+| --- | --- | --- |
+| S2 | B | Abre **solo** la repetición del martes 2026-11-03 y elige Este evento (This event). Muévela a 11:00-11:30, cambia el asunto a `[M365-TEST S2] series (edited)` y envía. |
+| S3 | B | Cancela la reunión y envía la cancelación. A **no** debe abrir ni procesar el mensaje de cancelación. Anota si el evento desapareció solo del calendario de A. |
+| S4 | A | Abre la reunión y elige Rechazar (Decline) > Enviar la respuesta ahora (Send the response now). |
+| S5 | B | Cambia la hora a 11:00-11:30 el mismo día (viernes 2026-10-30) y envía la actualización. A no hace nada. |
+| S5b | B | Muévela al miércoles 2026-12-09, 12:00-12:30 (fuera de la ventana de captura) y envía la actualización. |
+| S1, S1b, S6, S6b, S7, S7b, S8, E3, E4, E5 | nadie | Sin cambios. |
+| E1 | B | Abre **solo** la repetición del jueves 2026-11-05, elige Este evento (This event) > Cancelar (Cancel) > Enviar (Send). |
+| E2 | B | Abre la repetición del lunes 2026-11-02 y elige Este y todos los eventos siguientes (This and all following events). Cambia la hora a 17:00-17:30 y envía. |
+| E6 | A | Abre **solo** la repetición del miércoles 2026-11-04 y recházala (Rechazar, Decline), sin tocar el resto de la serie. |
+
+Con la alternativa de marzo, aplica el mismo desplazamiento de 154 días a todas las fechas de esta tabla. Cuando termines, envía «Ronda B lista» con tus notas, por ejemplo si S3 desapareció solo del calendario de A.
+
+**Por qué**
+
+Cada cambio enseña cómo informa Outlook de una reunión movida, cancelada o rechazada a la persona invitada. Eso decide cómo solidtime detectará los registros de tiempo que ya no coinciden con Outlook.
+
+**Cómo comprobarlo**
+
+En el calendario de A, S2 muestra la repetición del 3 de noviembre a las 11:00 con el asunto editado, S4 aparece como rechazada o ya no aparece, S5 muestra las 11:00 y S5b ya no aparece en noviembre.
 
 ## Parte 10 – Entrega
 

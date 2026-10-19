@@ -44,6 +44,9 @@ const HAND_BACK_ITEMS = [
     '- [ ] Secreto spike: solo por el gestor de contraseñas',
 ];
 
+const SCENARIO_IDS = ['S1', 'S1b', 'S2', 'S3', 'S4', 'S5', 'S5b', 'S6', 'S6b', 'S7', 'S8'];
+const ROUND_B_IDS = ['S2', 'S3', 'S4', 'S5', 'S5b'];
+
 function parte(n, title, body = '') {
     return [
         `## Parte ${n} – ${title}`,
@@ -120,10 +123,40 @@ function buildGuide({ handBack = HAND_BACK_ITEMS } = {}) {
             ].join('\n')
         ),
         parte(
+            6,
+            'Acceso condicional',
+            [
+                'Acceso condicional (Conditional Access), ¿Qué Pasaría Si? (What If).',
+                'Registros de inicio de sesión (Sign-in logs).',
+            ].join('\n')
+        ),
+        parte(7, 'Usuarias de prueba', 'Outlook en la web: `https://outlook.office.com/calendar`.'),
+        parte(
+            8,
+            'Escenarios (Ronda A)',
+            [
+                ...SCENARIO_IDS.map((id) => `- \`[M365-TEST ${id}] texto\``),
+                'Todo el día (All day), Privado (Private).',
+                'El cambio de hora es el domingo 2026-10-25.',
+                'Ventana: 2026-10-19T00:00:00Z a 2026-11-16T00:00:00Z.',
+                'Alternativa de marzo: sumar 22 semanas; el cambio es el domingo 2027-03-28.',
+            ].join('\n')
+        ),
+        parte(
+            9,
+            'Modificaciones (Ronda B)',
+            [
+                'Este evento (This event). Este y todos los eventos siguientes',
+                '(This and all following events).',
+                ...ROUND_B_IDS.map((id) => `- ${id}: cambio.`),
+            ].join('\n')
+        ),
+        parte(
             10,
             'Entrega',
             [
                 'Nunca pegues un secreto fuera del gestor de contraseñas.',
+                'Avisos: «Registro listo», «Ronda A lista» y «Ronda B lista».',
                 ...handBack,
             ].join('\n')
         ),
@@ -316,6 +349,35 @@ test('guide: a spike-AAAA-MM line with neither marker fails', () => {
 test('guide: an unmarked mention of Application permissions fails', () => {
     const reasons = checkGuide(`${GUIDE}\nAñade Application permissions (Calendars.ReadWrite).\n`);
     assert.ok(reasons.length > 0);
+});
+
+test('guide: a guide missing scenario S5b fails', () => {
+    const broken = GUIDE.replaceAll('[M365-TEST S5b]', '[M365-TEST S5x]');
+    assert.ok(checkGuide(broken).some((reason) => reason.includes('S5b')));
+});
+
+test('guide: a guide missing the March alternative fails', () => {
+    const noDate = GUIDE.replaceAll('2027-03-28', '2027-03-xx');
+    assert.ok(checkGuide(noDate).some((reason) => reason.includes('2027-03-28')));
+    const noWeeks = GUIDE.replaceAll('22 semanas', 'varias semanas');
+    assert.ok(checkGuide(noWeeks).some((reason) => reason.includes('22 semanas')));
+});
+
+test('guide: Partes 6 to 9 must exist and stay in order before Parte 10', () => {
+    const noParte7 = GUIDE.replace('## Parte 7 –', '## Apartado 7 –');
+    assert.ok(checkGuide(noParte7).some((reason) => reason.includes('Parte 7')));
+    const swapped = GUIDE.replace('## Parte 6 –', '## Parte 99 –').replace(
+        '## Parte 7 –',
+        '## Parte 6 –'
+    );
+    assert.ok(checkGuide(swapped).some((reason) => reason.includes('orden')));
+});
+
+test('guide: Parte 9 must cover the Ronda B scenarios and Parte 10 the notifications', () => {
+    const noS3 = GUIDE.replace('- S3: cambio.', '- Otro: cambio.');
+    assert.ok(checkGuide(noS3).some((reason) => reason.includes('S3')));
+    const noNotice = GUIDE.replaceAll('«Ronda B lista»', '«aviso final»');
+    assert.ok(checkGuide(noNotice).some((reason) => reason.includes('Ronda B lista')));
 });
 
 // ---- runbook ----------------------------------------------------------------------------

@@ -282,7 +282,74 @@ function coreGuideChecks(checker, text) {
     );
 }
 
-const GUIDE_CHECKS = [coreGuideChecks];
+const EXTENDED_PARTES = [6, 7, 8, 9];
+const REQUIRED_SCENARIOS = ['S1', 'S1b', 'S2', 'S3', 'S4', 'S5', 'S5b', 'S6', 'S6b', 'S7', 'S8'];
+const RONDA_B_SCENARIOS = ['S2', 'S3', 'S4', 'S5', 'S5b'];
+const EXTENDED_ENGLISH_LABELS = [
+    'Conditional Access',
+    'What If',
+    'Sign-in logs',
+    'This event',
+    'This and all following events',
+    'All day',
+    'Private',
+];
+const EXTENDED_REQUIRED_TEXT = [
+    '2026-10-25',
+    '2027-03-28',
+    '2026-10-19T00:00:00Z',
+    '2026-11-16T00:00:00Z',
+    '22 semanas',
+    'https://outlook.office.com/calendar',
+];
+const NOTIFICATIONS = ['Registro listo', 'Ronda A lista', 'Ronda B lista'];
+
+function extendedGuideChecks(checker, text) {
+    const lines = normalize(text).split('\n');
+    const sections = splitSections(text);
+    for (const n of EXTENDED_PARTES) {
+        checker.check(hasHeading(text, `Parte ${n}`), `falta el encabezado "## Parte ${n}"`);
+    }
+    const order = lines
+        .map((line) => /^## Parte (\d+)(?!\d)/.exec(line)?.[1])
+        .filter(Boolean)
+        .join(',');
+    checker.check(
+        order === '1,2,3,4,5,6,7,8,9,10',
+        `las Partes deben ir en orden de la 1 a la 10 (orden actual: ${order})`
+    );
+
+    const parte8 = findSection(sections, 'Parte 8')?.body ?? '';
+    for (const id of REQUIRED_SCENARIOS) {
+        checker.check(
+            parte8.includes(`[M365-TEST ${id}]`),
+            `la Parte 8 debe nombrar el escenario ${id} como [M365-TEST ${id}]`
+        );
+    }
+    const parte9 = findSection(sections, 'Parte 9')?.body ?? '';
+    for (const id of RONDA_B_SCENARIOS) {
+        checker.check(
+            new RegExp(`\\b${id}\\b`).test(parte9),
+            `la Parte 9 debe cubrir el escenario ${id}`
+        );
+    }
+
+    for (const needle of EXTENDED_REQUIRED_TEXT) {
+        checker.check(text.includes(needle), `falta el texto obligatorio "${needle}"`);
+    }
+    for (const label of EXTENDED_ENGLISH_LABELS) {
+        checker.check(hasEnglishLabel(text, label), `falta la etiqueta en inglés "(${label})"`);
+    }
+    const parte10 = findSection(sections, 'Parte 10')?.body ?? '';
+    for (const notification of NOTIFICATIONS) {
+        checker.check(
+            parte10.includes(notification),
+            `la Parte 10 debe mencionar el aviso «${notification}»`
+        );
+    }
+}
+
+const GUIDE_CHECKS = [coreGuideChecks, extendedGuideChecks];
 
 function runGuideChecks(text) {
     const checker = createChecker();
