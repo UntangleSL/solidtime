@@ -4,10 +4,10 @@ current_phase: 1
 current_phase_name: Tenant Setup & Outlook Spike
 status: executing
 stopped_at: Completed 01-04-PLAN.md
-last_updated: "2026-10-19T15:22:39.700Z"
+last_updated: "2026-10-19T15:41:25.749Z"
 last_activity: 2026-10-19
 last_activity_desc: Phase 1 execution started
-state_head: dd08bde827dfa4b61aee329c95001e4632bc6297
+state_head: f2581453eccac3cf24424eb4fa5cc9b674d3591e
 progress:
   total_phases: 7
   completed_phases: 0
@@ -84,6 +84,7 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-03: next link and request URLs are rewritten onto the graph.microsoft.com origin with SANITIZED-PAGE-<n> tokens, so fixtures replay as Http::sequence pages and a fake host never leaks
 - [Phase 1]: 01-03: series master files are { scenario, round, value } and instances files { scenario, round, pages }; the manifest files index is the only source of fixture file lists
 - [Phase 1]: 01-04: A line starting with Claim: that breaks the syntax fails; unknown scenarios and paths fail instead of being skipped
+- [Phase 1]: [01-05] Tenant-wide access (2026-10-19): enterprise app Assignment required = No (Business Standard has no Entra P1, guests rejected in code, AUTH-02); the B check is now auth --as B (non-admin Alejandro Cava signs in without consent prompt, six scopes) replacing auth --expect-blocked; harness reads Doppler vps/dev SOLIDTIME_* names, never SOLIDTIME_MICROSOFT_CLIENT_SECRET (auth/capture exit 2, status warns); runbook rows Modo de acceso/Dominios replace Grupo asignado/Modo de asignación
 
 ### Pending Todos
 
@@ -91,7 +92,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 1]: Blocked on the Untangle M365 admin: app registration, admin consent, assignment-required group, client-secret handover, Conditional Access check, and a test mailbox with sample meetings
+- [Phase 1]: Blocked on the Untangle M365 admin: app registration, admin consent, tenant-wide access (Assignment required = No), client-secret handover, Conditional Access check, and real mailboxes (A and B) with sample meetings
 - [Phase 1]: Series identity, cancelled/moved representation and immutable-id stability stay unknown until real fixtures exist; the findings may change the Phase 3-6 schema
 - [Phase 2]: SocialiteProviders on Laravel 13 and Socialite under Octane need a smoke test before building on them
 
