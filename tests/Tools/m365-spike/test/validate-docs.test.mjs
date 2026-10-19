@@ -604,7 +604,8 @@ test('decisions: an Evidence path outside tests/Fixtures/M365/ does not count', 
 
 test('decisions: one Evidence line with a fixture path is enough among several', () => {
     const heading = '## Occurrence key';
-    const lines = ['Decision: Use the id.', 'Evidence: see notes', `Evidence: ${SCENARIO_CITATION}`];
+    const notes = 'Evidence: see notes';
+    const lines = ['Decision: Use the id.', notes, `Evidence: ${SCENARIO_CITATION}`];
     assert.deepEqual(checkDecisions(buildDecisions({ lines: { [heading]: lines } })), []);
 });
 
@@ -631,6 +632,244 @@ test('decisions: a URL from another host does not satisfy the ReadBasic section'
 
 test('decisions: CRLF line endings are accepted', () => {
     assert.deepEqual(checkDecisions(buildDecisions().replace(/\n/g, '\r\n')), []);
+});
+
+// ---- decisions --trace ------------------------------------------------------------------
+
+const PAGE = 'calendarview/roundA.prod-select.page-1.json';
+const MANIFEST = {
+    captured_at: { A: '2026-10-20T10:00:00Z', B: '2026-10-26T10:00:00Z' },
+    window: { start: '2026-10-19T00:00:00Z', end: '2026-10-31T00:00:00Z' },
+    outlook_client: 'owa',
+    mailbox_timezone: 'W. Europe Standard Time',
+    files: {
+        me: 'me.json',
+        token_shape: 'token-response.shape.json',
+        calendarview: {
+            A: {
+                'prod-select': {
+                    pages: [PAGE],
+                    requests: 'calendarview/roundA.prod-select.requests.json',
+                    complete: true,
+                },
+            },
+        },
+        id_format: { A: 'calendarview/roundA.id-format.json' },
+        series: { A: { S3: { master: 'series/S3.master.roundA.json' } } },
+        lookups: { B: { S3: 'lookups/S3.roundB.json' } },
+    },
+    scenarios: {
+        S2: {
+            extra: false,
+            synthetic: false,
+            round_a: { files: ['scenarios/S2.roundA.json'], present: true, count: 1 },
+            round_b: {
+                files: ['scenarios/S2.roundB.json'],
+                present: true,
+                count: 1,
+                id_equal: true,
+                lookup: null,
+            },
+            observed: 'It moved.',
+        },
+        S3: {
+            extra: false,
+            synthetic: false,
+            round_a: { files: ['scenarios/S3.roundA.json'], present: true, count: 1 },
+            round_b: {
+                files: [],
+                present: false,
+                count: 0,
+                id_equal: null,
+                lookup: { file: 'lookups/S3.roundB.json', status: 404, isCancelled: null },
+            },
+            observed: 'It disappeared.',
+        },
+        'SYN-confidential': {
+            extra: true,
+            synthetic: true,
+            round_a: { files: ['scenarios/SYN-confidential.json'], present: true, count: 1 },
+        },
+    },
+    experiments: {
+        prefer_combined: { status: 200, utc_on_all_pages: true },
+        select_experiment: { status: 400, error_code: 'ErrorInvalidProperty' },
+        full_shape_properties: ['body', 'subject'],
+        series_master: null,
+    },
+};
+
+const S2_PATH = 'tests/Fixtures/M365/scenarios/S2.roundA.json';
+const S2_B_PATH = 'tests/Fixtures/M365/scenarios/S2.roundB.json';
+const S3_PATH = 'tests/Fixtures/M365/scenarios/S3.roundA.json';
+
+function traceDoc(...extra) {
+    return buildDecisions({
+        lines: {
+            '## Occurrence key': ['Decision: Use the id.', `Evidence: \`${S2_PATH}\``, ...extra],
+        },
+    });
+}
+
+function trace(text, overrides = {}) {
+    return checkDecisions(text, {
+        trace: true,
+        manifest: MANIFEST,
+        exists: () => true,
+        ...overrides,
+    });
+}
+
+const S3_CLAIMS = ['Claim: S3.round_b.present = false', 'Claim: S3.round_b.lookup.status = 404'];
+
+test('decisions --trace: a document citing every path and scenario with true Claims passes', () => {
+    const text = traceDoc(...S3_CLAIMS, 'Claim: experiments.select_experiment.status = 400');
+    assert.deepEqual(trace(text), []);
+});
+
+test('decisions --trace: the structure checks still run', () => {
+    const text = buildDecisions({ skip: ['## Series key'], extra: S3_CLAIMS });
+    assert.ok(trace(text).some((reason) => reason.includes('## Series key')));
+});
+
+test('decisions --trace: a cited path that does not exist fails and names it', () => {
+    const text = traceDoc(...S3_CLAIMS);
+    const reasons = trace(text, { exists: (path) => path !== S2_PATH });
+    assert.equal(reasons.length, 1);
+    assert.ok(reasons[0].includes(S2_PATH));
+});
+
+test('decisions --trace: a cited path that exists but is not in the manifest fails', () => {
+    const stray = 'tests/Fixtures/M365/scenarios/S9.roundA.json';
+    const text = traceDoc(...S3_CLAIMS, `Evidence: \`${stray}\``);
+    const reasons = trace(text);
+    assert.equal(reasons.length, 1);
+    assert.ok(reasons[0].includes(stray));
+});
+
+test('decisions --trace: paths reachable through the files index or a lookup count', () => {
+    const cited = [PAGE, 'lookups/S3.roundB.json', 'series/S3.master.roundA.json', 'me.json'];
+    const lines = cited.map((path) => `Evidence: \`tests/Fixtures/M365/${path}\``);
+    assert.deepEqual(trace(traceDoc(...lines)), []);
+});
+
+test('decisions --trace: the Round B scenario files count as manifest paths', () => {
+    const text = traceDoc(`Evidence: \`${S2_B_PATH}\``, ...S3_CLAIMS);
+    assert.deepEqual(trace(text), []);
+});
+
+test('decisions --trace: a path that climbs out of the fixtures directory fails', () => {
+    const sneaky = 'tests/Fixtures/M365/../M365/scenarios/S2.roundA.json';
+    const reasons = trace(traceDoc(...S3_CLAIMS, `Evidence: \`${sneaky}\``));
+    assert.ok(reasons.some((reason) => reason.includes(sneaky)));
+});
+
+test('decisions --trace: a non-synthetic scenario that is never cited fails', () => {
+    const reasons = trace(traceDoc());
+    assert.equal(reasons.length, 1);
+    assert.ok(reasons[0].includes('S3'));
+});
+
+test('decisions --trace: the synthetic scenario needs no citation', () => {
+    assert.ok(!trace(traceDoc(...S3_CLAIMS)).some((reason) => reason.includes('SYN-')));
+});
+
+test('decisions --trace: a scenario is cited by a path of its own files', () => {
+    assert.deepEqual(trace(traceDoc(`Evidence: \`${S3_PATH}\``)), []);
+});
+
+test('decisions --trace: a scenario is cited by a Claim that starts with its id', () => {
+    assert.deepEqual(trace(traceDoc('Claim: S3.round_a.count = 1')), []);
+});
+
+test('decisions --trace: a path of another scenario does not cite this one', () => {
+    const text = traceDoc(`Evidence: \`${S2_B_PATH}\``);
+    assert.ok(trace(text).some((reason) => reason.includes('S3')));
+});
+
+test('decisions --trace: a Claim that disagrees with the manifest fails with both values', () => {
+    const reasons = trace(traceDoc('Claim: S3.round_b.present = true'));
+    assert.equal(reasons.length, 1);
+    assert.ok(reasons[0].includes('Claim: S3.round_b.present = true'));
+    assert.ok(reasons[0].includes('false'));
+});
+
+test('decisions --trace: Claims match booleans, numbers, strings, null and structures', () => {
+    const claims = [
+        'Claim: S3.round_b.present = false',
+        'Claim: S3.round_b.count = 0',
+        'Claim: S3.round_b.lookup.status = 404',
+        'Claim: S3.round_b.lookup.isCancelled = null',
+        'Claim: experiments.select_experiment.status = 400',
+        'Claim: experiments.select_experiment.error_code = "ErrorInvalidProperty"',
+        'Claim: experiments.select_experiment.error_code = ErrorInvalidProperty',
+        'Claim: experiments.prefer_combined = {"status": 200, "utc_on_all_pages": true}',
+        'Claim: experiments.full_shape_properties = ["body","subject"]',
+        'Claim: experiments.full_shape_properties.1 = subject',
+        'Claim: experiments.series_master = null',
+        'Claim: S2.round_a.files = ["scenarios/S2.roundA.json"]',
+    ];
+    assert.deepEqual(trace(traceDoc(...claims, ...S3_CLAIMS)), []);
+});
+
+test('decisions --trace: a number never matches a different number or a quoted string', () => {
+    for (const claim of [
+        'Claim: experiments.select_experiment.status = 401',
+        'Claim: experiments.select_experiment.status = "400"',
+        'Claim: experiments.select_experiment.error_code = Other',
+        'Claim: experiments.select_experiment.error_code = 400',
+    ]) {
+        const reasons = trace(traceDoc(claim, ...S3_CLAIMS));
+        assert.equal(reasons.length, 1, claim);
+        assert.ok(reasons[0].includes(claim));
+    }
+});
+
+test('decisions --trace: a Claim about an unknown scenario fails instead of being skipped', () => {
+    const reasons = trace(traceDoc('Claim: S9.round_a.present = true', ...S3_CLAIMS));
+    assert.equal(reasons.length, 1);
+    assert.ok(reasons[0].includes('S9'));
+});
+
+test('decisions --trace: a Claim with an unknown path fails instead of being skipped', () => {
+    for (const claim of [
+        'Claim: experiments.nope = 1',
+        'Claim: S2.round_b.nope = 1',
+        'Claim: S2.observed.length = 9',
+        'Claim: S2.__proto__ = 1',
+        'Claim: experiments.constructor = 1',
+        'Claim: S2.round_a..count = 1',
+    ]) {
+        const reasons = trace(traceDoc(claim, ...S3_CLAIMS));
+        assert.equal(reasons.length, 1, claim);
+        assert.ok(reasons[0].includes(claim));
+    }
+});
+
+test('decisions --trace: a line that starts with Claim: but breaks the syntax fails', () => {
+    for (const claim of [
+        'Claim: S3.round_b.present',
+        'Claim: S3 round_b.present = false',
+        'Claim: S3.round_b.present=false',
+        'Claim: SYN-confidential.round_a.count = 1',
+        'Claim: = false',
+    ]) {
+        const reasons = trace(traceDoc(claim, ...S3_CLAIMS));
+        assert.equal(reasons.length, 1, claim);
+        assert.ok(reasons[0].includes(claim));
+    }
+});
+
+test('decisions --trace: without a manifest the check fails and names the manifest', () => {
+    const reasons = checkDecisions(traceDoc(...S3_CLAIMS), { trace: true, manifest: null });
+    assert.equal(reasons.length, 1);
+    assert.ok(reasons[0].toLowerCase().includes('manifiesto'));
+});
+
+test('decisions: without --trace Claims and cited paths are not compared', () => {
+    const text = traceDoc('Claim: S9.nope = 1', 'Evidence: `tests/Fixtures/M365/nope.json`');
+    assert.deepEqual(checkDecisions(text), []);
+    assert.deepEqual(checkDecisions(text, { trace: false, manifest: MANIFEST }), []);
 });
 
 // ---- CLI --------------------------------------------------------------------------------
@@ -691,4 +930,73 @@ test('cli: decisions rejects an unknown flag with usage and exit 2', () => {
     const result = run('decisions', '--nope');
     assert.equal(result.status, 2);
     assert.match(result.stderr, /Usage/i);
+});
+
+async function writeTemp(name, text) {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const file = join(mkdtempSync(join(tmpdir(), 'validate-docs-')), name);
+    writeFileSync(file, text);
+    return file;
+}
+
+const README_CITATION = '`tests/Fixtures/M365/README.md`';
+const README_DOC = buildDecisions({
+    lines: Object.fromEntries(
+        DECISION_HEADINGS.map((heading) => [
+            heading,
+            ['Decision: Documented.', `Evidence: ${README_CITATION}`],
+        ])
+    ),
+    extra: ['Claim: experiments.prefer_combined.status = 200'],
+});
+const SMALL_MANIFEST = JSON.stringify({
+    files: { readme: 'README.md' },
+    scenarios: {},
+    experiments: { prefer_combined: { status: 200 } },
+});
+
+test('cli: decisions --trace on a tree without document and manifest names both files', () => {
+    const result = run('decisions', '--trace');
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /^FAIL decisions: .*DECISIONS-graph\.md/m);
+    assert.match(result.stdout, /^FAIL decisions: .*manifest\.json/m);
+});
+
+test('cli: decisions --trace fails and names the manifest when it cannot be read', async () => {
+    const file = await writeTemp('decisions.md', README_DOC);
+    const missing = run('decisions', '--trace', '--file', file, '--manifest', 'nope/manifest.json');
+    assert.equal(missing.status, 1);
+    assert.match(missing.stdout, /^FAIL decisions: .*nope\/manifest\.json/m);
+    const broken = await writeTemp('manifest.json', '{ not json');
+    const result = run('decisions', '--trace', '--file', file, '--manifest', broken);
+    assert.equal(result.status, 1);
+    assert.ok(result.stdout.includes(broken));
+});
+
+test('cli: decisions --trace passes with a consistent document and manifest', async () => {
+    const file = await writeTemp('decisions.md', README_DOC);
+    const manifest = await writeTemp('manifest.json', SMALL_MANIFEST);
+    const result = run('decisions', '--trace', '--file', file, '--manifest', manifest);
+    assert.equal(result.status, 0, result.stdout);
+    assert.match(result.stdout, /^decisions: OK \(\d+ checks\)$/m);
+});
+
+test('cli: decisions --trace fails when a Claim disagrees with the manifest', async () => {
+    const text = README_DOC.replace('status = 200', 'status = 500');
+    const file = await writeTemp('decisions.md', text);
+    const manifest = await writeTemp('manifest.json', SMALL_MANIFEST);
+    const result = run('decisions', '--trace', '--file', file, '--manifest', manifest);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /^FAIL decisions: .*status = 500/m);
+});
+
+test('cli: decisions --trace fails when the cited file does not exist in the repo', async () => {
+    const text = README_DOC.replaceAll('README.md', 'GONE.md');
+    const file = await writeTemp('decisions.md', text);
+    const gone = SMALL_MANIFEST.replace('README.md', 'GONE.md');
+    const manifest = await writeTemp('manifest.json', gone);
+    const result = run('decisions', '--trace', '--file', file, '--manifest', manifest);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /^FAIL decisions: .*GONE\.md/m);
 });
