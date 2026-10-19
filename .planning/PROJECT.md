@@ -83,6 +83,12 @@ A user opens the solidtime calendar and their Outlook meetings are already there
 | Sync on calendar open + manual button (no webhooks/background job) | Simplest; no public webhook endpoint or worker needed | — Pending |
 | Deploy on own Dokploy | Existing Untangle infra | — Pending |
 | Work on branch `feature/m365-integration` | Keep `main` aligned with upstream | — Pending |
+| Private/confidential Outlook meetings are not shown at all | Avoid leaking private titles into shared timesheets | — Pending |
+| Personal blocks without attendees are shown as suggestions | Focus blocks are often real work; can be ignored/ruled | — Pending |
+| Out-of-sync actions: keep / adjust to Outlook / delete (user-triggered) | Explicit control, never automatic | — Pending |
+| "Always ignore this series" rule in v1 | Same rules table, avoids weekly dismissals | — Pending |
+| Auto-provisioned users get lowest (employee) role; Entra MFA replaces solidtime 2FA for Microsoft sign-ins | Least privilege; MFA enforced by Entra | — Pending |
+| Identity matched on Entra `tid`+`oid`, email only for one-time verified link | Prevent account takeover (nOAuth) | — Pending |
 
 ## Evolution
 
