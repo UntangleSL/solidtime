@@ -1,0 +1,25 @@
+[
+  {
+    "status": 200,
+    "errorCode": null,
+    "body": {
+      "@odata.etag": "W/\"FAKEf-HRbSf00hxd8V6EcVljKL-bU5==\"",
+      "id": "FAKEpH4nlEZC8xBCFQTlln1gOVtxEgg9hbmBk-iA8PqopOX9Sjig9jq_h0YerS_fxhy8",
+      "type": "singleInstance",
+      "seriesMasterId": null,
+      "start": {
+        "dateTime": "2026-10-29T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-29T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isCancelled": true,
+      "responseStatus": {
+        "response": "accepted",
+        "time": "2026-10-19T16:25:00Z"
+      }
+    }
+  }
+]

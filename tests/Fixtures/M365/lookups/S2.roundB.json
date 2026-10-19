@@ -1,0 +1,94 @@
+[
+  {
+    "status": 200,
+    "errorCode": null,
+    "body": {
+      "@odata.etag": "W/\"FAKEdw-mmRDRY2U3meskyEYmHrgLtc==\"",
+      "id": "FAKETrC7CgSl8x8r0_SPGQzni1yNBft55Mfz28ZBQpOts1g50KDHKeQeoSHRuLsfz5RfWXdMC09Nd3IUb1n=",
+      "type": "occurrence",
+      "seriesMasterId": "FAKEGmtHegE7n6J3_6rGQHLKsfQ5bPHWeNIuX_QTpi9PPHv136lzuhveCjLabE-IkqqM",
+      "start": {
+        "dateTime": "2026-10-20T08:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-20T08:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isCancelled": false,
+      "responseStatus": {
+        "response": "accepted",
+        "time": "2026-10-19T16:25:00Z"
+      }
+    }
+  },
+  {
+    "status": 200,
+    "errorCode": null,
+    "body": {
+      "@odata.etag": "W/\"FAKEdw-mmRDRY2U3meskyEYmHrgLtc==\"",
+      "id": "FAKEQPwLSBq3JqdqoKK03SvkjTc_96ShXJ2E4lx7zJdYIWJCguVdt5fnJ9Iy7pIJiQIzrnJ0jV9DCGCYlNh=",
+      "type": "occurrence",
+      "seriesMasterId": "FAKEGmtHegE7n6J3_6rGQHLKsfQ5bPHWeNIuX_QTpi9PPHv136lzuhveCjLabE-IkqqM",
+      "start": {
+        "dateTime": "2026-10-27T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-27T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isCancelled": false,
+      "responseStatus": {
+        "response": "accepted",
+        "time": "2026-10-19T16:25:00Z"
+      }
+    }
+  },
+  {
+    "status": 200,
+    "errorCode": null,
+    "body": {
+      "@odata.etag": "W/\"FAKEdw-mmRDRY2U3meskyEYmHrgLtc==\"",
+      "id": "FAKEGMxaymuDJTiemge7ty3lOvpKr3Cn6WqoF1Wqs2WfUxb8cXPpAfN0VARgRhVZLLK0n_s5dnBqzajpy_C=",
+      "type": "exception",
+      "seriesMasterId": "FAKEGmtHegE7n6J3_6rGQHLKsfQ5bPHWeNIuX_QTpi9PPHv136lzuhveCjLabE-IkqqM",
+      "start": {
+        "dateTime": "2026-11-03T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-03T10:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isCancelled": false,
+      "responseStatus": {
+        "response": "notResponded",
+        "time": "2026-10-19T16:25:00Z"
+      }
+    }
+  },
+  {
+    "status": 200,
+    "errorCode": null,
+    "body": {
+      "@odata.etag": "W/\"FAKEdw-mmRDRY2U3meskyEYmHrgLtc==\"",
+      "id": "FAKEJESqPG92zn2JRs8Sv5kuDqVHyAz-k4eP2MpQiSAQDKvJQxeLsPTg7HRgA1fO-dQFxNSGqLg-qxhNoQ2=",
+      "type": "occurrence",
+      "seriesMasterId": "FAKEGmtHegE7n6J3_6rGQHLKsfQ5bPHWeNIuX_QTpi9PPHv136lzuhveCjLabE-IkqqM",
+      "start": {
+        "dateTime": "2026-11-10T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-10T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isCancelled": false,
+      "responseStatus": {
+        "response": "accepted",
+        "time": "2026-10-19T16:25:00Z"
+      }
+    }
+  }
+]

@@ -1,0 +1,40 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('00000000-0000-4000-8000-39679b5615fe')/calendarView(id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting)",
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$select=id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-12",
+  "value": [
+    {
+      "@odata.etag": "W/\"FAKEHRQIVUvk8iK5lajkGw2O-jEmi0==\"",
+      "id": "FAKEcJuRtMK1Wim2e3U30r6GIrBkzoOc-poXsjvtGtQvCutQFPCv0myYYA6FFymE2RfxZ8i0H5ZoMiexIcSs3DXAchawTNBtaaH7vncq2ygqTwmhpnGxcmTMtichTId_uPGn3aVg4psJ_oSx5E6Jzt_=",
+      "iCalUId": "040000008200E00074C5B7101A82E008BE17BB467F4AAA22F4F3A6DCDDFC798AFECE1F3DD8742903233CA0236057A21E641DEE44ACE4C255",
+      "subject": "[M365-TEST S5] moved",
+      "type": "singleInstance",
+      "seriesMasterId": null,
+      "start": {
+        "dateTime": "2026-10-30T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-30T10:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "originalStart": null,
+      "isAllDay": false,
+      "isCancelled": false,
+      "isOrganizer": false,
+      "isOnlineMeeting": false,
+      "showAs": "tentative",
+      "sensitivity": "normal",
+      "responseStatus": {
+        "response": "notResponded",
+        "time": "2026-10-19T16:25:00Z"
+      },
+      "organizer": {
+        "emailAddress": {
+          "name": "Test User B",
+          "address": "person-b@example.test"
+        }
+      },
+      "webLink": "https://outlook.example.test/calendar/item/FAKEcJuRtMK1Wim2e3U30r6GIrBkzoOc-poXsjvtGtQvCutQFPCv0myYYA6FFymE2RfxZ8i0H5ZoMiexIcSs3DXAchawTNBtaaH7vncq2ygqTwmhpnGxcmTMtichTId_uPGn3aVg4psJ_oSx5E6Jzt_="
+    }
+  ]
+}

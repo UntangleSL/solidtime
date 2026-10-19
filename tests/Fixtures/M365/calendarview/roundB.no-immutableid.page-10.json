@@ -1,0 +1,40 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('00000000-0000-4000-8000-39679b5615fe')/calendarView(id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting)",
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z&endDateTime=2026-11-16T00%3A00%3A00Z&$select=id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting&$orderby=start/dateTime&$top=3&$skip=SANITIZED-PAGE-11",
+  "value": [
+    {
+      "@odata.etag": "W/\"FAKEf-HRbSf00hxd8V6EcVljKL-bU5==\"",
+      "id": "FAKETRidiWS0LsVTWGnHoUepUhzseNca-jhqZSkSESUUbt_KpsDZFLNvhl1tTNYnV1HEpy4rQk_0h6iSKqJexg2Mnxzwk_TUT6w8GSvwoxkLoVTXc7kt9BmNYlnF6ZtAfPlmAwCqEDCv52YAiU8iukf=",
+      "iCalUId": "040000008200E00074C5B7101A82E00827145F4A65C5AA4883BC89BFC0890B9CB4CBF61DAABBDFE25692BF6141F513891AC40414F7CB3F2E",
+      "subject": "Canceled: [M365-TEST S3] cancelled",
+      "type": "singleInstance",
+      "seriesMasterId": null,
+      "start": {
+        "dateTime": "2026-10-29T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-29T09:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "originalStart": null,
+      "isAllDay": false,
+      "isCancelled": true,
+      "isOrganizer": false,
+      "isOnlineMeeting": false,
+      "showAs": "free",
+      "sensitivity": "normal",
+      "responseStatus": {
+        "response": "accepted",
+        "time": "2026-10-19T16:25:00Z"
+      },
+      "organizer": {
+        "emailAddress": {
+          "name": "Test User B",
+          "address": "person-b@example.test"
+        }
+      },
+      "webLink": "https://outlook.example.test/calendar/item/FAKETRidiWS0LsVTWGnHoUepUhzseNca-jhqZSkSESUUbt_KpsDZFLNvhl1tTNYnV1HEpy4rQk_0h6iSKqJexg2Mnxzwk_TUT6w8GSvwoxkLoVTXc7kt9BmNYlnF6ZtAfPlmAwCqEDCv52YAiU8iukf="
+    }
+  ]
+}

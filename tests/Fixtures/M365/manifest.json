@@ -1,6 +1,7 @@
 {
   "captured_at": {
-    "A": "2026-10-19T16:27:59.629Z"
+    "A": "2026-10-19T16:27:59.629Z",
+    "B": "2026-10-19T17:04:30.556Z"
   },
   "window": {
     "start": "2026-10-19T00:00:00Z",
@@ -159,10 +160,156 @@
           "requests": "calendarview/roundA.full-shape.requests.json",
           "complete": true
         }
+      },
+      "B": {
+        "prod-select": {
+          "pages": [
+            "calendarview/roundB.prod-select.page-1.json",
+            "calendarview/roundB.prod-select.page-2.json",
+            "calendarview/roundB.prod-select.page-3.json",
+            "calendarview/roundB.prod-select.page-4.json",
+            "calendarview/roundB.prod-select.page-5.json",
+            "calendarview/roundB.prod-select.page-6.json",
+            "calendarview/roundB.prod-select.page-7.json",
+            "calendarview/roundB.prod-select.page-8.json",
+            "calendarview/roundB.prod-select.page-9.json",
+            "calendarview/roundB.prod-select.page-10.json",
+            "calendarview/roundB.prod-select.page-11.json",
+            "calendarview/roundB.prod-select.page-12.json",
+            "calendarview/roundB.prod-select.page-13.json",
+            "calendarview/roundB.prod-select.page-14.json",
+            "calendarview/roundB.prod-select.page-15.json",
+            "calendarview/roundB.prod-select.page-16.json",
+            "calendarview/roundB.prod-select.page-17.json",
+            "calendarview/roundB.prod-select.page-18.json",
+            "calendarview/roundB.prod-select.page-19.json",
+            "calendarview/roundB.prod-select.page-20.json",
+            "calendarview/roundB.prod-select.page-21.json"
+          ],
+          "requests": "calendarview/roundB.prod-select.requests.json",
+          "complete": true
+        },
+        "prefer-separate": {
+          "pages": [
+            "calendarview/roundB.prefer-separate.page-1.json",
+            "calendarview/roundB.prefer-separate.page-2.json",
+            "calendarview/roundB.prefer-separate.page-3.json",
+            "calendarview/roundB.prefer-separate.page-4.json",
+            "calendarview/roundB.prefer-separate.page-5.json",
+            "calendarview/roundB.prefer-separate.page-6.json",
+            "calendarview/roundB.prefer-separate.page-7.json",
+            "calendarview/roundB.prefer-separate.page-8.json",
+            "calendarview/roundB.prefer-separate.page-9.json",
+            "calendarview/roundB.prefer-separate.page-10.json",
+            "calendarview/roundB.prefer-separate.page-11.json",
+            "calendarview/roundB.prefer-separate.page-12.json",
+            "calendarview/roundB.prefer-separate.page-13.json",
+            "calendarview/roundB.prefer-separate.page-14.json",
+            "calendarview/roundB.prefer-separate.page-15.json",
+            "calendarview/roundB.prefer-separate.page-16.json",
+            "calendarview/roundB.prefer-separate.page-17.json",
+            "calendarview/roundB.prefer-separate.page-18.json",
+            "calendarview/roundB.prefer-separate.page-19.json",
+            "calendarview/roundB.prefer-separate.page-20.json",
+            "calendarview/roundB.prefer-separate.page-21.json"
+          ],
+          "requests": "calendarview/roundB.prefer-separate.requests.json",
+          "complete": true
+        },
+        "page2-no-prefer": {
+          "pages": [
+            "calendarview/roundB.page2-no-prefer.page-1.json",
+            "calendarview/roundB.page2-no-prefer.page-2.json"
+          ],
+          "requests": "calendarview/roundB.page2-no-prefer.requests.json",
+          "complete": false
+        },
+        "no-immutableid": {
+          "pages": [
+            "calendarview/roundB.no-immutableid.page-1.json",
+            "calendarview/roundB.no-immutableid.page-2.json",
+            "calendarview/roundB.no-immutableid.page-3.json",
+            "calendarview/roundB.no-immutableid.page-4.json",
+            "calendarview/roundB.no-immutableid.page-5.json",
+            "calendarview/roundB.no-immutableid.page-6.json",
+            "calendarview/roundB.no-immutableid.page-7.json",
+            "calendarview/roundB.no-immutableid.page-8.json",
+            "calendarview/roundB.no-immutableid.page-9.json",
+            "calendarview/roundB.no-immutableid.page-10.json",
+            "calendarview/roundB.no-immutableid.page-11.json",
+            "calendarview/roundB.no-immutableid.page-12.json",
+            "calendarview/roundB.no-immutableid.page-13.json",
+            "calendarview/roundB.no-immutableid.page-14.json",
+            "calendarview/roundB.no-immutableid.page-15.json",
+            "calendarview/roundB.no-immutableid.page-16.json",
+            "calendarview/roundB.no-immutableid.page-17.json",
+            "calendarview/roundB.no-immutableid.page-18.json",
+            "calendarview/roundB.no-immutableid.page-19.json",
+            "calendarview/roundB.no-immutableid.page-20.json",
+            "calendarview/roundB.no-immutableid.page-21.json"
+          ],
+          "requests": "calendarview/roundB.no-immutableid.requests.json",
+          "complete": true
+        },
+        "experiment-select": {
+          "pages": [
+            "calendarview/roundB.experiment-select.page-1.json",
+            "calendarview/roundB.experiment-select.page-2.json",
+            "calendarview/roundB.experiment-select.page-3.json",
+            "calendarview/roundB.experiment-select.page-4.json",
+            "calendarview/roundB.experiment-select.page-5.json",
+            "calendarview/roundB.experiment-select.page-6.json",
+            "calendarview/roundB.experiment-select.page-7.json",
+            "calendarview/roundB.experiment-select.page-8.json",
+            "calendarview/roundB.experiment-select.page-9.json",
+            "calendarview/roundB.experiment-select.page-10.json",
+            "calendarview/roundB.experiment-select.page-11.json",
+            "calendarview/roundB.experiment-select.page-12.json",
+            "calendarview/roundB.experiment-select.page-13.json",
+            "calendarview/roundB.experiment-select.page-14.json",
+            "calendarview/roundB.experiment-select.page-15.json",
+            "calendarview/roundB.experiment-select.page-16.json",
+            "calendarview/roundB.experiment-select.page-17.json",
+            "calendarview/roundB.experiment-select.page-18.json",
+            "calendarview/roundB.experiment-select.page-19.json",
+            "calendarview/roundB.experiment-select.page-20.json",
+            "calendarview/roundB.experiment-select.page-21.json"
+          ],
+          "requests": "calendarview/roundB.experiment-select.requests.json",
+          "complete": true
+        },
+        "full-shape": {
+          "pages": [
+            "calendarview/roundB.full-shape.page-1.json",
+            "calendarview/roundB.full-shape.page-2.json",
+            "calendarview/roundB.full-shape.page-3.json",
+            "calendarview/roundB.full-shape.page-4.json",
+            "calendarview/roundB.full-shape.page-5.json",
+            "calendarview/roundB.full-shape.page-6.json",
+            "calendarview/roundB.full-shape.page-7.json",
+            "calendarview/roundB.full-shape.page-8.json",
+            "calendarview/roundB.full-shape.page-9.json",
+            "calendarview/roundB.full-shape.page-10.json",
+            "calendarview/roundB.full-shape.page-11.json",
+            "calendarview/roundB.full-shape.page-12.json",
+            "calendarview/roundB.full-shape.page-13.json",
+            "calendarview/roundB.full-shape.page-14.json",
+            "calendarview/roundB.full-shape.page-15.json",
+            "calendarview/roundB.full-shape.page-16.json",
+            "calendarview/roundB.full-shape.page-17.json",
+            "calendarview/roundB.full-shape.page-18.json",
+            "calendarview/roundB.full-shape.page-19.json",
+            "calendarview/roundB.full-shape.page-20.json",
+            "calendarview/roundB.full-shape.page-21.json"
+          ],
+          "requests": "calendarview/roundB.full-shape.requests.json",
+          "complete": true
+        }
       }
     },
     "id_format": {
-      "A": "calendarview/roundA.id-format.json"
+      "A": "calendarview/roundA.id-format.json",
+      "B": "calendarview/roundB.id-format.json"
     },
     "series": {
       "A": {
@@ -170,6 +317,27 @@
           "master": "series/S2.master.roundA.json",
           "instances": "series/S2.instances.roundA.json"
         }
+      },
+      "B": {
+        "S2": {
+          "master": "series/S2.master.roundB.json",
+          "instances": "series/S2.instances.roundB.json"
+        }
+      }
+    },
+    "lookups": {
+      "B": {
+        "S2": "lookups/S2.roundB.json",
+        "S1": "lookups/S1.roundB.json",
+        "S1b": "lookups/S1b.roundB.json",
+        "S8": "lookups/S8.roundB.json",
+        "S3": "lookups/S3.roundB.json",
+        "S4": "lookups/S4.roundB.json",
+        "S5": "lookups/S5.roundB.json",
+        "S5b": "lookups/S5b.roundB.json",
+        "S6": "lookups/S6.roundB.json",
+        "S6b": "lookups/S6b.roundB.json",
+        "S7": "lookups/S7.roundB.json"
       }
     },
     "me": "me.json",
@@ -186,7 +354,20 @@
         "present": true,
         "count": 1
       },
-      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+      "round_b": {
+        "files": [
+          "scenarios/S1.roundB.json"
+        ],
+        "present": true,
+        "count": 1,
+        "id_equal": true,
+        "lookup": {
+          "file": "lookups/S1.roundB.json",
+          "status": 200,
+          "isCancelled": false
+        }
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal); direct lookup 200 (isCancelled=false)."
     },
     "S1b": {
       "extra": false,
@@ -198,7 +379,20 @@
         "present": true,
         "count": 1
       },
-      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=organizer, sensitivity=normal, attendeesOtherThanOrganizer=1). Round B: not captured."
+      "round_b": {
+        "files": [
+          "scenarios/S1b.roundB.json"
+        ],
+        "present": true,
+        "count": 1,
+        "id_equal": true,
+        "lookup": {
+          "file": "lookups/S1b.roundB.json",
+          "status": 200,
+          "isCancelled": false
+        }
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=organizer, sensitivity=normal, attendeesOtherThanOrganizer=1). Round B: present (type=singleInstance, isOrganizer=true, responseStatus=organizer, sensitivity=normal, attendeesOtherThanOrganizer=1); direct lookup 200 (isCancelled=false)."
     },
     "S2": {
       "extra": false,
@@ -210,7 +404,20 @@
         "present": true,
         "count": 4
       },
-      "observed": "Round A: present (4 events, first: type=occurrence, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+      "round_b": {
+        "files": [
+          "scenarios/S2.roundB.json"
+        ],
+        "present": true,
+        "count": 4,
+        "id_equal": true,
+        "lookup": {
+          "file": "lookups/S2.roundB.json",
+          "status": 200,
+          "isCancelled": false
+        }
+      },
+      "observed": "Round A: present (4 events, first: type=occurrence, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: present (4 events, first: type=occurrence, isOrganizer=false, responseStatus=accepted, sensitivity=normal); direct lookup 200 (isCancelled=false)."
     },
     "S3": {
       "extra": false,
@@ -222,7 +429,20 @@
         "present": true,
         "count": 1
       },
-      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+      "round_b": {
+        "files": [
+          "scenarios/S3.roundB.json"
+        ],
+        "present": true,
+        "count": 1,
+        "id_equal": true,
+        "lookup": {
+          "file": "lookups/S3.roundB.json",
+          "status": 200,
+          "isCancelled": true
+        }
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, isCancelled=true, sensitivity=normal); direct lookup 200 (isCancelled=true)."
     },
     "S4": {
       "extra": false,
@@ -234,7 +454,18 @@
         "present": true,
         "count": 1
       },
-      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+      "round_b": {
+        "files": [],
+        "present": false,
+        "count": 0,
+        "id_equal": null,
+        "lookup": {
+          "file": "lookups/S4.roundB.json",
+          "status": 404,
+          "isCancelled": null
+        }
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: absent from calendarView; direct lookup 404 (ErrorItemNotFound)."
     },
     "S5": {
       "extra": false,
@@ -246,7 +477,20 @@
         "present": true,
         "count": 1
       },
-      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+      "round_b": {
+        "files": [
+          "scenarios/S5.roundB.json"
+        ],
+        "present": true,
+        "count": 1,
+        "id_equal": true,
+        "lookup": {
+          "file": "lookups/S5.roundB.json",
+          "status": 200,
+          "isCancelled": false
+        }
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: present (type=singleInstance, isOrganizer=false, responseStatus=notResponded, sensitivity=normal); direct lookup 200 (isCancelled=false)."
     },
     "S5b": {
       "extra": false,
@@ -258,7 +502,18 @@
         "present": true,
         "count": 1
       },
-      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+      "round_b": {
+        "files": [],
+        "present": false,
+        "count": 0,
+        "id_equal": null,
+        "lookup": {
+          "file": "lookups/S5b.roundB.json",
+          "status": 200,
+          "isCancelled": false
+        }
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: absent from calendarView; direct lookup 200 (isCancelled=false)."
     },
     "S6": {
       "extra": false,
@@ -270,7 +525,20 @@
         "present": true,
         "count": 1
       },
-      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=organizer, sensitivity=private, attendeesOtherThanOrganizer=1). Round B: not captured."
+      "round_b": {
+        "files": [
+          "scenarios/S6.roundB.json"
+        ],
+        "present": true,
+        "count": 1,
+        "id_equal": true,
+        "lookup": {
+          "file": "lookups/S6.roundB.json",
+          "status": 200,
+          "isCancelled": false
+        }
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=organizer, sensitivity=private, attendeesOtherThanOrganizer=1). Round B: present (type=singleInstance, isOrganizer=true, responseStatus=organizer, sensitivity=private, attendeesOtherThanOrganizer=1); direct lookup 200 (isCancelled=false)."
     },
     "S6b": {
       "extra": false,
@@ -282,7 +550,20 @@
         "present": true,
         "count": 1
       },
-      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: not captured."
+      "round_b": {
+        "files": [
+          "scenarios/S6b.roundB.json"
+        ],
+        "present": true,
+        "count": 1,
+        "id_equal": true,
+        "lookup": {
+          "file": "lookups/S6b.roundB.json",
+          "status": 200,
+          "isCancelled": false
+        }
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal). Round B: present (type=singleInstance, isOrganizer=false, responseStatus=accepted, sensitivity=normal); direct lookup 200 (isCancelled=false)."
     },
     "S7": {
       "extra": false,
@@ -294,7 +575,20 @@
         "present": true,
         "count": 1
       },
-      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=none, isAllDay=true, sensitivity=normal, attendeesOtherThanOrganizer=0). Round B: not captured."
+      "round_b": {
+        "files": [
+          "scenarios/S7.roundB.json"
+        ],
+        "present": true,
+        "count": 1,
+        "id_equal": true,
+        "lookup": {
+          "file": "lookups/S7.roundB.json",
+          "status": 200,
+          "isCancelled": false
+        }
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=none, isAllDay=true, sensitivity=normal, attendeesOtherThanOrganizer=0). Round B: present (type=singleInstance, isOrganizer=true, responseStatus=none, isAllDay=true, sensitivity=normal, attendeesOtherThanOrganizer=0); direct lookup 200 (isCancelled=false)."
     },
     "S8": {
       "extra": false,
@@ -306,7 +600,20 @@
         "present": true,
         "count": 1
       },
-      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=none, sensitivity=normal, attendeesOtherThanOrganizer=0). Round B: not captured."
+      "round_b": {
+        "files": [
+          "scenarios/S8.roundB.json"
+        ],
+        "present": true,
+        "count": 1,
+        "id_equal": true,
+        "lookup": {
+          "file": "lookups/S8.roundB.json",
+          "status": 200,
+          "isCancelled": false
+        }
+      },
+      "observed": "Round A: present (type=singleInstance, isOrganizer=true, responseStatus=none, sensitivity=normal, attendeesOtherThanOrganizer=0). Round B: present (type=singleInstance, isOrganizer=true, responseStatus=none, sensitivity=normal, attendeesOtherThanOrganizer=0); direct lookup 200 (isCancelled=false)."
     },
     "SYN-confidential": {
       "extra": true,
@@ -429,6 +736,9 @@
       "cancelledOccurrences_present": false,
       "recurrence_present": true
     },
-    "round_b_lookups": null
+    "round_b_lookups": {
+      "200": 13,
+      "404": 1
+    }
   }
 }

@@ -1,0 +1,43 @@
+{
+  "scenario": "S2",
+  "round": "B",
+  "value": [
+    {
+      "@odata.etag": "W/\"FAKEdw-mmRDRY2U3meskyEYmHrgLtc==\"",
+      "id": "FAKEGmtHegE7n6J3_6rGQHLKsfQ5bPHWeNIuX_QTpi9PPHv136lzuhveCjLabE-IkqqM",
+      "iCalUId": "040000008200E00074C5B7101A82E0081456BDB291D25DFE63490422EF79691F84A7CEED2C851E6AD231AD6D4BD76F8AD9DD59330D4F3C1E",
+      "subject": "[M365-TEST S2] series",
+      "type": "seriesMaster",
+      "seriesMasterId": null,
+      "start": {
+        "dateTime": "2026-10-13T08:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-10-13T08:30:00.0000000",
+        "timeZone": "UTC"
+      },
+      "recurrence": {
+        "pattern": {
+          "type": "weekly",
+          "interval": 1,
+          "month": 0,
+          "dayOfMonth": 0,
+          "firstDayOfWeek": "monday",
+          "index": "first",
+          "daysOfWeek": [
+            "tuesday"
+          ]
+        },
+        "range": {
+          "type": "endDate",
+          "startDate": "2026-10-13",
+          "endDate": "2026-11-10",
+          "recurrenceTimeZone": "Romance Standard Time",
+          "numberOfOccurrences": 0
+        }
+      },
+      "cancelledOccurrences": []
+    }
+  ]
+}
