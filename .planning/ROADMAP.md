@@ -166,6 +166,7 @@ Plans:
   2. An admin impersonating a user cannot see that user's meetings or trigger any Graph call with that user's Microsoft token.
   3. With the M365 env vars unset, solidtime shows no Microsoft sign-in button, no meeting suggestions, no Sync button and no rules management, and every core feature works as it does upstream.
   4. Fork code sits in its own module with a documented list of touched core files, and a rehearsed merge of current upstream solidtime conflicts only within that list.
+  5. Entra spike cleanup (remove http://localhost/m365-spike/callback and secret spike-2026-10) once production sign-in works; then mark the guide lines RETIRADO and update the runbook (deferred from Phase 1 by the owner, 2026-10-19).
 
 **Plans**: TBD
 

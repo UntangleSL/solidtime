@@ -15,14 +15,14 @@ Los valores se completaron el 2026-10-19, tras el registro y la verificación.
 | --- | --- |
 | Directory (tenant) ID | fad1cfee-2190-49da-ab7f-95c7ed3bd46a |
 | Application (client) ID | 3ec957c9-3350-4585-abaa-4793e28da27d |
-| Redirect URIs | `https://time.untangle.es/auth/microsoft/callback`<br>`https://solidtime.test/auth/microsoft/callback`<br>`http://localhost/auth/microsoft/callback`<br>`http://localhost/m365-spike/callback` (TEMPORAL: se elimina en la limpieza) |
+| Redirect URIs | `https://time.untangle.es/auth/microsoft/callback`<br>`https://solidtime.test/auth/microsoft/callback`<br>`http://localhost/auth/microsoft/callback`<br>`http://localhost/m365-spike/callback` (TEMPORAL: sigue en Entra; eliminación APLAZADA hasta producción, ver `## Limpieza tras el spike`) |
 | Scopes delegados | `openid profile email offline_access User.Read Calendars.Read` |
 | Modo de acceso | tenant (Asignación requerida = No; sin asignaciones) |
 | Dominios | untanglegrowth.com (primario), untangle.es |
 | Caducidad del secreto de producción | 2028-10-19 (secreto `produccion-2026-10`, creado 2026-10-19; 24 meses, ver nota) |
 | Recordatorio de renovación | 2028-09-04 (calendario de Outlook de la administración) |
 | Responsable del recordatorio | Administración de Microsoft 365 (Global Administrator) |
-| Caducidad del secreto spike | 2027-04-19 (secreto `spike-2026-10`, creado 2026-10-19; 6 meses) |
+| Caducidad del secreto spike | 2027-04-19 (secreto `spike-2026-10`, creado 2026-10-19; 6 meses; sigue en Entra: eliminación APLAZADA hasta producción; su valor ya no existe en Doppler) |
 | Acceso condicional | Sin políticas de acceso condicional; el tenant usa Security Defaults (MFA obligatorio para toda la organización). Sin cambios. |
 | Dominio Dokploy | time.untangle.es |
 
@@ -67,11 +67,13 @@ nunca los valores.
 | Configuración | Clave | Contenido |
 | --- | --- | --- |
 | `prd` | `SOLIDTIME_MICROSOFT_CLIENT_SECRET` | Secreto de producción. La herramienta de captura no lo lee nunca. |
-| `dev` | `SOLIDTIME_M365_SPIKE_CLIENT_SECRET` | Secreto spike (TEMPORAL), solo para la herramienta de captura. |
+| `dev` | `SOLIDTIME_M365_SPIKE_CLIENT_SECRET` | Secreto spike (TEMPORAL), solo para la herramienta de captura. ELIMINADA de Doppler el 2026-10-19 (junto con las otras seis claves `SOLIDTIME_M365_SPIKE_*`); `dev` solo conserva `SOLIDTIME_MICROSOFT_CLIENT_ID` y `SOLIDTIME_MICROSOFT_TENANT_ID`. |
 | `dev` y `prd` | `SOLIDTIME_MICROSOFT_TENANT_ID` | Directory (tenant) ID. |
 | `dev` y `prd` | `SOLIDTIME_MICROSOFT_CLIENT_ID` | Application (client) ID. |
 
-La herramienta de captura se ejecuta así:
+Desde 2026-10-19 las siete claves `SOLIDTIME_M365_SPIKE_*` ya no existen en Doppler y el valor del secreto
+spike no se conserva en ningún sitio utilizable. Una captura nueva necesitaría un secreto spike nuevo
+(guía, Parte 4 b) y volver a cargar las claves en `dev`. La herramienta de captura se ejecutaba así:
 
 ```sh
 doppler run -p vps -c dev -- node tests/Tools/m365-spike/capture.mjs <comando>
@@ -109,17 +111,22 @@ AADSTS7000222):
 4. Se elimina el secreto spike antiguo.
 5. Se actualizan la fila `Caducidad del secreto spike` y `## Historial`.
 
-Las capturas ya hechas, los identificadores inmutables y la sal local de seudónimos no dependen del
-secreto y siguen siendo válidos.
+Las capturas ya hechas y los identificadores inmutables no dependen del secreto y siguen siendo válidos.
+La sal local de seudónimos se borró el 2026-10-19 junto con `raw/`: una captura nueva usaría una sal nueva
+y todos los identificadores de las Rondas A y B cambiarían.
 
 ## Limpieza tras el spike
 
-- [ ] Eliminar el URI `http://localhost/m365-spike/callback` del registro (Autenticación > Web).
-- [ ] Eliminar el secreto `spike-*` en Certificados y secretos.
-- [ ] Borrar en local `tests/Tools/m365-spike/raw/` y `tests/Tools/m365-spike/.env.local`.
-- [ ] Marcar en la guía las líneas que nombran el URI spike y el secreto spike como `RETIRADO <fecha>`.
-- [ ] Actualizar `Redirect URIs` y `Caducidad del secreto spike` en esta tabla (con una nota
-      `(eliminado AAAA-MM-DD)`) y añadir la línea a `## Historial`.
+Estado a 2026-10-19:
+
+- [ ] Eliminar el URI `http://localhost/m365-spike/callback` del registro (Autenticación > Web). APLAZADO hasta producción (decisión de la propietaria 2026-10-19), pendiente en Fase 7 (criterio de éxito de la Fase 7 en el ROADMAP). El URI sigue registrado y las líneas de la guía siguen marcadas TEMPORAL.
+- [ ] Eliminar el secreto `spike-2026-10` en Certificados y secretos. APLAZADO hasta producción (decisión de la propietaria 2026-10-19), pendiente en Fase 7. Caduca el 2027-04-19 aunque no se elimine antes.
+- [x] Eliminar de Doppler (`vps`, `dev`) las siete claves `SOLIDTIME_M365_SPIKE_*`: hecho el 2026-10-19 por la orquestación (comprobado: `dev` solo conserva `SOLIDTIME_MICROSOFT_CLIENT_ID` y `SOLIDTIME_MICROSOFT_TENANT_ID`; `prd` sin cambios). Consecuencia: el valor del secreto spike ya no existe en ningún sitio utilizable y una captura nueva necesitaría un secreto spike nuevo.
+- [x] Borrar en local `tests/Tools/m365-spike/raw/` (datos reales de buzones de prueba, sal e identidad de seudónimos): hecho el 2026-10-19, tras pasar `validate-fixtures --raw` (esquema, semántica, fugas y reproducción de las páginas completas) y con la aprobación de la propietaria. `tests/Tools/m365-spike/.env.local` no existía (se usó Doppler).
+- [ ] Marcar en la guía las líneas que nombran el URI spike y el secreto spike como `RETIRADO <fecha>`. APLAZADO junto con la eliminación en Entra: mientras el URI y el secreto sigan registrados, la guía los mantiene como TEMPORAL y no se marcan RETIRADO.
+- [ ] Al eliminar el URI y el secreto en Entra: actualizar `Redirect URIs` y `Caducidad del secreto spike` en esta tabla (con una nota `(eliminado AAAA-MM-DD)`), marcar la guía como RETIRADO y añadir la línea a `## Historial`.
+
+PHPUnit (`CalendarViewFixturesTest`): no disponible el 2026-10-19 (el equipo de desarrollo no tiene PHP ni Docker); pendiente de CI o Sail. La reproducción en Node de cada secuencia completa de páginas sí pasó (21 o 22 peticiones y 12 o 14 eventos por pasada).
 
 ## Historial
 
@@ -127,3 +134,6 @@ secreto y siguen siendo válidos.
 | --- | --- | --- |
 | 2026-10-19 | Esqueleto creado | Desarrollo |
 | 2026-10-19 | Registro creado y verificado | administrador M365 / desarrollador |
+| 2026-10-19 | Doppler: eliminadas las siete claves `SOLIDTIME_M365_SPIKE_*` de `vps`/`dev` | Orquestación (aprobado por la propietaria) |
+| 2026-10-19 | Local: borrado `tests/Tools/m365-spike/raw/` tras pasar el control de fixtures con raw | Desarrollo |
+| 2026-10-19 | Limpieza en Entra (URI spike y secreto `spike-2026-10`) APLAZADA hasta producción; pendiente en Fase 7 | propietaria (decisión) |
