@@ -18,6 +18,26 @@ export const REQUIRED_SCENARIOS = [
 ];
 export const OPTIONAL_SCENARIOS = ['S7b', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6'];
 
+// Graph lists the organizer as an attendee of an event created without invitees (observed in
+// Outlook web), so "no other attendees" is judged by address, not by the length of the list.
+// Addresses are compared case-insensitively; in sanitized fixtures the pseudonym of one person is
+// stable, so equal pseudonyms mean the same person. Returns null when there is no attendee list;
+// an attendee without an address, or any attendee when the organizer has none, counts as "other".
+export function attendeesOtherThanOrganizer(event) {
+    if (!event || !Array.isArray(event.attendees)) {
+        return null;
+    }
+    const addressOf = (person) => {
+        const address = person?.emailAddress?.address;
+        return typeof address === 'string' && address !== '' ? address.toLowerCase() : null;
+    };
+    const organizer = addressOf(event.organizer);
+    return event.attendees.filter((attendee) => {
+        const address = addressOf(attendee);
+        return organizer === null || address === null || address !== organizer;
+    }).length;
+}
+
 // Every test event carries "[M365-TEST <ID>]" in its subject (Exchange may prepend a prefix such
 // as "Canceled:", so the tag is searched, not anchored). It is the only thing that lets an event
 // reach a committed fixture: an event without the tag is never written, not even pseudonymized.
@@ -264,7 +284,9 @@ function propertyNames(doc) {
         return null;
     }
     const names = taggedEvents(doc).flatMap((event) => Object.keys(event));
-    return unique(names).filter((name) => PROPERTY_NAME.test(name)).sort();
+    return unique(names)
+        .filter((name) => PROPERTY_NAME.test(name))
+        .sort();
 }
 
 function mostFrequentZone(doc) {
@@ -597,6 +619,10 @@ function describeEvent(event, count) {
     }
     if (event.sensitivity !== undefined) {
         facts.push(`sensitivity=${word(event.sensitivity)}`);
+    }
+    const others = event.isOrganizer === true ? attendeesOtherThanOrganizer(event) : null;
+    if (others !== null) {
+        facts.push(`attendeesOtherThanOrganizer=${others}`);
     }
     return `${parts.join('')}${facts.join(', ')}`;
 }

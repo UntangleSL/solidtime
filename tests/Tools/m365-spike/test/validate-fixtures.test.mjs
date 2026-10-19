@@ -472,7 +472,10 @@ test('semantic: S8 accepts an organizer-only attendee list and rejects any other
         hasReason(s8Reasons(withS8({ attendees: [attendee(guest)] })), /S8/),
         'only another attendee fails'
     );
-    assert.ok(hasReason(s8Reasons(withS8({ isOrganizer: false })), /S8/), 'isOrganizer false fails');
+    assert.ok(
+        hasReason(s8Reasons(withS8({ isOrganizer: false })), /S8/),
+        'isOrganizer false fails'
+    );
     assert.ok(
         hasReason(s8Reasons(withS8({ isOrganizer: false, attendees: [attendee(host)] })), /S8/),
         'isOrganizer false fails even with the organizer-only list'
@@ -532,7 +535,10 @@ test('leaks: an e-mail, a link host, a GUID, a token or an id that is not allowe
         const dir = fixtureDir(t, (fixtures) => withS1(fixtures, change));
         const reasons = checkLeaks(dir);
         assert.ok(hasReason(reasons, pattern), `${pattern}: ${reasons.join(' | ')}`);
-        assert.ok(reasons.every((reason) => !reason.includes('contoso')), 'values are not printed');
+        assert.ok(
+            reasons.every((reason) => !reason.includes('contoso')),
+            'values are not printed'
+        );
     }
 });
 
@@ -636,7 +642,10 @@ test('replay: a pass marked incomplete is skipped, an unlisted page file is igno
     const report = replayReport(dir, 'A');
 
     assert.deepEqual(report.reasons, []);
-    assert.deepEqual(report.passes.map((entry) => entry.pass), ['prod-select']);
+    assert.deepEqual(
+        report.passes.map((entry) => entry.pass),
+        ['prod-select']
+    );
 });
 
 test('replay: a pages count that differs from the requests file fails', (t) => {

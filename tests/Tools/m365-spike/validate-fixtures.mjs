@@ -20,7 +20,12 @@ import {
     collectRawDocuments,
     findLeaks,
 } from './lib/sanitize.mjs';
-import { EXPERIMENT_KEYS, REQUIRED_SCENARIOS, findUntaggedEvents } from './lib/scenarios.mjs';
+import {
+    EXPERIMENT_KEYS,
+    REQUIRED_SCENARIOS,
+    attendeesOtherThanOrganizer,
+    findUntaggedEvents,
+} from './lib/scenarios.mjs';
 import { SECRET_PATTERNS } from './validate-docs.mjs';
 
 const SPIKE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -282,8 +287,9 @@ const isPrivateHost = (event) => event.isOrganizer === true && event.sensitivity
 const hasSensitivity = (event) =>
     event.isOrganizer === false && /^\w+$/.test(event.sensitivity ?? '');
 const isAllDay = (event) => event.isAllDay === true;
-const isAlone = (event) =>
-    event.isOrganizer === true && Array.isArray(event.attendees) && event.attendees.length === 0;
+// Graph lists the organizer as an attendee of an event created without invitees, so "alone" means
+// no attendee other than the organizer; an empty list passes too.
+const isAlone = (event) => event.isOrganizer === true && attendeesOtherThanOrganizer(event) === 0;
 const wasChanged = (event) =>
     event.isCancelled === true || event.responseStatus?.response === 'declined';
 
@@ -310,7 +316,7 @@ const ROUND_A_RULES = [
     ['S6', isPrivateHost, 'an organized private event'],
     ['S6b', hasSensitivity, 'an attendee event with a sensitivity'],
     ['S7', isAllDay, 'an all-day event'],
-    ['S8', isAlone, 'an organized event without attendees'],
+    ['S8', isAlone, 'an organized event without attendees other than the organizer'],
 ];
 
 function checkRoundA(checker, events, scenarios) {
