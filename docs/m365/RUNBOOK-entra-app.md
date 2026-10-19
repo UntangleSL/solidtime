@@ -15,7 +15,7 @@ Mientras la administración no responda, cada valor lleva la marca `PENDIENTE`.
 | --- | --- |
 | Directory (tenant) ID | PENDIENTE |
 | Application (client) ID | PENDIENTE |
-| Redirect URIs | `https://<DOMINIO-DOKPLOY>/auth/microsoft/callback`<br>`https://solidtime.test/auth/microsoft/callback`<br>`http://localhost/auth/microsoft/callback`<br>`http://localhost/m365-spike/callback` (TEMPORAL: se elimina en la limpieza) |
+| Redirect URIs | `https://time.untangle.es/auth/microsoft/callback`<br>`https://solidtime.test/auth/microsoft/callback`<br>`http://localhost/auth/microsoft/callback`<br>`http://localhost/m365-spike/callback` (TEMPORAL: se elimina en la limpieza) |
 | Scopes delegados | `openid profile email offline_access User.Read Calendars.Read` |
 | Grupo asignado | PENDIENTE |
 | Modo de asignación | PENDIENTE |
@@ -34,7 +34,7 @@ Notas sobre las claves:
   empiezan por una fecha ISO `AAAA-MM-DD`. El recordatorio está al menos 30 días antes de la
   caducidad (recomendado: 45).
 - `Responsable del recordatorio`: un rol de administración, no una persona concreta.
-- `Dominio Dokploy`: sustituye la marca `<DOMINIO-DOKPLOY>` de `Redirect URIs` cuando se decida.
+- `Dominio Dokploy`: `time.untangle.es` (decidido 2026-10-19).
 
 ## Verificación
 

@@ -21,13 +21,18 @@ inglés. Anota cualquier etiqueta que no coincida y cuéntalo en la entrega (Par
 **Avisos que enviarás al equipo.** Tres mensajes cortos, por el canal habitual (nunca con
 secretos): «Registro listo», «Ronda A lista» y «Ronda B lista».
 
-**Dominio de producción.** La dirección pública de solidtime en Dokploy aparece en esta guía como
-`<DOMINIO-DOKPLOY>`. Es una marca: el equipo te dará el dominio real y tú lo escribes en su lugar,
-sin `https://` y sin barra final. Si todavía no te lo han dado, completa todo lo demás y vuelve a
-ese único paso cuando lo tengas.
+**Dominio de producción.** La dirección pública de solidtime en Dokploy es `time.untangle.es`
+(ya configurada en Dokploy con https).
+
+**Caso Untangle.** En Untangle hay una sola persona administradora (Administrador global) y no hay
+cuentas de prueba sin licencia: todo el tenant tiene MFA. Por eso esta guía usa **personas reales**:
+la usuaria A eres tú (tu propio buzón) y la usuaria B es un compañero o compañera real con buzón.
+Durante la Fase 1 **solo tú** quedas asignado a la aplicación; B no se asigna hasta la Fase 2, y así
+sirve para comprobar el bloqueo.
 
 **Regla de oro.** Un secreto o una contraseña **nunca** se pega en un chat, un correo, Teams, un
-ticket ni el repositorio. Solo viaja por el gestor de contraseñas de la empresa (Parte 10).
+ticket ni el repositorio. Solo viaja por el gestor de contraseñas de la empresa, que en Untangle es
+**Doppler** (proyecto `solidtime`) (Parte 10).
 
 Índice: Preparación, Parte 1 (registro), Parte 2 (URI de redirección), Parte 3 (permisos y
 consentimiento), Parte 4 (secretos de cliente), Parte 5 (aplicación empresarial), Parte 6 (acceso
@@ -48,13 +53,17 @@ condicional), Parte 7 (usuarias de prueba y buzón), Parte 8 (escenarios de Outl
    Sin P1 ni P2 no se pueden asignar grupos a una aplicación: en ese caso se asigna a las personas una
    a una (Parte 5) y en la entrega anotas `Modo de asignación: individual`. Con P1 o P2 se asigna un
    grupo, y solo cuentan sus **miembros directos**: los grupos anidados dentro de ese grupo no valen.
-3. **Gestor de contraseñas.** Crea una entrada vacía llamada `solidtime-m365` en el gestor de
-   contraseñas de la empresa. Ahí guardarás los secretos de la Parte 4.
-4. **Dos usuarias de prueba, A y B.** Hacen falta dos cuentas dedicadas, con licencia que incluya un
-   buzón de Exchange Online, y **ninguna con rol de administrador** (ni siquiera Administrador global).
-   Motivo: un Administrador global se salta la opción «Asignación requerida» y se saltaría el bloqueo
-   que queremos comprobar (el error AADSTS50105). La usuaria A estará dentro del grupo asignado como
-   miembro directo; la usuaria B quedará fuera. Se crean o se confirman en la Parte 7.
+3. **Gestor de contraseñas (Doppler).** En Doppler crea el proyecto `solidtime` con los entornos
+   `dev` y `prd` (si aún no existen). Ahí guardarás los secretos de la Parte 4: el secreto spike en
+   `dev` como `MICROSOFT_CLIENT_SECRET` y el de producción en `prd` con el mismo nombre.
+4. **Usuarias A y B (personas reales).** Hacen falta dos personas con buzón de Exchange Online:
+   - **A = tú.** Eres Administrador global: eso no impide hacer la prueba de inicio de sesión sin
+     pantalla de permisos, pero un Administrador global se salta la opción «Asignación requerida», así
+     que **tú no sirves** para comprobar el bloqueo.
+   - **B = un compañero o compañera sin rol de administrador.** Organiza las reuniones de prueba de la
+     Parte 8 y, como **no** estará asignado durante la Fase 1, su intento de iniciar sesión debe
+     fallar con el error AADSTS50105.
+   Se confirman en la Parte 7.
 5. **Qué tendrás a mano al terminar.** Los dos identificadores de la aplicación (no son secretos), la
    fecha de caducidad de los secretos, el nombre del grupo y el valor de los secretos en el gestor de
    contraseñas.
@@ -111,12 +120,11 @@ La página de Información general muestra el nombre `solidtime-m365`, los dos i
 
    | URI (pégalo exactamente) | Para qué sirve |
    | --- | --- |
-   | `https://<DOMINIO-DOKPLOY>/auth/microsoft/callback` | Producción en Dokploy. Sustituye `<DOMINIO-DOKPLOY>` por el dominio que te dé el equipo; debe ser https. |
+   | `https://time.untangle.es/auth/microsoft/callback` | Producción en Dokploy. |
    | `https://solidtime.test/auth/microsoft/callback` | Desarrollo local con proxy. |
    | `http://localhost/auth/microsoft/callback` | Desarrollo local sin proxy. |
    | `http://localhost/m365-spike/callback` | TEMPORAL: solo para la herramienta de captura del desarrollador; se elimina en la limpieza. |
 
-   Si el equipo aún no te ha dado el dominio, añade los otros tres ahora y el de producción después.
 5. En la misma página, sección Concesión implícita y flujos híbridos (Implicit grant and hybrid flows):
    - Las dos casillas, Tokens de acceso (Access tokens) y Tokens de id. (ID tokens), deben quedar desmarcadas.
 6. Configuración avanzada (Advanced settings; según la versión del portal está en la pestaña Configuración (Settings) o al final de la página):
@@ -177,8 +185,9 @@ pestaña Secretos de cliente (Client secrets) > Nuevo secreto de cliente (New cl
    meses y recomienda menos de 12; nosotros fijamos 180 días.
 3. Pulsa Agregar (Add). Copia **en ese momento** la columna **Valor** (Value). No copies la columna Id.
    de secreto (Secret ID). El Valor solo se muestra una vez.
-4. Pégalo directamente en la entrada `solidtime-m365` del gestor de contraseñas. Es el único sitio
-   donde vive: irá a Dokploy en la Fase 2, nunca a un portátil.
+4. Pégalo directamente en el gestor de contraseñas: Doppler, proyecto `solidtime`, entorno `prd`,
+   secreto `MICROSOFT_CLIENT_SECRET`. Es el único sitio donde vive: irá a Dokploy en la Fase 2, nunca a
+   un portátil.
 5. Apunta la fecha exacta de caducidad y crea un recordatorio en el calendario 45 días antes (como
    mínimo 30), a nombre de un rol de administración y no de una persona concreta.
 
@@ -208,9 +217,9 @@ será la prueba definitiva de que el secreto funciona.
    con el año y el mes actuales.
 2. TEMPORAL: Expira (Expires) también 180 días (6 meses). Debe seguir vigente durante el registro, la
    Ronda A y la Ronda B, y esas fechas dependen de cuándo se preparen los escenarios.
-3. TEMPORAL: lo usa solo la herramienta de captura del desarrollador. Entrégalo únicamente por el
-   gestor de contraseñas. Se elimina en la limpieza, de modo que el secreto de producción nunca sale
-   del gestor de contraseñas.
+3. TEMPORAL: lo usa solo la herramienta de captura del desarrollador. Guárdalo únicamente en el
+   gestor de contraseñas (Doppler, proyecto `solidtime`, entorno `dev`, secreto `MICROSOFT_CLIENT_SECRET`).
+   Se elimina en la limpieza, de modo que el secreto de producción nunca sale del gestor de contraseñas.
 4. TEMPORAL: si el equipo avisa de que caducó antes de terminar la Ronda B (error AADSTS7000222), crea
    otro igual y entrégalo igual; las capturas ya hechas siguen siendo válidas.
 
@@ -243,6 +252,9 @@ de caducidad distinta.
    ninguna forma.
 5. Sin P1 ni P2: no se puede asignar un grupo. Asigna una a una a cada persona del equipo y a la
    usuaria A con Agregar usuario o grupo, y en la entrega anota `Modo de asignación: individual`.
+6. **Caso Untangle (Fase 1):** asigna **solo a ti** (usuaria A), de forma individual, aunque tengas
+   P1 o P2. El grupo del personal (y con él B) se asigna en la Fase 2, después de la prueba de
+   bloqueo.
 
 **Por qué**
 
@@ -291,21 +303,21 @@ Tienes una lista de las directivas que afectan a la aplicación (o la anotación
 
 **Qué hacer**
 
-1. Crea o confirma las dos usuarias de prueba, A y B, en Entra ID > Usuarios (Users) > Todos los usuarios (All users). Las dos con licencia que incluya un buzón de Exchange Online y **sin ningún rol de administrador**.
-2. La usuaria A es miembro directo del grupo asignado en la Parte 5 (o está asignada una a una si no hay P1 ni P2). La usuaria B no está asignada.
-3. Entra con cada una en Outlook en la web, en una ventana privada (InPrivate): `https://outlook.office.com/calendar`. Usa una ventana privada distinta para cada cuenta.
-4. En cada buzón pon la zona horaria en (UTC+01:00) Bruselas, Copenhague, Madrid, París: Configuración (Settings, la rueda) > General > Idioma y hora (Language and time) > Zona horaria (Time zone); si no la encuentras, busca «zona horaria» en el cuadro de búsqueda de Configuración.
-5. Si alguna directiva de acceso condicional lo exige, registra el método de autenticación multifactor de las dos cuentas.
-6. Comparte las credenciales de A y de B con el desarrollador **solo** por el gestor de contraseñas.
+1. Confirma las dos personas en Entra ID > Usuarios (Users) > Todos los usuarios (All users): A (tú) y B (el compañero o compañera), las dos con licencia que incluya un buzón de Exchange Online. B **sin ningún rol de administrador**.
+2. La usuaria A está asignada a la aplicación (Parte 5, punto 6). La usuaria B no está asignada.
+3. Comprueba que las dos ven su calendario en Outlook en la web: `https://outlook.office.com/calendar`.
+4. En los dos buzones la zona horaria debe ser (UTC+01:00) Bruselas, Copenhague, Madrid, París: Configuración (Settings, la rueda) > General > Idioma y hora (Language and time) > Zona horaria (Time zone); si no la encuentras, busca «zona horaria» en el cuadro de búsqueda de Configuración.
+5. Las dos personas usan su MFA habitual: **no** se comparten contraseñas con nadie. Cuando toque iniciar sesión con la herramienta de captura, cada persona lo hará ella misma en el navegador del equipo de desarrollo.
+6. Explica a B que en su calendario aparecerán (y debe crear) unas reuniones de prueba con la etiqueta `[M365-TEST ...]`; sus reuniones reales no se tocan.
 7. Envía el aviso «Registro listo» (Entrega 1) con los puntos de la Parte 10 que ya tengas.
 
 **Por qué**
 
-Con cuentas de prueba dedicadas, los calendarios de empleados reales no entran en los datos que se capturan.
+Con personas reales, la herramienta lee también reuniones reales de A durante la captura. Por eso solo se conservan los eventos con la etiqueta `[M365-TEST ...]`: el resto se descarta antes de guardar nada en el repositorio, y la captura en bruto se borra al terminar la fase.
 
 **Cómo comprobarlo**
 
-En una ventana privada, Outlook en la web muestra el calendario de A y el de B, con la zona horaria de Madrid. Ninguna de las dos aparece en Entra ID > Roles y administradores (Roles & administrators).
+Outlook en la web muestra el calendario de A y el de B, con la zona horaria de Madrid. B no aparece en Entra ID > Roles y administradores (Roles & administrators) ni en Usuarios y grupos de la aplicación.
 
 ## Parte 8 – Escenarios de Outlook (Ronda A)
 
@@ -431,8 +443,8 @@ repositorio (`docs/m365/RUNBOOK-entra-app.md`) porque no son secretos.
 - [ ] Dominio Dokploy registrado en el URI de producción (runbook)
 - [ ] Secreto spike: solo por el gestor de contraseñas o por un enlace de un solo uso con caducidad
 - [ ] Secreto de producción: se queda en el gestor de contraseñas; no se envía a nadie
-- [ ] Direcciones y credenciales de las usuarias de prueba A y B: las credenciales solo por el gestor
-      de contraseñas
+- [ ] Direcciones de correo de A y B (no se comparte ninguna contraseña: cada persona inicia sesión
+      ella misma con su MFA)
 - [ ] Cliente de Outlook usado (web, nuevo o clásico)
 - [ ] Zona horaria del buzón
 - [ ] Etiquetas del portal o de Outlook que no coincidían con esta guía
