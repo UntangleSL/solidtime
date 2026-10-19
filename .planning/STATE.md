@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Tenant Setup & Outlook Spike
 status: executing
-stopped_at: Roadmap and state initialized; ready for `/gsd-plan-phase 1` once admin actions are underway
-last_updated: "2026-10-19T13:48:03.234Z"
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-10-19T14:03:15.584Z"
 last_activity: 2026-10-19
 last_activity_desc: Phase 1 execution started
-state_head: dc71fdd46187d557440ab93d06a3f9dea0d723d8
+state_head: d73ae6eea4449079efc8a3ac459d9ba0812c69fd
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -28,8 +28,8 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 1 (Tenant Setup & Outlook Spike) — EXECUTING
-Plan: 1 of 8
-Status: Executing Phase 1
+Plan: 2 of 8
+Status: Ready to execute
 Last activity: 2026-10-19 — Phase 1 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -52,6 +52,11 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 1 P01 | 25min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -65,6 +70,9 @@ Recent decisions affecting current work:
 - [Roadmap]: Deletion cleanup (SEC-03) and the off switch (OPS-02) are verified end-to-end in Phase 7; each earlier phase adds cascading FKs and the "integration configured" gate as it goes
 - [Roadmap]: Dokploy env config and docs (OPS-01) land in Phase 2 so the HTTPS redirect URI behind Traefik is proven early
 - [Roadmap]: All phases run in MVP mode (goals written as user stories)
+- [Phase 1]: [01-01] checkGuide requires the scope string to end at a token boundary, so Calendars.ReadWrite never satisfies it
+- [Phase 1]: [01-01] validate-docs flags are declared per command so 01-04 adds decisions with one COMMANDS entry
+- [Phase 1]: [01-01] Guide spike URI and spike secret lines carry TEMPORAL (RETIRADO after the 01-08 cleanup), enforced by checkGuide
 
 ### Pending Todos
 
@@ -86,6 +94,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19
-Stopped at: Roadmap and state initialized; ready for `/gsd-plan-phase 1` once admin actions are underway
+Last session: 2026-10-19T14:03:15.558Z
+Stopped at: Completed 01-01-PLAN.md
 Resume file: None
