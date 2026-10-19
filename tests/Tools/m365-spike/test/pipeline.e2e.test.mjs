@@ -454,6 +454,14 @@ test('a vanished event is recorded as absent with its direct lookup, a moved one
     assert.ok(edited.value.some((event) => event.type === 'exception' && event.originalStart));
 });
 
+test('an organized event records how many attendees are not the organizer', () => {
+    const { manifest } = ctx;
+
+    assert.match(manifest.scenarios.S8.observed, /isOrganizer=true.*attendeesOtherThanOrganizer=0/);
+    assert.match(manifest.scenarios.S1b.observed, /attendeesOtherThanOrganizer=1/);
+    assert.doesNotMatch(manifest.scenarios.S1.observed, /attendeesOtherThanOrganizer/);
+});
+
 test('no raw identifying value, body or unknown field reaches any output', () => {
     const { dirs } = ctx;
     const leakSet = buildLeakSet(rawDocuments(dirs.raw));

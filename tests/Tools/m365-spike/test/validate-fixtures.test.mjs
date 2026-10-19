@@ -439,6 +439,50 @@ test('semantic: the single-scenario facts are checked', (t) => {
     }
 });
 
+// Graph returns the organizer as the sole attendee of an organized event with no invitees
+// (observed in Outlook web for S7 and S8), so "alone" means no attendee other than the organizer.
+test('semantic: S8 accepts an organizer-only attendee list and rejects any other attendee', (t) => {
+    const host = { emailAddress: { name: 'Test User A', address: 'person-a@example.test' } };
+    const guest = { emailAddress: { name: 'Test User B', address: 'person-b@example.test' } };
+    const attendee = (entry) => ({ type: 'required', ...entry });
+    const withS8 = (overrides) => (fixtures) => {
+        const base = { isOrganizer: true, organizer: host, attendees: [] };
+        fixtures.files[scenarioFile('S8', 'A')].value = [event('S8', { ...base, ...overrides })];
+    };
+    const s8Reasons = (change) =>
+        checkSemantic(fixtureDir(t, change)).filter((reason) => /^S8 round A/.test(reason));
+
+    assert.deepEqual(s8Reasons(withS8({ attendees: [] })), [], 'attendees: [] passes');
+    assert.deepEqual(
+        s8Reasons(withS8({ attendees: [attendee(host)] })),
+        [],
+        'the organizer as sole attendee passes'
+    );
+    const shouting = { emailAddress: { name: 'x', address: 'PERSON-A@Example.Test' } };
+    assert.deepEqual(
+        s8Reasons(withS8({ attendees: [attendee(shouting)] })),
+        [],
+        'the address comparison ignores case'
+    );
+    assert.ok(
+        hasReason(s8Reasons(withS8({ attendees: [attendee(host), attendee(guest)] })), /S8/),
+        'organizer plus another attendee fails'
+    );
+    assert.ok(
+        hasReason(s8Reasons(withS8({ attendees: [attendee(guest)] })), /S8/),
+        'only another attendee fails'
+    );
+    assert.ok(hasReason(s8Reasons(withS8({ isOrganizer: false })), /S8/), 'isOrganizer false fails');
+    assert.ok(
+        hasReason(s8Reasons(withS8({ isOrganizer: false, attendees: [attendee(host)] })), /S8/),
+        'isOrganizer false fails even with the organizer-only list'
+    );
+    assert.ok(
+        hasReason(s8Reasons(withS8({ organizer: undefined, attendees: [attendee(host)] })), /S8/),
+        'an attendee list that cannot be tied to an organizer fails'
+    );
+});
+
 test('semantic: an optional scenario is checked only when listed', (t) => {
     const addE2 = (fixtures, masters) => {
         const make = (id, i) => event('E2', { id: fakeId(`E2${i}`), seriesMasterId: id });
