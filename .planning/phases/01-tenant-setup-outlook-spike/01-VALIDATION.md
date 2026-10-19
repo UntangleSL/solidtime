@@ -43,7 +43,7 @@ To be filled by the planner/executor per task. Requirement → test mapping:
 | SETUP-01 | Spanish admin guide has all mandatory parts, exact scopes, redirect URIs, hand-back checklist, no secrets | doc-structure | `node tests/Tools/m365-spike/validate-docs.mjs guide` |
 | SETUP-01 | Runbook has non-secret registration values, ISO expiry date, reminder ≥30 days before | doc + date arithmetic | `node tests/Tools/m365-spike/validate-docs.mjs runbook` |
 | SETUP-01 | No secrets committed repo-wide | scan | `node tests/Tools/m365-spike/validate-docs.mjs secrets` |
-| SETUP-01 | Assigned user authorizes without consent prompt; outsider blocked (AADSTS50105) | manual + harness evidence | `capture.mjs auth` / `auth --expect-blocked` |
+| SETUP-01 | Owner (A) and a non-admin, non-assigned colleague (B) authorize without consent prompt and get exactly the six scopes (tenant-wide access) | manual + harness evidence | `capture.mjs auth` / `auth --as B` |
 | SETUP-02 | Manifest covers S1–S8, Round A/B, files referenced | schema | `node tests/Tools/m365-spike/validate-fixtures.mjs --schema` |
 | SETUP-02 | Scenario predicates hold | semantic | `node tests/Tools/m365-spike/validate-fixtures.mjs --semantic` |
 | SETUP-02 | Sanitization leak scan | leak scan | `node tests/Tools/m365-spike/validate-fixtures.mjs --leaks` |
