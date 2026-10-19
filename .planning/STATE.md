@@ -2,17 +2,17 @@
 gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Tenant Setup & Outlook Spike
-status: executing
-stopped_at: Completed 01-07-PLAN.md
-last_updated: "2026-10-19T17:08:53.401Z"
+status: verifying
+stopped_at: Completed 01-08-PLAN.md
+last_updated: "2026-10-19T17:37:34.170Z"
 last_activity: 2026-10-19
 last_activity_desc: Phase 1 execution started
-state_head: e1cb75ee83a262ae77552e03f958fc953870075a
+state_head: ddc8ec48b70c60d6fe8851c93ee7feb4dd45d5b8
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 7
+  completed_plans: 8
   percent: 0
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 
 Phase: 1 (Tenant Setup & Outlook Spike) — EXECUTING
 Plan: 8 of 8
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-10-19 — Phase 1 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -63,6 +63,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P05 | 25min | 2 tasks | 3 files |
 | Phase 01 P06 | 25min | 2 tasks | 6 files |
 | Phase 1 P07 | 20min | 3 tasks | 143 files |
+| Phase 1 P08 | 2 sessions | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,9 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-06: S8 created Tue 2026-10-27 instead of Wed 2026-10-28 accepted; optional scenarios S7b and E1-E6 not created
 - [Phase 1]: 01-07: S2 round B gate takes originalStart from prod-select pages (Graph omits it in the default shape)
 - [Phase 1]: 01-07: Outlook reports a declined meeting (response sent) as absent from calendarView with lookup 404, and a cancelled-unprocessed meeting as present with isCancelled=true
+- [Phase 1]: 01-08: occurrence key is the immutable Graph id; series key is seriesMasterId
+- [Phase 1]: 01-08: SYNC-03 revised by owner - all timed meetings are suggestions regardless of responseStatus; Graph removes declined
+- [Phase 1]: 01-08: Entra spike cleanup (redirect URI and secret spike-2026-10) deferred by owner until production, tracked in ROADMAP Phase 7
 
 ### Pending Todos
 
@@ -115,6 +119,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19T17:08:53.372Z
-Stopped at: Completed 01-07-PLAN.md
+Last session: 2026-10-19T17:37:34.141Z
+Stopped at: Completed 01-08-PLAN.md
 Resume file: None
