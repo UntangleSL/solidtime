@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Tenant Setup & Outlook Spike
 status: executing
-stopped_at: Completed 01-04-PLAN.md
-last_updated: "2026-10-19T15:41:25.749Z"
+stopped_at: Completed 01-05-PLAN.md
+last_updated: "2026-10-19T15:57:11.987Z"
 last_activity: 2026-10-19
 last_activity_desc: Phase 1 execution started
-state_head: f2581453eccac3cf24424eb4fa5cc9b674d3591e
+state_head: a08babd465cf91bfcabda8ee739cf0d476c592dc
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 4
+  completed_plans: 5
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 1 (Tenant Setup & Outlook Spike) — EXECUTING
-Plan: 5 of 8
+Plan: 6 of 8
 Status: Ready to execute
 Last activity: 2026-10-19 — Phase 1 execution started
 
@@ -60,6 +60,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P02 | 12min | 3 tasks | 9 files |
 | Phase 1 P03 | 31min | 3 tasks | 8 files |
 | Phase 1 P04 | 4min | 2 tasks | 2 files |
+| Phase 1 P05 | 25min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -85,6 +86,8 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-03: series master files are { scenario, round, value } and instances files { scenario, round, pages }; the manifest files index is the only source of fixture file lists
 - [Phase 1]: 01-04: A line starting with Claim: that breaks the syntax fails; unknown scenarios and paths fail instead of being skipped
 - [Phase 1]: [01-05] Tenant-wide access (2026-10-19): enterprise app Assignment required = No (Business Standard has no Entra P1, guests rejected in code, AUTH-02); the B check is now auth --as B (non-admin Alejandro Cava signs in without consent prompt, six scopes) replacing auth --expect-blocked; harness reads Doppler vps/dev SOLIDTIME_* names, never SOLIDTIME_MICROSOFT_CLIENT_SECRET (auth/capture exit 2, status warns); runbook rows Modo de acceso/Dominios replace Grupo asignado/Modo de asignación
+- [Phase 1]: 01-05: Production secret expires in 24 months (2028-10-19), deviating from the 180-day guide recommendation; single admin, secret only in Doppler vps/prd; reminder 2028-09-04
+- [Phase 1]: 01-05: Access mode tenant (Assignment required = No); Security Defaults MFA is the Conditional Access state; admin consent on behalf of the organisation avoids consent prompts for ordinary users
 
 ### Pending Todos
 
@@ -106,6 +109,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19T15:22:39.670Z
-Stopped at: Completed 01-04-PLAN.md
+Last session: 2026-10-19T15:57:11.959Z
+Stopped at: Completed 01-05-PLAN.md
 Resume file: None

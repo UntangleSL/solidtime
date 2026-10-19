@@ -53,7 +53,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Sanitized `calendarView` fixtures recorded from a real Untangle mailbox exist for all eight scenarios: single meeting, recurring occurrences plus an exception, cancelled, declined, moved, private, all-day, and a personal block without attendees.
   4. A decision document backed by those fixtures fixes the occurrence key, the series key (`seriesMasterId` vs alternatives) and exactly how cancelled, declined and moved meetings show up, including with immutable ids and across `@odata.nextLink` continuation requests.
 
-**Plans**: 4/8 plans executed
+**Plans**: 5/8 plans executed
 
 Plans:
 **Wave 1**
@@ -63,7 +63,7 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 01-03-PLAN.md — Sanitizer, indexed fixture manifest and fixture gate with Node replay of the paged fixtures (wave 2)
 - [x] 01-04-PLAN.md — Decision-document gate: `validate-docs.mjs decisions [--trace]` (wave 2)
-- [ ] 01-05-PLAN.md — Admin registers the app; assigned/outsider sign-in verification; production-secret Valor check; final runbook values (wave 2, admin checkpoint)
+- [x] 01-05-PLAN.md — Admin registers the app; assigned/outsider sign-in verification; production-secret Valor check; final runbook values (wave 2, admin checkpoint)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 01-06-PLAN.md — Ronda A scenarios captured, sanitized and committed (wave 3, admin checkpoint)
@@ -176,7 +176,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tenant Setup & Outlook Spike | 4/8 | In Progress | - |
+| 1. Tenant Setup & Outlook Spike | 5/8 | In Progress | - |
 | 2. Sign in with Microsoft | 0/TBD | Not started | - |
 | 3. Outlook Meetings in the Calendar | 0/TBD | Not started | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |

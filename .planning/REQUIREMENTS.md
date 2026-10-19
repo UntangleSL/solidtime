@@ -7,7 +7,7 @@
 
 ### Setup & Verification (SETUP)
 
-- [ ] **SETUP-01**: An Entra ID app registration exists for the Untangle tenant (Web platform, single tenant, tenant-wide access ("assignment required" = No; decision 2026-10-19: no Entra P1, Business Standard licences), redirect URIs for local + Dokploy, delegated scopes `openid profile email offline_access User.Read Calendars.Read`, admin consent granted) and its setup is documented in a runbook including client-secret expiry date
+- [x] **SETUP-01**: An Entra ID app registration exists for the Untangle tenant (Web platform, single tenant, tenant-wide access ("assignment required" = No; decision 2026-10-19: no Entra P1, Business Standard licences), redirect URIs for local + Dokploy, delegated scopes `openid profile email offline_access User.Read Calendars.Read`, admin consent granted) and its setup is documented in a runbook including client-secret expiry date
 - [ ] **SETUP-02**: Real Graph `calendarView` responses from an Untangle mailbox are recorded as test fixtures covering: single meeting, recurring series occurrences + exception, cancelled meeting, declined meeting, moved meeting, private meeting, all-day event, personal block without attendees
 - [ ] **SETUP-03**: A written decision documents the occurrence key, series key (`seriesMasterId` vs alternatives) and how cancelled/moved meetings appear, based on the fixtures
 
@@ -105,7 +105,7 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SETUP-01 | Phase 1 | Pending |
+| SETUP-01 | Phase 1 | Complete |
 | SETUP-02 | Phase 1 | Pending |
 | SETUP-03 | Phase 1 | Pending |
 | AUTH-01 | Phase 2 | Pending |
