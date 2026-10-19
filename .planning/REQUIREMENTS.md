@@ -32,7 +32,7 @@
 
 - [ ] **SYNC-01**: When the user opens the calendar, their Outlook meetings for the visible range are fetched from Microsoft Graph (read-only) without blocking the display of existing time entries
 - [ ] **SYNC-02**: User can press a "Sync" button to refresh meetings for the visible range; repeated presses/navigation are debounced and do not trigger Graph throttling
-- [ ] **SYNC-03**: Only eligible meetings are imported: organized by the user (including blocks without attendees) or accepted/tentative; excluded: declined, cancelled, all-day, and meetings marked private/confidential in Outlook
+- [ ] **SYNC-03**: Every timed meeting in the user's calendar is shown as a suggestion regardless of response status (organized, accepted, tentative, not responded); excluded: declined (Graph removes them), cancelled (`isCancelled`), all-day, and meetings marked private/confidential in Outlook. (Revised 2026-10-19: owner wants all meetings, not only accepted.)
 - [ ] **SYNC-04**: Meeting times are correct in the user's timezone, including across DST changes
 - [ ] **SYNC-05**: If Graph is unavailable, slow or throttled, the calendar still works and shows a non-blocking status message (last synced time / retry later)
 

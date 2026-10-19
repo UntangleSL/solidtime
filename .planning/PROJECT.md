@@ -28,7 +28,7 @@ A user opens the solidtime calendar and their Outlook meetings are already there
 - [ ] Users can sign in with "Sign in with Microsoft" (Entra ID, Untangle tenant only) alongside existing email/password login
 - [ ] First Microsoft sign-in auto-provisions the solidtime user and joins them to the Untangle organization; existing users with the same email are linked, not duplicated
 - [ ] Users' Outlook meetings are fetched from Microsoft Graph when the calendar is opened, and via a manual "Sync" button
-- [ ] Only relevant meetings are imported: organized by the user, or accepted/tentative; excluded: declined, cancelled, all-day events
+- [ ] All timed meetings in the calendar are shown as suggestions whatever the response status (incl. not responded / rescheduled); excluded: declined, cancelled, all-day, private
 - [ ] Meetings render in the calendar view as "ghost"/suggestion blocks that do NOT count as tracked time
 - [ ] User can select a meeting suggestion and assign it to a project (optionally task/tags/description) → creates a real time entry linked to that meeting
 - [ ] User can select multiple meeting suggestions and assign them to a project in one action
@@ -78,7 +78,7 @@ A user opens the solidtime calendar and their Outlook meetings are already there
 | Keep email/password + add Microsoft login, auto-provision on first login | No disruption for existing users; frictionless onboarding for team | — Pending |
 | Meetings shown as suggestions, not time entries, until assigned | Avoids polluting tracked hours with meetings not worked/irrelevant | — Pending |
 | Recurring rules pre-assign project; user confirms each occurrence | User wants control over each logged occurrence | — Pending |
-| Import only organized/accepted/tentative, non-all-day, non-cancelled meetings | Reduce noise | — Pending |
+| Show all timed meetings regardless of response status (incl. notResponded); exclude declined, cancelled, all-day, private (revised 2026-10-19, supersedes "only accepted") | Owner: meetings must always appear as suggestions; Outlook resets a rescheduled meeting to notResponded (01-07 S5) | — Pending |
 | Outlook changes flag time entries as out-of-sync, never auto-modify | Never lose or silently change logged hours | — Pending |
 | Sync on calendar open + manual button (no webhooks/background job) | Simplest; no public webhook endpoint or worker needed | — Pending |
 | Deploy on own Dokploy | Existing Untangle infra | — Pending |
