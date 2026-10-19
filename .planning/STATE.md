@@ -3,11 +3,11 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Tenant Setup & Outlook Spike
 status: executing
-stopped_at: Completed 01-05-PLAN.md
-last_updated: "2026-10-19T15:57:11.987Z"
+stopped_at: 01-06 Task 2 blocked at gate (S8); fixtures not committed
+last_updated: "2026-10-19T16:31:40.091Z"
 last_activity: 2026-10-19
 last_activity_desc: Phase 1 execution started
-state_head: a08babd465cf91bfcabda8ee739cf0d476c592dc
+state_head: 77d555a47fb52d0b49f900c8fe5ea0eabda90f91
 progress:
   total_phases: 7
   completed_phases: 0
@@ -98,6 +98,7 @@ None yet.
 - [Phase 1]: Blocked on the Untangle M365 admin: app registration, admin consent, tenant-wide access (Assignment required = No), client-secret handover, Conditional Access check, and real mailboxes (A and B) with sample meetings
 - [Phase 1]: Series identity, cancelled/moved representation and immutable-id stability stay unknown until real fixtures exist; the findings may change the Phase 3-6 schema
 - [Phase 2]: SocialiteProviders on Laravel 13 and Socialite under Octane need a smoke test before building on them
+- 01-06: Round A gate fails on S8 (attendees contains A). Owner must fix S8 in A's mailbox, developer re-runs capture --round A, then Task 2 repeats. Round B must not start.
 
 ## Deferred Items
 
@@ -109,6 +110,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19T15:57:11.959Z
-Stopped at: Completed 01-05-PLAN.md
-Resume file: None
+Last session: 2026-10-19T16:31:40.058Z
+Stopped at: 01-06 Task 2 blocked at gate (S8); fixtures not committed
+Resume file: .planning/phases/01-tenant-setup-outlook-spike/01-06-SUMMARY.md
