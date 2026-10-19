@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Tenant Setup & Outlook Spike
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-10-19T14:03:15.584Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-10-19T14:19:01.584Z"
 last_activity: 2026-10-19
 last_activity_desc: Phase 1 execution started
-state_head: d73ae6eea4449079efc8a3ac459d9ba0812c69fd
+state_head: 9ea37c6d451b04fa76b565ff1587f9c2e9bb88a8
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 8
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 1 (Tenant Setup & Outlook Spike) — EXECUTING
-Plan: 2 of 8
+Plan: 3 of 8
 Status: Ready to execute
 Last activity: 2026-10-19 — Phase 1 execution started
 
@@ -57,6 +57,7 @@ Progress: [░░░░░░░░░░] 0%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 1 P01 | 25min | 3 tasks | 4 files |
+| Phase 1 P02 | 12min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,10 @@ Recent decisions affecting current work:
 - [Phase 1]: [01-01] checkGuide requires the scope string to end at a token boundary, so Calendars.ReadWrite never satisfies it
 - [Phase 1]: [01-01] validate-docs flags are declared per command so 01-04 adds decisions with one COMMANDS entry
 - [Phase 1]: [01-01] Guide spike URI and spike secret lines carry TEMPORAL (RETIRADO after the 01-08 cleanup), enforced by checkGuide
+- [Phase 1]: 01-02: loopback listener closes only after the response is flushed; an occupied ::1 port is a hard error so no other process can receive the redirect
+- [Phase 1]: 01-02: fetchAllPages refuses a nextLink on another origin (bearer token never follows a link to another host)
+- [Phase 1]: 01-02: CLI reports only the position of an unknown argument, never its value, so a mistyped secret is not echoed
+- [Phase 1]: 01-02: Prettier check unrun (no node_modules); .mjs files hand-formatted, watch npm-format-check CI on push
 
 ### Pending Todos
 
@@ -94,6 +99,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-19T14:03:15.558Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-10-19T14:19:01.556Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None

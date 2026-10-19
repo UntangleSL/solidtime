@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 2
+open_count: 3
 waived_count: 0
 fixed_count: 0
-total_count: 2
-last_updated: 2026-10-19T14:02:26.604Z
+total_count: 3
+last_updated: 2026-10-19T14:17:44.637Z
 ---
 
 # Broken Windows Ledger
@@ -17,6 +17,7 @@ last_updated: 2026-10-19T14:02:26.604Z
 |----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
 | 1 | 1 | stub | docs/m365/RUNBOOK-entra-app.md |  | Runbook values table holds PENDIENTE until the admin hands back the registration data; 01-05 fills it and 'validate-docs.mjs runbook --final' enforces it | open |  | 2026-10-19T14:02:25.994Z |  |
 | 2 | 1 | stub | docs/m365/GUIA-ADMIN-ENTRA.md |  | Guide uses the marked token <DOMINIO-DOKPLOY> until the product owner decides the Dokploy public domain (replaced in 01-05) | open |  | 2026-10-19T14:02:26.604Z |  |
+| 3 | 1 | unrun-verify | tests/Tools/m365-spike/capture.mjs |  | 01-02: npx --no-install prettier --check on tests/Tools/m365-spike/**/*.mjs not run (no node_modules on this host); files formatted by hand to .prettierrc.json, watch CI npm-format-check | open |  | 2026-10-19T14:17:44.637Z |  |
 
 ````json
 [
@@ -43,6 +44,19 @@ last_updated: 2026-10-19T14:02:26.604Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-10-19T14:02:26.604Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 3,
+    "kind": "unrun-verify",
+    "phase": "1",
+    "file": "tests/Tools/m365-spike/capture.mjs",
+    "line": null,
+    "description": "01-02: npx --no-install prettier --check on tests/Tools/m365-spike/**/*.mjs not run (no node_modules on this host); files formatted by hand to .prettierrc.json, watch CI npm-format-check",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-19T14:17:44.637Z",
     "resolved_at": null,
     "milestone": null
   }

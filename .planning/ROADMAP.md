@@ -53,12 +53,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Sanitized `calendarView` fixtures recorded from a real Untangle mailbox exist for all eight scenarios: single meeting, recurring occurrences plus an exception, cancelled, declined, moved, private, all-day, and a personal block without attendees.
   4. A decision document backed by those fixtures fixes the occurrence key, the series key (`seriesMasterId` vs alternatives) and exactly how cancelled, declined and moved meetings show up, including with immutable ids and across `@odata.nextLink` continuation requests.
 
-**Plans**: 1/8 plans executed
+**Plans**: 2/8 plans executed
 
 Plans:
 **Wave 1**
 - [x] 01-01-PLAN.md — Spanish Entra admin guide, runbook skeleton and offline doc gates (wave 1)
-- [ ] 01-02-PLAN.md — Capture harness: PKCE loopback sign-in, auth checks, paged calendarView passes and experiments, offline fake-Microsoft tests (wave 1)
+- [x] 01-02-PLAN.md — Capture harness: PKCE loopback sign-in, auth checks, paged calendarView passes and experiments, offline fake-Microsoft tests (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-03-PLAN.md — Sanitizer, indexed fixture manifest and fixture gate with Node replay of the paged fixtures (wave 2)
@@ -176,7 +176,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tenant Setup & Outlook Spike | 1/8 | In Progress | - |
+| 1. Tenant Setup & Outlook Spike | 2/8 | In Progress | - |
 | 2. Sign in with Microsoft | 0/TBD | Not started | - |
 | 3. Outlook Meetings in the Calendar | 0/TBD | Not started | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
