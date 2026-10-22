@@ -18,12 +18,12 @@
 - [x] **AUTH-03**: On first Microsoft sign-in with no existing account, a solidtime user is created automatically (email verified, no password) and joined to the configured Untangle organization with the lowest (employee) role
 - [x] **AUTH-04**: On first Microsoft sign-in where a verified non-placeholder solidtime user with the same email (case-insensitive) exists, the Microsoft identity is linked to that user instead of creating a duplicate; unverified password accounts are never silently linked
 - [x] **AUTH-05**: Subsequent sign-ins match the user by Microsoft identity (`tid` + `oid`), not by email; concurrent first sign-ins never produce duplicate users
-- [ ] **AUTH-06**: Microsoft sign-in works even when public registration is disabled (`APP_ENABLE_REGISTRATION=off`/invite-only); Entra MFA is the second factor for Microsoft sign-ins
+- [x] **AUTH-06**: Microsoft sign-in works even when public registration is disabled (`APP_ENABLE_REGISTRATION=off`/invite-only); Entra MFA is the second factor for Microsoft sign-ins
 - [ ] **AUTH-07**: User can see their Microsoft connection status in their profile and disconnect it; disconnecting deletes stored Microsoft tokens but keeps all time entries already created
 
 ### Token Security (SEC)
 
-- [ ] **SEC-01**: Microsoft access and refresh tokens are stored encrypted at rest in a dedicated table, never in `users`, the session, cache, logs, audits, API responses or Inertia props
+- [x] **SEC-01**: Microsoft access and refresh tokens are stored encrypted at rest in a dedicated table, never in `users`, the session, cache, logs, audits, API responses or Inertia props
 - [ ] **SEC-02**: Tokens are refreshed automatically before expiry; if refresh fails (revoked, expired, conditional access), the user sees a "reconnect Microsoft" prompt instead of an error
 - [ ] **SEC-03**: Deleting a user (or organization) removes their Microsoft identity, tokens, cached meetings, links and rules
 - [ ] **SEC-04**: An admin impersonating a user cannot trigger Graph calls with that user's Microsoft token
@@ -113,9 +113,9 @@
 | AUTH-03 | Phase 2 | Complete |
 | AUTH-04 | Phase 2 | Complete |
 | AUTH-05 | Phase 2 | Complete |
-| AUTH-06 | Phase 2 | Pending |
+| AUTH-06 | Phase 2 | Complete |
 | AUTH-07 | Phase 2 | Pending |
-| SEC-01 | Phase 2 | Pending |
+| SEC-01 | Phase 2 | Complete |
 | SEC-02 | Phase 3 | Pending |
 | SEC-03 | Phase 7 | Pending |
 | SEC-04 | Phase 7 | Pending |

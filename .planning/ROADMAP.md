@@ -87,7 +87,7 @@ Plans:
   4. User sees their Microsoft connection status in their profile and can disconnect it; disconnecting deletes the stored Microsoft tokens and leaves all time entries untouched.
   5. Microsoft tokens exist only encrypted in the dedicated table and never appear in the `users` table, session, cache, logs, audits, API responses or Inertia props; the integration is configured purely through documented env vars, including the Dokploy setup for the HTTPS redirect URI and trusted proxies.
 
-**Plans**: 6/11 plans executed
+**Plans**: 7/11 plans executed
 
 Plans:
 **Wave 1**
@@ -101,7 +101,7 @@ Plans:
 - [x] 02-04-PLAN.md — Production adapter: laravel/socialite + socialiteproviders/microsoft, per-call provider, PKCE/state, amr evidence mapping, AADSTS-only errors (wave 3)
 - [x] 02-05-PLAN.md — Rejection gates: other tenants, guests (#EXT#, userType), domain allowlist with mail/UPN source (wave 3)
 - [x] 02-06-PLAN.md — Identity resolution: (tid, oid) matching, safe email linking, provisioning as employee via the default join path, exactly-once under concurrency (wave 3)
-- [ ] 02-07-PLAN.md — Sessions and token safety: intended-URL resume, no remember-me, TOTP bypass by design with per-sign-in amr_mfa evidence log, SEC-01 leak matrix (wave 3)
+- [x] 02-07-PLAN.md — Sessions and token safety: intended-URL resume, no remember-me, TOTP bypass by design with per-sign-in amr_mfa evidence log, SEC-01 leak matrix (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 02-08-PLAN.md — Profile backend: Disconnect (tokens nulled, identity kept), Connect, token-free profile payload, lang/en + lang/es (wave 4)
@@ -203,7 +203,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Tenant Setup & Outlook Spike | 8/8 | In Progress | - |
-| 2. Sign in with Microsoft | 6/11 | In Progress | - |
+| 2. Sign in with Microsoft | 7/11 | In Progress | - |
 | 3. Outlook Meetings in the Calendar | 0/TBD | Not started | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
