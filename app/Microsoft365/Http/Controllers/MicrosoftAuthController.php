@@ -69,11 +69,18 @@ class MicrosoftAuthController extends Controller
             $guard->check($identity);
             $user = $resolver->resolve($identity, is_string($timezone) ? $timezone : null);
 
-            // Entra already asked for MFA, so Fortify's two-factor challenge is skipped on purpose.
-            // login() regenerates the session id. No remember-me: passwordless users cannot use it.
+            // Entra is the second factor, so Fortify's two-factor challenge is skipped on purpose (D-06).
+            // login() regenerates the session id. No remember-me, ever: passwordless users cannot use
+            // it and a long-lived cookie would outlive an Entra account disable (D-20).
             Auth::guard('web')->login($user, false);
 
-            return redirect()->route('dashboard');
+            // Evidence for the D-06 design, never a decision input: a sign-in whose token lacks the mfa
+            // claim is not refused (Security Defaults prompt based on risk). Nothing identifying is logged.
+            Log::info('Microsoft sign-in completed', ['amr_mfa' => $identity->mfaEvidence()]);
+
+            // The intended URL is written server-side by the guest middleware only (for example
+            // /oauth/authorize from the desktop app or the browser extension); no request value steers it.
+            return redirect()->intended(route('dashboard'));
         } catch (MicrosoftSignInException $e) {
             // Fixed reason and AADSTS code only: provider text, emails, ids and tokens never get logged.
             Log::warning('Microsoft sign-in rejected', [
