@@ -6,6 +6,7 @@ import Banner from '@/Components/Banner.vue';
 import { Field, FieldLabel, FieldError } from '@/packages/ui/src/field';
 import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
 import TextInput from '@/packages/ui/src/Input/TextInput.vue';
+import MicrosoftSignInButton from '@/m365/components/MicrosoftSignInButton.vue';
 
 defineProps({
     canResetPassword: Boolean,
@@ -103,5 +104,6 @@ const page = usePage<{
                 </PrimaryButton>
             </div>
         </form>
+        <MicrosoftSignInButton />
     </AuthenticationCard>
 </template>
