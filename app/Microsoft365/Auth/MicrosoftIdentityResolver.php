@@ -4,31 +4,26 @@ declare(strict_types=1);
 
 namespace App\Microsoft365\Auth;
 
-use App\Enums\Role;
 use App\Microsoft365\MicrosoftConfig;
 use App\Microsoft365\Models\MicrosoftAccount;
-use App\Models\Organization;
 use App\Models\User;
-use App\Service\MemberService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 /**
  * Turns a Microsoft identity into a solidtime user.
  *
  * The identity is matched on tenant id + object id, never on the email once a link exists. The
  * email is used exactly once, to link the identity to an existing verified user. A new person is
- * provisioned as a verified, passwordless employee of the configured organization. The core
- * user-creation path is never used: it hashes a mandatory password and creates a personal
+ * provisioned by MicrosoftUserProvisioner as a verified, passwordless employee of the configured
  * organization.
  */
 final class MicrosoftIdentityResolver
 {
     public function __construct(
         private readonly MicrosoftConfig $config,
-        private readonly MemberService $memberService,
+        private readonly MicrosoftUserProvisioner $provisioner,
     ) {}
 
     /**
@@ -73,7 +68,7 @@ final class MicrosoftIdentityResolver
                 // Returning identity: tid + oid only, the current email is irrelevant.
                 $user = $account->user;
             } else {
-                $user = $this->findLinkCandidate($identity) ?? $this->provision($identity, $timezone);
+                $user = $this->findLinkCandidate($identity) ?? $this->provisioner->provision($identity, $timezone);
                 $account = new MicrosoftAccount;
                 $account->user()->associate($user);
                 $account->tenant_id = $tenantId;
@@ -150,35 +145,6 @@ final class MicrosoftIdentityResolver
         }
 
         return array_values(array_unique($addresses));
-    }
-
-    private function provision(MicrosoftIdentity $identity, ?string $timezone): User
-    {
-        $organizationId = $this->config->organizationId();
-        if ($organizationId === null || ! Str::isUuid($organizationId)) {
-            throw new MicrosoftSignInException(MicrosoftSignInFailure::ProvisioningUnavailable);
-        }
-        $organization = Organization::query()->find($organizationId);
-        if ($organization === null) {
-            throw new MicrosoftSignInException(MicrosoftSignInFailure::ProvisioningUnavailable);
-        }
-
-        $email = $identity->primaryEmail();
-        $name = trim($identity->displayName ?? '');
-
-        $user = new User;
-        $user->name = $name !== '' ? $name : Str::before($email, '@');
-        $user->email = $email;
-        $user->password = null;
-        $user->email_verified_at = Carbon::now();
-        $user->timezone = $timezone ?? $this->config->defaultTimezone();
-        $user->is_placeholder = false;
-        $user->save();
-
-        // Default (non superadmin) join path, the same one invitation acceptance uses
-        $this->memberService->addMember($user, $organization, Role::Employee);
-
-        return $user;
     }
 
     private function storeSignIn(MicrosoftAccount $account, MicrosoftIdentity $identity): void
