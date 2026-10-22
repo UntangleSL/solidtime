@@ -34,7 +34,7 @@ To be filled during execution (see 02-RESEARCH.md requirement→test map: Micros
 
 ## Wave 0 Requirements
 
-- [ ] Portable PHP 8.3 + Composer toolchain outside the repo (scratchpad), `composer require laravel/socialite socialiteproviders/microsoft`
+- [ ] Portable PHP 8.3 + Composer toolchain at C:/Users/JuanHerrero/.local/solidtime-php-toolchain (PHP_TOOLCHAIN_DIR), `composer require laravel/socialite socialiteproviders/microsoft`
 - [ ] `tests/Feature/Microsoft365/`, `tests/Unit/Microsoft365/`, fake gateway + identity builder (example.test emails, 00000000-0000-4000-8000-* GUIDs)
 
 ## Manual-Only Verifications

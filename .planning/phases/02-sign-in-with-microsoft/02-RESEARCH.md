@@ -494,13 +494,22 @@ Artisan command printing: configured yes/no (no secret values), effective redire
 | A9 | Entra Security Defaults (MFA) remain enabled, so skipping Fortify TOTP is safe; the app does not verify an `amr`/MFA claim | Security Domain | Medium: if Security Defaults are disabled later, Microsoft sign-ins would skip any 2FA |
 | A10 | Prod outbound mail works so the owner can verify the bootstrap account by email; otherwise use the SQL fallback | Pitfall 7 | Medium: bootstrap blocked without either path |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+All five questions were answered by the owner in the 02-CONTEXT.md addendum (2026-10-22) or are covered by a plan task. No open question remains.
 
 1. **UI language.** solidtime ships only English: `lang/` contains `en/` only and `config/app.php:131` hard-codes `'locale' => 'en'` [VERIFIED]; the Vue app has no i18n (no i18n package in `package.json`, all copy hard-coded in English). Recommendation: put every new string in `lang/en/microsoft365.php` (D-16) and pass the Vue copy as a `labels` prop built from `trans()`, so no copy is hard-coded; ship `lang/es/microsoft365.php` from the table below but keep the app locale `en` unless the owner wants Spanish everywhere (that is a core `config/app.php` change, not part of this phase).
+   RESOLVED: D-18. English UI via `lang/en/microsoft365.php` (02-02 Task 1); Spanish copy prepared in `lang/es/microsoft365.php` with key parity (02-08 Task 2); app locale stays `en` (invariant checked in 02-08).
 2. **Env prefix.** Recommendation: use `SOLIDTIME_MICROSOFT_*` for all variables (matches Doppler 1:1, D-12 names). D-05 wrote `MICROSOFT_ORGANIZATION_ID` as "e.g."; confirm.
+   RESOLVED: D-21. Every fork variable uses `SOLIDTIME_MICROSOFT_*`, including `SOLIDTIME_MICROSOFT_ORGANIZATION_ID` and `SOLIDTIME_MICROSOFT_ALLOWED_DOMAINS`, copied 1:1 from Doppler `vps/prd` (config in 02-01 Task 1; compose and `.env.example` in 02-09 Task 2).
 3. **Session lifetime for passwordless users.** No remember-me for them (Pattern 5). Recommend the owner sets `SESSION_LIFETIME` (minutes, e.g. 10080) in Dokploy; default is 120.
+   RESOLVED: D-20 overrides the 10080 recommendation: 12 hours for everyone, `SESSION_LIFETIME=720` (compose default in 02-09 Task 2, Dokploy env in 02-11 Task 2, verified by `m365:check`).
 4. **"Connect Microsoft" button in the profile.** D-17 lists only Disconnect. Recommend including Connect (same OAuth route, `intent=connect`): needed to re-enable after a disconnect and reused by Phase 3's "Reconnect Microsoft". Small; confirm scope.
+   RESOLVED: D-19. Both Connect and Disconnect; Disconnect keeps the identity row, nulls both tokens and sets `disconnected_at`; later logins store no tokens until an explicit Connect (`?intent=connect`). Backend in 02-08 Task 1, UI in 02-10.
 5. **Admin unlink path** for a wrong/renamed Entra identity (no UI in this phase): document a tinker/SQL snippet in the runbook (`DELETE FROM microsoft_accounts WHERE user_id = ...`).
+   RESOLVED: documented in `docs/deploy/MICROSOFT-SIGNIN.md` section "Desconectar y desvincular" (02-09 Task 2), with a placeholder user id; time entries untouched.
+
+Related owner answers in the same addendum: D-22 settles Assumption A10 (production mail is not configured; bootstrap verifies the owner's address with the documented SQL fallback, 02-09 Task 2 and 02-11 Task 2). D-23 records that Cloudflare Access comes later as an outer gate only; the deployment guide documents the `/api/*`, `/oauth/token` and `/health-check/up` bypass (02-09 Task 2). Assumption A9 (Security Defaults stay on) is no longer assumed: 02-07 logs `amr_mfa` per sign-in and 02-11 makes tenant MFA enforcement a dated release gate.
 
 ## Environment Availability
 

@@ -87,7 +87,31 @@ Plans:
   4. User sees their Microsoft connection status in their profile and can disconnect it; disconnecting deletes the stored Microsoft tokens and leaves all time entries untouched.
   5. Microsoft tokens exist only encrypted in the dedicated table and never appear in the `users` table, session, cache, logs, audits, API responses or Inertia props; the integration is configured purely through documented env vars, including the Dokploy setup for the HTTPS redirect URI and trusted proxies.
 
-**Plans**: TBD
+**Plans**: 11 plans
+
+Plans:
+**Wave 1**
+- [ ] 02-01-PLAN.md — Backend tracer: redirect -> callback -> provisioned employee on /dashboard, (tid, oid) table, fake gateway in tests (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 02-02-PLAN.md — Failures, off switch and login prop: typed failure messages, tenant/audience guard, 404 when unconfigured, Octane-safe `microsoft` prop, lang/en (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 02-03-PLAN.md — Login page button: SecondaryButton-based "Sign in with Microsoft", Login.vue seam, Playwright off-switch guard (wave 3)
+- [ ] 02-04-PLAN.md — Production adapter: laravel/socialite + socialiteproviders/microsoft, per-call provider, PKCE/state, amr evidence mapping, AADSTS-only errors (wave 3)
+- [ ] 02-05-PLAN.md — Rejection gates: other tenants, guests (#EXT#, userType), domain allowlist with mail/UPN source (wave 3)
+- [ ] 02-06-PLAN.md — Identity resolution: (tid, oid) matching, safe email linking, provisioning as employee via the default join path, exactly-once under concurrency (wave 3)
+- [ ] 02-07-PLAN.md — Sessions and token safety: intended-URL resume, no remember-me, TOTP bypass by design with per-sign-in amr_mfa evidence log, SEC-01 leak matrix (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 02-08-PLAN.md — Profile backend: Disconnect (tokens nulled, identity kept), Connect, token-free profile payload, lang/en + lang/es (wave 4)
+- [ ] 02-09-PLAN.md — Ops: fail-safe env config, m365:check, compose/.env.example, Dokploy deployment + bootstrap guide incl. Entra MFA section, touched-core-files ledger (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 02-10-PLAN.md — Profile "Microsoft 365" section UI: status, Connect, confirmed Disconnect, Show.vue seam, Playwright guard (wave 5)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 02-11-PLAN.md — Release: full CI gate, tenant-MFA release gate, owner-approved Dokploy deploy, D-22 bootstrap, first production Microsoft sign-in recorded in the runbook (wave 6, owner checkpoint)
 **Research focus**: SocialiteProviders registration on Laravel 13; Socialite under Octane (no driver state leaking between users); consent at login with admin consent pre-granted
 **UI hint**: yes
 
@@ -178,7 +202,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Tenant Setup & Outlook Spike | 8/8 | In Progress | - |
-| 2. Sign in with Microsoft | 0/TBD | Not started | - |
+| 2. Sign in with Microsoft | 0/11 | Planned | - |
 | 3. Outlook Meetings in the Calendar | 0/TBD | Not started | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
