@@ -1,0 +1,28 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Microsoft365;
+
+use Illuminate\Support\ServiceProvider;
+
+/**
+ * Entry point of the Microsoft 365 fork code. It is the only thing core knows about: one line in
+ * config/app.php. Routes and migrations are loaded from this directory.
+ *
+ * Inertia data is deliberately not shared from boot(): Octane flushes shared props on every request.
+ */
+class Microsoft365ServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        // bind(), not singleton(): MicrosoftConfig holds no state and must never outlive a request.
+        $this->app->bind(MicrosoftConfig::class, fn (): MicrosoftConfig => new MicrosoftConfig);
+    }
+
+    public function boot(): void
+    {
+        $this->loadRoutesFrom(__DIR__.'/routes/microsoft365.php');
+        $this->loadMigrationsFrom(__DIR__.'/database/migrations');
+    }
+}

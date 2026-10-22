@@ -7,6 +7,7 @@ use App\Enums\DateFormat;
 use App\Enums\IntervalFormat;
 use App\Enums\NumberFormat;
 use App\Enums\TimeFormat;
+use App\Microsoft365\Microsoft365ServiceProvider;
 use App\Providers\AppServiceProvider;
 use App\Providers\AuthServiceProvider;
 use App\Providers\EventServiceProvider;
@@ -246,6 +247,7 @@ return [
         AdminPanelProvider::class,
         RouteServiceProvider::class,
         FortifyServiceProvider::class,
+        Microsoft365ServiceProvider::class,
         // Warning: Do not add TelescopeServiceProvider here since it is already conditionally registered in AppServiceProvider
         LaravelModulesServiceProvider::class,
     ])->toArray(),
