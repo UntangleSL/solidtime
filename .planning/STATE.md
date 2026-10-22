@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 2
 current_phase_name: Sign in with Microsoft
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-10-22T20:50:35.488Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-10-22T21:02:00.565Z"
 last_activity: 2026-10-22
 last_activity_desc: Phase 2 execution started
-state_head: ca4f7869e9c0dfbd2fe4e72be2e6a96fa570fb92
+state_head: 5be04d6305a7797d329c2b0f38d25591c6b70685
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 19
-  completed_plans: 9
+  completed_plans: 10
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 2 (Sign in with Microsoft) — EXECUTING
-Plan: 2 of 11
+Plan: 3 of 11
 Status: Ready to execute
 Last activity: 2026-10-22 — Phase 2 execution started
 
@@ -65,6 +65,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P07 | 20min | 3 tasks | 143 files |
 | Phase 1 P08 | 2 sessions | 3 tasks | 11 files |
 | Phase 02 P01 | 30min | 2 tasks | 14 files |
+| Phase 02 P02 | 15min | 2 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,7 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-08: SYNC-03 revised by owner - all timed meetings are suggestions regardless of responseStatus; Graph removes declined
 - [Phase 1]: 01-08: Entra spike cleanup (redirect URI and secret spike-2026-10) deferred by owner until production, tracked in ROADMAP Phase 7
 - [Phase 02]: [02-01] Provisioned Microsoft users join via MemberService::addMember default (non-superadmin) path; MicrosoftAccount is not Auditable; callback logs only fixed reason plus exception class
+- [Phase 02]: 02-02: Microsoft Inertia prop shared from a web-group middleware (Octane-safe); callback logs only fixed reason + AADSTS code
 
 ### Pending Todos
 
@@ -121,6 +123,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-22T20:50:35.422Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-10-22T21:01:55.272Z
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None
