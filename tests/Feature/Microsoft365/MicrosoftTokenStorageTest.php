@@ -15,6 +15,7 @@ use App\Microsoft365\MicrosoftConfig;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Models\Organization;
 use App\Models\User;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -152,7 +153,9 @@ class MicrosoftTokenStorageTest extends TestCaseWithDatabase
         $this->assertNoTokenInLogs();
 
         // Act: a rejection that already obtained tokens
+        Auth::guard('web')->logout();
         $this->flushSession();
+        $this->assertGuest();
         $gateway->willReturn($this->microsoftIdentity(['tenantId' => '00000000-0000-4000-8000-0000000000ff']));
         $this->get($this->callbackUrl())->assertRedirect(route('login', [], false));
 
