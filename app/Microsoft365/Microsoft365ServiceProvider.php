@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Microsoft365;
 
+use App\Microsoft365\Auth\MicrosoftOAuthGateway;
+use App\Microsoft365\Auth\SocialiteMicrosoftGateway;
 use App\Microsoft365\Http\Middleware\ShareMicrosoftInertiaData;
 use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
@@ -18,8 +20,12 @@ class Microsoft365ServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        // bind(), not singleton(): MicrosoftConfig holds no state and must never outlive a request.
+        // Plain bind (no shared instance): MicrosoftConfig holds no state and must never outlive a request.
         $this->app->bind(MicrosoftConfig::class, fn (): MicrosoftConfig => new MicrosoftConfig);
+
+        // Plain bind, never a shared or request-scoped instance: the gateway builds a fresh Socialite driver per call, and a
+        // driver reused across requests would return the previous visitor's cached identity (D-11).
+        $this->app->bind(MicrosoftOAuthGateway::class, SocialiteMicrosoftGateway::class);
     }
 
     public function boot(Router $router): void
