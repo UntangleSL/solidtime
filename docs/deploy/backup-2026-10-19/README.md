@@ -15,3 +15,16 @@ Activados solo los workflows de tests y calidad (PHPUnit, PHPStan, Pint, NPM bui
 Desactivados con `gh workflow disable` (ajuste del repo, sin tocar ficheros, para no complicar merges con upstream):
 build-public/private/onpremise, generate-api-docs, npm-publish-api/ui, phpunit-extensions, playwright-extensions
 (necesitan repos privados de extensiones de solidtime-io), extension-manifest-check y vouch-*.
+
+## Cambio al fork (2026-10-22)
+
+- Dokploy usa `docs/deploy/dokploy-compose.fork.yml`: imagen `ghcr.io/untanglesl/solidtime:feature-m365-integration`
+  (construida por `.github/workflows/fork-image.yml`), BD nueva en el volumen `database-storage-m365`
+  (migraciones automáticas con `AUTO_DB_MIGRATE`). El volumen antiguo `database-storage` sigue existiendo, sin usar.
+- La imagen en GHCR es privada (la organización no permite paquetes públicos). Dokploy la descarga con el registro
+  `ghcr.io` (usuario `untangle-juan`, token classic solo `read:packages`, guardado también en Doppler `vps/prd`
+  como `SOLIDTIME_GHCR_READ_TOKEN`).
+- Verificado: los 5 contenedores arrancan, las migraciones se aplican, `/login`, `/register` y `/health-check/up` dan 200.
+- Conocido: `scheduler` y `queue` aparecen como "unhealthy" porque el HEALTHCHECK de la imagen comprueba el puerto HTTP,
+  que solo sirve `app`. Funcionan bien (el scheduler ejecuta sus tareas y el worker está en RUNNING). Pendiente de
+  ajustar en el compose (fase 7).
