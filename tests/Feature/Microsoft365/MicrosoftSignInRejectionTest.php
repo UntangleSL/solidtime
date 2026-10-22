@@ -78,6 +78,43 @@ class MicrosoftSignInRejectionTest extends TestCaseWithDatabase
         $this->assertRejected($response, 'guest', $userCount, $identity);
     }
 
+    public function test_identity_outside_the_allowed_domains_is_sent_back_to_login_with_the_domain_message(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365(Organization::factory()->create());
+        $identity = $this->microsoftIdentity([
+            'mail' => 'ada@elsewhere.test',
+            'userPrincipalName' => 'ada@elsewhere.test',
+        ]);
+        $this->fakeMicrosoftGateway()->willReturn($identity);
+        $userCount = User::query()->count();
+
+        // Act
+        $response = $this->get($this->callbackUrl());
+
+        // Assert
+        $this->assertRejected($response, 'domain', $userCount, $identity);
+    }
+
+    public function test_user_without_mailbox_signs_in_and_is_provisioned_with_the_lower_cased_user_principal_name(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $this->configureMicrosoft365($organization);
+        $this->fakeMicrosoftGateway()->willReturn($this->microsoftIdentity([
+            'mail' => null,
+            'userPrincipalName' => 'F1.User@Example.Test',
+        ]));
+
+        // Act
+        $response = $this->get($this->callbackUrl());
+
+        // Assert
+        $response->assertRedirect(route('dashboard', [], false));
+        $user = User::query()->where('email', 'f1.user@example.test')->firstOrFail();
+        $this->assertAuthenticatedAs($user);
+    }
+
     private function assertRejected(
         TestResponse $response,
         string $reason,

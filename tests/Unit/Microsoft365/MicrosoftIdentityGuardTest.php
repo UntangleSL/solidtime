@@ -198,6 +198,109 @@ class MicrosoftIdentityGuardTest extends TestCase
         $this->assertRejectedWith(MicrosoftSignInFailure::WrongTenant, $identity);
     }
 
+    public function test_mail_in_upper_case_matches_the_allowlisted_domain_exactly_after_lower_casing(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365(null, ['allowed_domains' => 'untanglegrowth.com,untangle.es']);
+        $identity = $this->microsoftIdentity(['mail' => 'ADA@UNTANGLE.ES', 'userPrincipalName' => 'ADA@UNTANGLE.ES']);
+
+        // Act
+        $this->guard->check($identity);
+
+        // Assert
+        $this->addToAssertionCount(1);
+    }
+
+    public function test_look_alike_and_sub_domains_are_rejected_as_domain(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365(null, ['allowed_domains' => 'untanglegrowth.com,untangle.es']);
+
+        foreach (['ada@evil-untangle.es', 'ada@untangle.es.evil.test', 'ada@sub.untangle.es'] as $address) {
+            $identity = $this->microsoftIdentity(['mail' => $address, 'userPrincipalName' => $address]);
+
+            // Act & Assert
+            $this->assertRejectedWith(MicrosoftSignInFailure::Domain, $identity);
+        }
+    }
+
+    public function test_user_without_mailbox_passes_on_the_user_principal_name(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365(null, ['allowed_domains' => 'untanglegrowth.com,untangle.es']);
+        $identity = $this->microsoftIdentity(['mail' => null, 'userPrincipalName' => 'ada@untanglegrowth.com']);
+
+        // Act
+        $this->guard->check($identity);
+
+        // Assert
+        $this->addToAssertionCount(1);
+    }
+
+    public function test_mail_wins_over_the_user_principal_name_as_the_account_address(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365(null, ['allowed_domains' => 'untanglegrowth.com,untangle.es']);
+        $identity = $this->microsoftIdentity(['mail' => 'ada@gmail.example', 'userPrincipalName' => 'ada@untangle.es']);
+
+        // Act & Assert
+        $this->assertRejectedWith(MicrosoftSignInFailure::Domain, $identity);
+    }
+
+    public function test_allowlist_with_whitespace_case_and_empty_entries_still_matches(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365(null, ['allowed_domains' => ' Untangle.ES , ,untanglegrowth.com ']);
+        $identity = $this->microsoftIdentity(['mail' => 'ada@untangle.es', 'userPrincipalName' => 'ada@untangle.es']);
+
+        // Act
+        $this->guard->check($identity);
+
+        // Assert
+        $this->addToAssertionCount(1);
+    }
+
+    public function test_empty_allowlist_rejects_every_identity_as_domain(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365(null, ['allowed_domains' => '']);
+
+        // Act & Assert
+        $this->assertRejectedWith(MicrosoftSignInFailure::Domain, $this->microsoftIdentity());
+    }
+
+    public function test_address_without_at_sign_is_rejected_as_domain(): void
+    {
+        // Arrange
+        $identity = $this->microsoftIdentity(['mail' => 'example.test', 'userPrincipalName' => 'example.test']);
+
+        // Act & Assert
+        $this->assertRejectedWith(MicrosoftSignInFailure::Domain, $identity);
+    }
+
+    public function test_address_with_trailing_at_sign_is_rejected_as_domain(): void
+    {
+        // Arrange
+        $identity = $this->microsoftIdentity(['mail' => 'ada@', 'userPrincipalName' => 'ada@']);
+
+        // Act & Assert
+        $this->assertRejectedWith(MicrosoftSignInFailure::Domain, $identity);
+    }
+
+    public function test_address_with_two_at_signs_uses_the_part_after_the_last_one(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365(null, ['allowed_domains' => 'example.test']);
+        $allowed = $this->microsoftIdentity(['mail' => 'ada@evil.test@example.test', 'userPrincipalName' => 'x@example.test']);
+        $rejected = $this->microsoftIdentity(['mail' => 'ada@example.test@evil.test', 'userPrincipalName' => 'x@example.test']);
+
+        // Act
+        $this->guard->check($allowed);
+
+        // Assert
+        $this->assertRejectedWith(MicrosoftSignInFailure::Domain, $rejected);
+    }
+
     private function assertRejectedWith(MicrosoftSignInFailure $expected, MicrosoftIdentity $identity): void
     {
         try {

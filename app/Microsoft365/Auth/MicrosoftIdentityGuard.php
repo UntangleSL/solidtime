@@ -27,6 +27,7 @@ final class MicrosoftIdentityGuard
         $this->checkTenantAndAudience($identity);
         $this->checkObjectId($identity);
         $this->checkNotGuest($identity);
+        $this->checkDomain($identity);
     }
 
     private function checkTenantAndAudience(MicrosoftIdentity $identity): void
@@ -60,6 +61,20 @@ final class MicrosoftIdentityGuard
             || stripos($identity->userPrincipalName, '#EXT#') !== false
             || ($identity->accountType !== null && trim($identity->accountType) === '1')) {
             throw new MicrosoftSignInException(MicrosoftSignInFailure::Guest);
+        }
+    }
+
+    private function checkDomain(MicrosoftIdentity $identity): void
+    {
+        // The account address is the mail, or the user principal name for users without a mailbox.
+        // Only what follows the LAST @ counts and it must equal an allowlisted domain exactly, so
+        // look-alike suffixes and sub-domains never match. An empty allowlist admits nobody.
+        $address = $identity->primaryEmail();
+        $at = strrpos($address, '@');
+        $domain = $at === false ? '' : substr($address, $at + 1);
+
+        if ($domain === '' || ! in_array($domain, $this->config->allowedDomains(), true)) {
+            throw new MicrosoftSignInException(MicrosoftSignInFailure::Domain);
         }
     }
 }
