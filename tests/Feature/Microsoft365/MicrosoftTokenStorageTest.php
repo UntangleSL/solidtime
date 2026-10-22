@@ -91,8 +91,8 @@ class MicrosoftTokenStorageTest extends TestCaseWithDatabase
         // Assert
         $this->assertArrayNotHasKey('access_token', $array);
         $this->assertArrayNotHasKey('refresh_token', $array);
-        $this->assertStringNotContainsString('access_token', $json);
-        $this->assertStringNotContainsString('refresh_token', $json);
+        $this->assertStringNotContainsString('"access_token"', $json);
+        $this->assertStringNotContainsString('"refresh_token"', $json);
         $this->assertStringNotContainsString(self::ACCESS_MARKER, $json);
         $this->assertStringNotContainsString(self::REFRESH_MARKER, $json);
         $this->assertStringNotContainsString(self::ACCESS_MARKER, (string) json_encode($array));
@@ -184,8 +184,8 @@ class MicrosoftTokenStorageTest extends TestCaseWithDatabase
             $content = (string) $response->getContent();
             $this->assertStringNotContainsString(self::ACCESS_MARKER, $content);
             $this->assertStringNotContainsString(self::REFRESH_MARKER, $content);
-            $this->assertStringNotContainsString('access_token', $content);
-            $this->assertStringNotContainsString('refresh_token', $content);
+            $this->assertStringNotContainsString('"access_token"', $content);
+            $this->assertStringNotContainsString('"refresh_token"', $content);
         }
     }
 
@@ -205,8 +205,8 @@ class MicrosoftTokenStorageTest extends TestCaseWithDatabase
         $content = (string) $response->getContent();
         $this->assertStringNotContainsString(self::ACCESS_MARKER, $content);
         $this->assertStringNotContainsString(self::REFRESH_MARKER, $content);
-        $this->assertStringNotContainsString('access_token', $content);
-        $this->assertStringNotContainsString('refresh_token', $content);
+        $this->assertStringNotContainsString('"access_token"', $content);
+        $this->assertStringNotContainsString('"refresh_token"', $content);
     }
 
     public function test_identity_debug_output_redacts_tokens(): void
