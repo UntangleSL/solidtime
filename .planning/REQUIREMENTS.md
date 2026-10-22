@@ -15,9 +15,9 @@
 
 - [x] **AUTH-01**: User can click "Sign in with Microsoft" on the login page and authenticate with their Untangle M365 account; email/password login keeps working unchanged
 - [x] **AUTH-02**: Sign-in rejects accounts from other tenants, guest (B2B/#EXT#) users, and email domains outside the configured allowlist (default: `untanglegrowth.com` (primary) and `untangle.es`), with a clear error message
-- [ ] **AUTH-03**: On first Microsoft sign-in with no existing account, a solidtime user is created automatically (email verified, no password) and joined to the configured Untangle organization with the lowest (employee) role
-- [ ] **AUTH-04**: On first Microsoft sign-in where a verified non-placeholder solidtime user with the same email (case-insensitive) exists, the Microsoft identity is linked to that user instead of creating a duplicate; unverified password accounts are never silently linked
-- [ ] **AUTH-05**: Subsequent sign-ins match the user by Microsoft identity (`tid` + `oid`), not by email; concurrent first sign-ins never produce duplicate users
+- [x] **AUTH-03**: On first Microsoft sign-in with no existing account, a solidtime user is created automatically (email verified, no password) and joined to the configured Untangle organization with the lowest (employee) role
+- [x] **AUTH-04**: On first Microsoft sign-in where a verified non-placeholder solidtime user with the same email (case-insensitive) exists, the Microsoft identity is linked to that user instead of creating a duplicate; unverified password accounts are never silently linked
+- [x] **AUTH-05**: Subsequent sign-ins match the user by Microsoft identity (`tid` + `oid`), not by email; concurrent first sign-ins never produce duplicate users
 - [ ] **AUTH-06**: Microsoft sign-in works even when public registration is disabled (`APP_ENABLE_REGISTRATION=off`/invite-only); Entra MFA is the second factor for Microsoft sign-ins
 - [ ] **AUTH-07**: User can see their Microsoft connection status in their profile and disconnect it; disconnecting deletes stored Microsoft tokens but keeps all time entries already created
 
@@ -110,9 +110,9 @@
 | SETUP-03 | Phase 1 | Complete |
 | AUTH-01 | Phase 2 | Complete |
 | AUTH-02 | Phase 2 | Complete |
-| AUTH-03 | Phase 2 | Pending |
-| AUTH-04 | Phase 2 | Pending |
-| AUTH-05 | Phase 2 | Pending |
+| AUTH-03 | Phase 2 | Complete |
+| AUTH-04 | Phase 2 | Complete |
+| AUTH-05 | Phase 2 | Complete |
 | AUTH-06 | Phase 2 | Pending |
 | AUTH-07 | Phase 2 | Pending |
 | SEC-01 | Phase 2 | Pending |

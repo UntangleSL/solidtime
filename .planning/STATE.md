@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 2
 current_phase_name: Sign in with Microsoft
 status: executing
-stopped_at: Completed 02-05-PLAN.md
-last_updated: "2026-10-22T22:45:36.437Z"
+stopped_at: Completed 02-06-PLAN.md
+last_updated: "2026-10-22T23:10:25.812Z"
 last_activity: 2026-10-22
 last_activity_desc: Phase 2 execution started
-state_head: 9d482dbb7498870bd0de664bb687b6544885d835
+state_head: 8e4f5f56dc701a49454008b71ee4cd031a5fa3da
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 19
-  completed_plans: 13
+  completed_plans: 14
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 2 (Sign in with Microsoft) — EXECUTING
-Plan: 6 of 11
+Plan: 7 of 11
 Status: Ready to execute
 Last activity: 2026-10-22 — Phase 2 execution started
 
@@ -69,6 +69,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 02 P03 | 70min | 2 tasks | 5 files |
 | Phase 2 P04 | 35min | 2 tasks | 6 files |
 | Phase 02 P05 | 25min | 2 tasks | 3 files |
+| Phase 02 P06 | 35min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -108,6 +109,7 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-03: Microsoft button wraps existing SecondaryButton; navigation via mockable navigateTo (window.location.assign), never Inertia
 - [Phase 2]: [02-04] Gateway catches Guzzle 8 ResponseException for AADSTS extraction; all Socialite InvalidStateException map to Interrupted; no previous-exception chaining
 - [Phase 02]: 02-05: guard rule order tenant/aud, oid, guest, domain; accountType compared as string '1'; domain exact match after last @
+- [Phase 02]: 02-06: provisioning joins via MemberService default path (Role::Employee), identity resolution retries once on unique violation under pg_advisory_xact_lock
 
 ### Pending Todos
 
@@ -129,6 +131,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-22T22:45:36.369Z
-Stopped at: Completed 02-05-PLAN.md
+Last session: 2026-10-22T23:10:25.739Z
+Stopped at: Completed 02-06-PLAN.md
 Resume file: None
