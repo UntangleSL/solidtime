@@ -73,7 +73,7 @@ describe('MicrosoftSignInButton', () => {
         await wrapper.get('[data-testid="microsoft-sign-in"]').trigger('click');
 
         expect(navigateTo).toHaveBeenCalledTimes(1);
-        const url = navigateTo.mock.calls[0][0] as string;
+        const url = String(navigateTo.mock.calls[0]?.[0]);
         expect(url.startsWith('https://app.example.test/auth/microsoft/redirect')).toBe(true);
         expect(url).toContain('timezone=Europe%2FBerlin');
     });
