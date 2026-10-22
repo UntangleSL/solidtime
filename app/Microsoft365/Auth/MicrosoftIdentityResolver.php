@@ -13,7 +13,6 @@ use App\Service\MemberService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use RuntimeException;
 
 /**
  * Turns a Microsoft identity into a solidtime user.
@@ -65,11 +64,11 @@ final class MicrosoftIdentityResolver
     {
         $organizationId = $this->config->organizationId();
         if ($organizationId === null || ! Str::isUuid($organizationId)) {
-            throw new RuntimeException('provisioning_unavailable');
+            throw new MicrosoftSignInException(MicrosoftSignInFailure::ProvisioningUnavailable);
         }
         $organization = Organization::query()->find($organizationId);
         if ($organization === null) {
-            throw new RuntimeException('provisioning_unavailable');
+            throw new MicrosoftSignInException(MicrosoftSignInFailure::ProvisioningUnavailable);
         }
 
         $email = $identity->primaryEmail();

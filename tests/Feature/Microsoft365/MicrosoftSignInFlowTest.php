@@ -6,7 +6,10 @@ namespace Tests\Feature\Microsoft365;
 
 use App\Enums\Role;
 use App\Microsoft365\Auth\MicrosoftIdentity;
+use App\Microsoft365\Auth\MicrosoftIdentityGuard;
 use App\Microsoft365\Auth\MicrosoftIdentityResolver;
+use App\Microsoft365\Auth\MicrosoftSignInException;
+use App\Microsoft365\Auth\MicrosoftSignInFailure;
 use App\Microsoft365\Http\Controllers\MicrosoftAuthController;
 use App\Microsoft365\Microsoft365ServiceProvider;
 use App\Microsoft365\MicrosoftConfig;
@@ -26,6 +29,9 @@ use TiMacDonald\Log\LogEntry;
 
 #[CoversClass(MicrosoftAuthController::class)]
 #[UsesClass(MicrosoftIdentityResolver::class)]
+#[UsesClass(MicrosoftIdentityGuard::class)]
+#[UsesClass(MicrosoftSignInException::class)]
+#[UsesClass(MicrosoftSignInFailure::class)]
 #[UsesClass(MicrosoftIdentity::class)]
 #[UsesClass(MicrosoftConfig::class)]
 #[UsesClass(Microsoft365ServiceProvider::class)]
@@ -175,6 +181,8 @@ class MicrosoftSignInFlowTest extends TestCaseWithDatabase
         $this->assertSame($userCount, User::query()->count());
         $this->assertSame(0, MicrosoftAccount::query()->count());
         $response->assertSessionMissing('microsoft.timezone');
+        $response->assertSessionHas('message', __('microsoft365.error.generic'));
+        $this->assertNotSame('microsoft365.error.generic', __('microsoft365.error.generic'));
         Log::assertLogged(fn (LogEntry $log) => $log->level === 'error'
             && $log->message === 'Microsoft sign-in failed'
             && $log->context === ['reason' => 'unexpected', 'exception' => RuntimeException::class]);
@@ -245,6 +253,139 @@ class MicrosoftSignInFlowTest extends TestCaseWithDatabase
         $response->assertRedirect(route('dashboard', [], false));
         $user = User::query()->where('email', 'ada@example.test')->firstOrFail();
         $this->assertSame('Europe/Madrid', $user->timezone);
+    }
+
+    public function test_cancelled_sign_in_shows_message_and_stays_guest(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $this->configureMicrosoft365($organization);
+        $gateway = $this->fakeMicrosoftGateway();
+        $userCount = User::query()->count();
+
+        // Act
+        $response = $this->get(route('microsoft.callback', ['error' => 'access_denied'], false));
+
+        // Assert
+        $response->assertRedirect(route('login', [], false));
+        $response->assertSessionHas('message', __('microsoft365.error.cancelled'));
+        $this->assertGuest();
+        $this->assertSame($userCount, User::query()->count());
+        $this->assertSame(0, MicrosoftAccount::query()->count());
+        $this->assertSame(0, $gateway->authenticateCalls());
+    }
+
+    public function test_provider_error_logs_only_the_aadsts_code(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $this->configureMicrosoft365($organization);
+        $gateway = $this->fakeMicrosoftGateway();
+
+        // Act
+        $response = $this->get(route('microsoft.callback', [
+            'error' => 'server_error',
+            'error_description' => 'AADSTS50011: The redirect URI mismatch detail-77',
+        ], false));
+
+        // Assert
+        $response->assertRedirect(route('login', [], false));
+        $response->assertSessionHas('message', __('microsoft365.error.generic'));
+        $this->assertSame(0, $gateway->authenticateCalls());
+        Log::assertLogged(fn (LogEntry $log) => $log->level === 'warning'
+            && $log->message === 'Microsoft sign-in rejected'
+            && $log->context === ['reason' => 'generic', 'provider_code' => 'AADSTS50011']);
+        Log::assertNotLogged(fn (LogEntry $log) => str_contains($log->message, 'detail-77')
+            || str_contains((string) json_encode($log->context), 'detail-77'));
+    }
+
+    public function test_identity_from_another_tenant_or_audience_is_rejected(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $this->configureMicrosoft365($organization);
+        $gateway = $this->fakeMicrosoftGateway();
+        $userCount = User::query()->count();
+        $memberCount = Member::query()->count();
+        $foreignIdentities = [
+            $this->microsoftIdentity(['tenantId' => '00000000-0000-4000-8000-0000000000ff']),
+            $this->microsoftIdentity(['audience' => '00000000-0000-4000-8000-0000000000fe']),
+        ];
+
+        foreach ($foreignIdentities as $identity) {
+            $gateway->willReturn($identity);
+
+            // Act
+            $response = $this->get($this->callbackUrl());
+
+            // Assert
+            $response->assertRedirect(route('login', [], false));
+            $response->assertSessionHas('message', __('microsoft365.error.wrong_tenant'));
+            $this->assertGuest();
+        }
+        $this->assertSame($userCount, User::query()->count());
+        $this->assertSame(0, MicrosoftAccount::query()->count());
+        $this->assertSame($memberCount, Member::query()->count());
+        Log::assertLogged(fn (LogEntry $log) => $log->level === 'warning'
+            && $log->message === 'Microsoft sign-in rejected'
+            && $log->context === ['reason' => 'wrong_tenant', 'provider_code' => null]);
+    }
+
+    public function test_tenant_compare_is_case_insensitive(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $this->configureMicrosoft365($organization, ['tenant_id' => strtoupper(self::MICROSOFT_TEST_TENANT_ID)]);
+        $this->fakeMicrosoftGateway()->willReturn($this->microsoftIdentity([
+            'tenantId' => strtoupper(self::MICROSOFT_TEST_TENANT_ID),
+        ]));
+
+        // Act
+        $response = $this->get($this->callbackUrl());
+
+        // Assert
+        $response->assertRedirect(route('dashboard', [], false));
+        $this->assertAuthenticated();
+    }
+
+    public function test_missing_organization_refuses_provisioning(): void
+    {
+        // Arrange
+        $this->fakeMicrosoftGateway()->willReturn($this->microsoftIdentity());
+        $userCount = User::query()->count();
+
+        foreach ([null, 'not-a-uuid', '00000000-0000-4000-8000-00000000dead'] as $organizationId) {
+            $this->configureMicrosoft365(null, ['organization_id' => $organizationId]);
+
+            // Act
+            $response = $this->get($this->callbackUrl());
+
+            // Assert
+            $response->assertRedirect(route('login', [], false));
+            $response->assertSessionHas('message', __('microsoft365.error.provisioning_unavailable'));
+            $this->assertGuest();
+        }
+        $this->assertSame($userCount, User::query()->count());
+        $this->assertSame(0, MicrosoftAccount::query()->count());
+    }
+
+    public function test_typed_gateway_failure_maps_to_its_message(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $this->configureMicrosoft365($organization);
+        $this->fakeMicrosoftGateway()->willThrow(new MicrosoftSignInException(MicrosoftSignInFailure::Interrupted));
+
+        // Act
+        $response = $this->get($this->callbackUrl());
+
+        // Assert
+        $response->assertRedirect(route('login', [], false));
+        $response->assertSessionHas('message', __('microsoft365.error.interrupted'));
+        $this->assertGuest();
+        Log::assertLogged(fn (LogEntry $log) => $log->level === 'warning'
+            && $log->message === 'Microsoft sign-in rejected'
+            && $log->context === ['reason' => 'interrupted', 'provider_code' => null]);
     }
 
     private function callbackUrl(): string

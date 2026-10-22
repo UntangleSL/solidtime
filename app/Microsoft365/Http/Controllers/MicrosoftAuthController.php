@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Microsoft365\Http\Controllers;
 
+use App\Microsoft365\Auth\MicrosoftIdentityGuard;
 use App\Microsoft365\Auth\MicrosoftIdentityResolver;
 use App\Microsoft365\Auth\MicrosoftOAuthGateway;
+use App\Microsoft365\Auth\MicrosoftSignInException;
+use App\Microsoft365\Auth\MicrosoftSignInFailure;
 use App\Service\TimezoneService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -39,8 +42,12 @@ class MicrosoftAuthController extends Controller
         return $gateway->redirect($request);
     }
 
-    public function callback(Request $request, MicrosoftOAuthGateway $gateway, MicrosoftIdentityResolver $resolver): RedirectResponse
-    {
+    public function callback(
+        Request $request,
+        MicrosoftOAuthGateway $gateway,
+        MicrosoftIdentityGuard $guard,
+        MicrosoftIdentityResolver $resolver,
+    ): RedirectResponse {
         if (Auth::guard('web')->check()) {
             $request->session()->forget(self::TIMEZONE_SESSION_KEY);
 
@@ -48,8 +55,18 @@ class MicrosoftAuthController extends Controller
         }
 
         try {
+            // The visitor came back with an error (for example "access_denied"): nothing to exchange.
+            $error = $request->query('error');
+            if ($error !== null) {
+                throw new MicrosoftSignInException(
+                    $error === 'access_denied' ? MicrosoftSignInFailure::Cancelled : MicrosoftSignInFailure::Generic,
+                    $this->providerCode($request->query('error_description')),
+                );
+            }
+
             $timezone = $request->session()->get(self::TIMEZONE_SESSION_KEY);
             $identity = $gateway->authenticate($request);
+            $guard->check($identity);
             $user = $resolver->resolve($identity, is_string($timezone) ? $timezone : null);
 
             // Entra already asked for MFA, so Fortify's two-factor challenge is skipped on purpose.
@@ -57,14 +74,35 @@ class MicrosoftAuthController extends Controller
             Auth::guard('web')->login($user, false);
 
             return redirect()->route('dashboard');
+        } catch (MicrosoftSignInException $e) {
+            // Fixed reason and AADSTS code only: provider text, emails, ids and tokens never get logged.
+            Log::warning('Microsoft sign-in rejected', [
+                'reason' => $e->reason->value,
+                'provider_code' => $e->providerCode,
+            ]);
+
+            return redirect()->route('login')->with('message', __($e->reason->messageKey()));
         } catch (Throwable $e) {
             // Fixed reason and class only: the exception text can carry token-derived data.
             Log::error('Microsoft sign-in failed', ['reason' => 'unexpected', 'exception' => $e::class]);
 
-            return redirect()->route('login')->with('message', __('microsoft365.error.generic'));
+            return redirect()->route('login')->with('message', __(MicrosoftSignInFailure::Generic->messageKey()));
         } finally {
             $request->session()->forget(self::TIMEZONE_SESSION_KEY);
         }
+    }
+
+    /**
+     * Reduces the untrusted error_description to the first Entra error code (AADSTS followed by digits).
+     * The description text itself is never kept.
+     */
+    private function providerCode(mixed $description): ?string
+    {
+        if (! is_string($description) || preg_match('/AADSTS\d+/', $description, $matches) !== 1) {
+            return null;
+        }
+
+        return $matches[0];
     }
 
     /**
