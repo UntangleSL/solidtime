@@ -20,6 +20,8 @@ use App\Models\TimeEntry;
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Inertia\Inertia;
+use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\Feature\Microsoft365\Support\InteractsWithMicrosoft365;
@@ -425,6 +427,162 @@ class MicrosoftAccountTest extends TestCaseWithDatabase
         $interrupted->assertSessionHas('microsoft365.notice', __('microsoft365.error.interrupted'));
         $interrupted->assertSessionMissing('microsoft.intent');
         $interrupted->assertSessionMissing('microsoft.connect_user_id');
+    }
+
+    public function test_profile_exposes_token_free_account_state_for_connected_user(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $this->linkAccount($user, withTokens: true);
+        $this->actingAs($user);
+
+        // Act
+        $response = $this->get(route('profile.show', [], false));
+
+        // Assert
+        $response->assertStatus(200);
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.enabled', true)
+            ->where('microsoft.account.linked', true)
+            ->where('microsoft.account.connected', true)
+            ->where('microsoft.account.email', 'ada@example.test')
+            ->where('microsoft.account.has_password', true)
+            ->where('microsoft.account.connect_url', route('microsoft.redirect', ['intent' => 'connect']))
+            ->where('microsoft.account.disconnect_url', route('microsoft.account.destroy'))
+            ->where('microsoft.account.notice', null)
+            ->where('microsoft.account.labels.connected_as', 'Connected as ada@example.test')
+            ->where('microsoft.account.labels.section_title', __('microsoft365.ui.section_title'))
+            ->where('microsoft.account.labels.disconnect', 'Disconnect')
+            ->where('microsoft.account.labels.connect', 'Connect Microsoft')
+            ->etc());
+    }
+
+    public function test_profile_account_state_without_a_linked_row(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $this->actingAs($user);
+
+        // Act
+        $response = $this->get(route('profile.show', [], false));
+
+        // Assert
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.account.linked', false)
+            ->where('microsoft.account.connected', false)
+            ->where('microsoft.account.email', null)
+            ->where('microsoft.account.has_password', true)
+            ->etc());
+    }
+
+    public function test_profile_account_state_for_a_passwordless_disconnected_user(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser(['password' => null]);
+        $account = $this->linkAccount($user);
+        $account->disconnected_at = Carbon::now();
+        $account->save();
+        $this->actingAs($user);
+
+        // Act
+        $response = $this->get(route('profile.show', [], false));
+
+        // Assert
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.account.linked', true)
+            ->where('microsoft.account.connected', false)
+            ->where('microsoft.account.has_password', false)
+            ->where('microsoft.account.labels.disconnected_status', __('microsoft365.ui.disconnected_status'))
+            ->etc());
+    }
+
+    public function test_profile_response_never_carries_tokens(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $this->linkAccount($user, withTokens: true);
+        $this->actingAs($user);
+        // A plain request first, so the Inertia middleware has registered the asset version
+        $this->get(route('profile.show', [], false))->assertStatus(200);
+        $headers = ['X-Inertia' => 'true', 'X-Inertia-Version' => Inertia::getVersion()];
+
+        // Act
+        $response = $this->get(route('profile.show', [], false), $headers);
+
+        // Assert
+        $response->assertStatus(200);
+        $response->assertHeader('X-Inertia', 'true');
+        $content = (string) $response->getContent();
+        $this->assertStringContainsString('"account"', $content);
+        $this->assertStringNotContainsString('at-marker-7f3c', $content);
+        $this->assertStringNotContainsString('rt-marker-9d1e', $content);
+        $this->assertStringNotContainsString('access_token', $content);
+        $this->assertStringNotContainsString('refresh_token', $content);
+    }
+
+    public function test_account_payload_is_only_on_the_profile_page(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $this->linkAccount($user, withTokens: true);
+        $this->actingAs($user);
+
+        // Act
+        $dashboard = $this->get(route('dashboard', [], false));
+
+        // Assert
+        $dashboard->assertStatus(200);
+        $dashboard->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.enabled', true)
+            ->missing('microsoft.account')
+            ->etc());
+    }
+
+    public function test_unconfigured_integration_has_no_account_payload_on_the_profile(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365(null, ['client_id' => null]);
+        $user = $this->createUser();
+        $this->actingAs($user);
+
+        // Act
+        $response = $this->get(route('profile.show', [], false));
+
+        // Assert
+        $response->assertStatus(200);
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.enabled', false)
+            ->missing('microsoft.account')
+            ->etc());
+    }
+
+    public function test_disconnect_notice_reaches_the_next_profile_response_once(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $this->linkAccount($user, withTokens: true);
+        $this->actingAs($user);
+        $this->delete(route('microsoft.account.destroy', [], false))->assertRedirect(route('profile.show', [], false));
+
+        // Act
+        $first = $this->get(route('profile.show', [], false));
+        $second = $this->get(route('profile.show', [], false));
+
+        // Assert
+        $first->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.account.notice', __('microsoft365.ui.disconnected_notice'))
+            ->where('microsoft.account.linked', true)
+            ->where('microsoft.account.connected', false)
+            ->etc());
+        $second->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.account.notice', null)
+            ->etc());
     }
 
     /**
