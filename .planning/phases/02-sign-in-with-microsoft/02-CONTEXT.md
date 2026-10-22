@@ -84,3 +84,12 @@ Untangle members can sign in to solidtime (time.untangle.es and local) with "Sig
 
 *Phase: 02-sign-in-with-microsoft*
 *Context gathered: 2026-10-22 from owner decisions across the session*
+
+## Addendum 2026-10-22 (owner answers after research)
+
+- **D-18 (UI language):** English, like the rest of solidtime. Add strings via `lang/en`; Spanish copy may be prepared (lang/es) but the app locale is NOT changed.
+- **D-19 (Connect + Disconnect):** the profile "Microsoft 365" section has both "Connect Microsoft" and "Disconnect". Disconnect policy per research: keep the identity row, null both tokens, set `disconnected_at`; later Microsoft logins do not re-store tokens until an explicit Connect (`?intent=connect`).
+- **D-20 (Session lifetime):** 12 hours for everyone (`SESSION_LIFETIME=720` in the Dokploy env), because passwordless users have no remember-me.
+- **D-21 (Env prefix):** all fork env vars use `SOLIDTIME_MICROSOFT_*` (incl. `SOLIDTIME_MICROSOFT_ORGANIZATION_ID`, `SOLIDTIME_MICROSOFT_ALLOWED_DOMAINS`), copied 1:1 from Doppler `vps/prd`.
+- **D-22 (Bootstrap without mail):** production mail is not configured. Owner bootstrap: temporarily allow registration, owner registers with email/password, the orchestrator marks the email verified directly in the DB (documented SQL/artisan fallback), owner's personal org becomes the Untangle org (rename), its id goes into `SOLIDTIME_MICROSOFT_ORGANIZATION_ID`, registration back to off. Configuring outbound mail via the VPS postfix is a separate follow-up task (not this phase).
+- **D-23 (Cloudflare Access, future):** the site will later sit behind Cloudflare Access (Entra as IdP) as an outer gate. NOT part of this phase and no Cloudflare integration in the app. But nothing in this phase may assume it, and the docs must note that `/api/*`, `/oauth/token` (and `/health-check/up`) need an Access bypass so the desktop app and browser extension keep working. Microsoft sign-in in the app remains required for identity + Graph tokens.
