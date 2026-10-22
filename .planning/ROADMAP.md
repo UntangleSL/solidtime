@@ -87,11 +87,11 @@ Plans:
   4. User sees their Microsoft connection status in their profile and can disconnect it; disconnecting deletes the stored Microsoft tokens and leaves all time entries untouched.
   5. Microsoft tokens exist only encrypted in the dedicated table and never appear in the `users` table, session, cache, logs, audits, API responses or Inertia props; the integration is configured purely through documented env vars, including the Dokploy setup for the HTTPS redirect URI and trusted proxies.
 
-**Plans**: 11 plans
+**Plans**: 1/11 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 02-01-PLAN.md — Backend tracer: redirect -> callback -> provisioned employee on /dashboard, (tid, oid) table, fake gateway in tests (wave 1)
+- [x] 02-01-PLAN.md — Backend tracer: redirect -> callback -> provisioned employee on /dashboard, (tid, oid) table, fake gateway in tests (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 02-02-PLAN.md — Failures, off switch and login prop: typed failure messages, tenant/audience guard, 404 when unconfigured, Octane-safe `microsoft` prop, lang/en (wave 2)
@@ -112,6 +112,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 - [ ] 02-11-PLAN.md — Release: full CI gate, tenant-MFA release gate, owner-approved Dokploy deploy, D-22 bootstrap, first production Microsoft sign-in recorded in the runbook (wave 6, owner checkpoint)
+
 **Research focus**: SocialiteProviders registration on Laravel 13; Socialite under Octane (no driver state leaking between users); consent at login with admin consent pre-granted
 **UI hint**: yes
 
@@ -202,7 +203,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Tenant Setup & Outlook Spike | 8/8 | In Progress | - |
-| 2. Sign in with Microsoft | 0/11 | Planned | - |
+| 2. Sign in with Microsoft | 1/11 | In Progress | - |
 | 3. Outlook Meetings in the Calendar | 0/TBD | Not started | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
