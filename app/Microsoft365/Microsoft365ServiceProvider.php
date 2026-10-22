@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Microsoft365;
 
+use App\Microsoft365\Http\Middleware\ShareMicrosoftInertiaData;
+use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 
 /**
@@ -20,8 +22,11 @@ class Microsoft365ServiceProvider extends ServiceProvider
         $this->app->bind(MicrosoftConfig::class, fn (): MicrosoftConfig => new MicrosoftConfig);
     }
 
-    public function boot(): void
+    public function boot(Router $router): void
     {
+        // The microsoft prop is shared per request from this middleware (see its docblock for why).
+        $router->pushMiddlewareToGroup('web', ShareMicrosoftInertiaData::class);
+
         $this->loadRoutesFrom(__DIR__.'/routes/microsoft365.php');
         $this->loadMigrationsFrom(__DIR__.'/database/migrations');
     }
