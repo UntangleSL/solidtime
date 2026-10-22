@@ -17,7 +17,6 @@ use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
-use Laravel\Passport\ClientRepository;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\Feature\Microsoft365\Support\InteractsWithMicrosoft365;
@@ -223,31 +222,35 @@ class MicrosoftSessionTest extends TestCaseWithDatabase
 
     public function test_callback_resumes_intended_oauth_authorize_url(): void
     {
+        // Arrange: the guest middleware stores the full URL of the interrupted request server-side
+        $organization = Organization::factory()->create();
+        $this->configureMicrosoft365($organization);
+        $this->fakeMicrosoftGateway()->willReturn($this->microsoftIdentity());
+        $intended = url('/oauth/authorize?client_id=desktop-client&redirect_uri=http%3A%2F%2Flocalhost%3A8080&response_type=code');
+
+        // Act
+        $response = $this->withSession(['url.intended' => $intended])->get($this->callbackUrl());
+
+        // Assert
+        $response->assertRedirect($intended);
+        $this->assertAuthenticated();
+        $response->assertSessionMissing('url.intended');
+    }
+
+    public function test_callback_resumes_the_url_a_guest_was_sent_away_from(): void
+    {
         // Arrange
         $organization = Organization::factory()->create();
         $this->configureMicrosoft365($organization);
-        $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient(
-            'Microsoft session test client',
-            ['https://client.example.test/callback'],
-        );
         $this->fakeMicrosoftGateway()->willReturn($this->microsoftIdentity());
-        $authorizeQuery = http_build_query([
-            'client_id' => $client->getKey(),
-            'redirect_uri' => 'https://client.example.test/callback',
-            'response_type' => 'code',
-        ]);
-        $guestResponse = $this->get('/oauth/authorize?'.$authorizeQuery);
-        $guestResponse->assertRedirect(route('login'));
-        $intended = session('url.intended');
-        $this->assertIsString($intended);
-        $this->assertStringContainsString('/oauth/authorize?', $intended);
-        $this->assertStringContainsString('client_id='.$client->getKey(), $intended);
+        $this->get('/time')->assertRedirect(route('login'));
+        $this->assertSame(url('/time'), session('url.intended'));
 
         // Act
         $response = $this->get($this->callbackUrl());
 
         // Assert
-        $response->assertRedirect($intended);
+        $response->assertRedirect(url('/time'));
         $this->assertAuthenticated();
         $response->assertSessionMissing('url.intended');
     }
