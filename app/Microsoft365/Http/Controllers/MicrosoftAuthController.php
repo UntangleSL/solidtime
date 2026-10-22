@@ -26,9 +26,37 @@ class MicrosoftAuthController extends Controller
 {
     private const string TIMEZONE_SESSION_KEY = 'microsoft.timezone';
 
+    /**
+     * Written by redirect() for an authenticated Connect, read (and removed) by callback(). It is the
+     * only source of the connect intent: the callback query is never consulted (D-19).
+     */
+    private const string INTENT_SESSION_KEY = 'microsoft.intent';
+
+    private const string CONNECT_USER_SESSION_KEY = 'microsoft.connect_user_id';
+
+    private const string CONNECT_INTENT = 'connect';
+
+    private const string NOTICE_FLASH_KEY = 'microsoft365.notice';
+
     public function redirect(Request $request, MicrosoftOAuthGateway $gateway, TimezoneService $timezoneService): SymfonyRedirectResponse
     {
-        if (Auth::guard('web')->check()) {
+        $isAuthenticated = Auth::guard('web')->check();
+        $connect = $request->query('intent') === self::CONNECT_INTENT;
+
+        // The branch order is binding: connect is decided before the authenticated dashboard shortcut.
+        if ($connect && ! $isAuthenticated) {
+            return redirect()->route('login');
+        }
+
+        if ($connect) {
+            $request->session()->put(self::INTENT_SESSION_KEY, self::CONNECT_INTENT);
+            $request->session()->put(self::CONNECT_USER_SESSION_KEY, Auth::guard('web')->id());
+            $request->session()->forget(self::TIMEZONE_SESSION_KEY);
+
+            return $gateway->redirect($request);
+        }
+
+        if ($isAuthenticated) {
             return redirect()->route('dashboard');
         }
 
@@ -48,6 +76,17 @@ class MicrosoftAuthController extends Controller
         MicrosoftIdentityGuard $guard,
         MicrosoftIdentityResolver $resolver,
     ): RedirectResponse {
+        // Read-and-forget: both keys are gone on every exit path. The intent comes from the session
+        // state redirect() wrote for an authenticated user, never from the callback query.
+        $intent = $request->session()->pull(self::INTENT_SESSION_KEY);
+        $connectUserId = $request->session()->pull(self::CONNECT_USER_SESSION_KEY);
+
+        // Evaluated BEFORE the authenticated-user shortcut below, otherwise a signed-in user could
+        // never complete a connect (the callback would answer with the dashboard redirect).
+        if ($intent === self::CONNECT_INTENT) {
+            return $this->completeConnect($request, $gateway, $guard, $resolver, $connectUserId);
+        }
+
         if (Auth::guard('web')->check()) {
             $request->session()->forget(self::TIMEZONE_SESSION_KEY);
 
@@ -97,6 +136,64 @@ class MicrosoftAuthController extends Controller
         } finally {
             $request->session()->forget(self::TIMEZONE_SESSION_KEY);
         }
+    }
+
+    /**
+     * The authenticated Connect callback: links or re-connects the identity of the signed-in user and
+     * returns to the profile with a notice. No login happens, the session user stays the same.
+     */
+    private function completeConnect(
+        Request $request,
+        MicrosoftOAuthGateway $gateway,
+        MicrosoftIdentityGuard $guard,
+        MicrosoftIdentityResolver $resolver,
+        mixed $connectUserId,
+    ): RedirectResponse {
+        try {
+            $user = Auth::guard('web')->user();
+            if ($user === null) {
+                // The session lost its user: nothing to link to, so the visitor starts from the login page.
+                throw new MicrosoftSignInException(MicrosoftSignInFailure::Interrupted);
+            }
+            if (! is_string($connectUserId) || (string) $user->getKey() !== $connectUserId) {
+                throw new MicrosoftSignInException(MicrosoftSignInFailure::Interrupted);
+            }
+
+            $error = $request->query('error');
+            if ($error !== null) {
+                throw new MicrosoftSignInException(
+                    $error === 'access_denied' ? MicrosoftSignInFailure::Cancelled : MicrosoftSignInFailure::Generic,
+                    $this->providerCode($request->query('error_description')),
+                );
+            }
+
+            $identity = $gateway->authenticate($request);
+            $guard->check($identity);
+            $resolver->connect($identity, $user);
+
+            return redirect()->route('profile.show')
+                ->with(self::NOTICE_FLASH_KEY, __('microsoft365.ui.connected_notice'));
+        } catch (MicrosoftSignInException $e) {
+            Log::warning('Microsoft connect rejected', [
+                'reason' => $e->reason->value,
+                'provider_code' => $e->providerCode,
+            ]);
+
+            return $this->connectFailureResponse($e->reason);
+        } catch (Throwable $e) {
+            Log::error('Microsoft connect failed', ['reason' => 'unexpected', 'exception' => $e::class]);
+
+            return $this->connectFailureResponse(MicrosoftSignInFailure::Generic);
+        }
+    }
+
+    private function connectFailureResponse(MicrosoftSignInFailure $reason): RedirectResponse
+    {
+        if (! Auth::guard('web')->check()) {
+            return redirect()->route('login')->with('message', __($reason->messageKey()));
+        }
+
+        return redirect()->route('profile.show')->with(self::NOTICE_FLASH_KEY, __($reason->messageKey()));
     }
 
     /**

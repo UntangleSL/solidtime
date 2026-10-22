@@ -64,6 +64,15 @@ class MicrosoftAccount extends Model
     ];
 
     /**
+     * Whether solidtime holds usable Microsoft data access: a refresh token is stored and the user has
+     * not disconnected. A linked-but-disconnected identity still signs in (D-19).
+     */
+    public function isConnected(): bool
+    {
+        return $this->refresh_token !== null && $this->disconnected_at === null;
+    }
+
+    /**
      * @return BelongsTo<User, $this>
      */
     public function user(): BelongsTo

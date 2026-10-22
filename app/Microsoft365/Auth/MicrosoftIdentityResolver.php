@@ -46,6 +46,70 @@ final class MicrosoftIdentityResolver
         }
     }
 
+    /**
+     * Explicit Connect for an already signed-in user: re-stores the tokens of the same identity (and
+     * clears disconnected_at), or links the identity to a user that has none. The user proved both
+     * identities in this session, so no email match is needed. Refuses an identity that belongs to
+     * another user and a user that is linked to a different identity.
+     *
+     * @throws MicrosoftSignInException
+     */
+    public function connect(MicrosoftIdentity $identity, User $user): MicrosoftAccount
+    {
+        try {
+            return $this->attemptConnect($identity, $user);
+        } catch (UniqueConstraintViolationException) {
+            // A concurrent request won the race for a unique index; one more pass sees its rows.
+        }
+
+        try {
+            return $this->attemptConnect($identity, $user);
+        } catch (UniqueConstraintViolationException) {
+            throw new MicrosoftSignInException(MicrosoftSignInFailure::Generic);
+        }
+    }
+
+    private function attemptConnect(MicrosoftIdentity $identity, User $user): MicrosoftAccount
+    {
+        /** @var MicrosoftAccount $account */
+        $account = DB::transaction(function () use ($identity, $user): MicrosoftAccount {
+            $tenantId = strtolower(trim($identity->tenantId));
+            $objectId = strtolower(trim($identity->objectId));
+
+            DB::select('select pg_advisory_xact_lock(hashtext(?))', ['microsoft:'.$tenantId.':'.$objectId]);
+
+            $account = MicrosoftAccount::query()
+                ->where('tenant_id', '=', $tenantId)
+                ->where('microsoft_oid', '=', $objectId)
+                ->lockForUpdate()
+                ->first();
+
+            if ($account !== null) {
+                if ($account->user_id !== $user->getKey()) {
+                    throw new MicrosoftSignInException(MicrosoftSignInFailure::IdentityInUse);
+                }
+            } else {
+                if (MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->exists()) {
+                    throw new MicrosoftSignInException(MicrosoftSignInFailure::AlreadyLinked);
+                }
+                $account = new MicrosoftAccount;
+                $account->user()->associate($user);
+                $account->tenant_id = $tenantId;
+                $account->microsoft_oid = $objectId;
+            }
+
+            $now = Carbon::now();
+            $account->disconnected_at = null;
+            $this->writeTokens($account, $identity, $now);
+            $account->microsoft_email = $identity->primaryEmail();
+            $account->save();
+
+            return $account;
+        });
+
+        return $account;
+    }
+
     private function attempt(MicrosoftIdentity $identity, ?string $timezone): User
     {
         /** @var User $user */
@@ -147,16 +211,28 @@ final class MicrosoftIdentityResolver
         return array_values(array_unique($addresses));
     }
 
+    /**
+     * Records a sign-in. Tokens are written only while the (locked, freshly read) row is not
+     * disconnected: after a Disconnect a sign-in keeps the identity and the email current but stores
+     * no token until an explicit Connect (D-19).
+     */
     private function storeSignIn(MicrosoftAccount $account, MicrosoftIdentity $identity): void
     {
         $now = Carbon::now();
 
+        if ($account->disconnected_at === null) {
+            $this->writeTokens($account, $identity, $now);
+        }
+        $account->microsoft_email = $identity->primaryEmail();
+        $account->last_login_at = $now;
+        $account->save();
+    }
+
+    private function writeTokens(MicrosoftAccount $account, MicrosoftIdentity $identity, Carbon $now): void
+    {
         $account->access_token = $identity->accessToken;
         $account->refresh_token = $identity->refreshToken;
         $account->access_token_expires_at = $identity->expiresIn === null ? null : $now->copy()->addSeconds($identity->expiresIn);
         $account->scopes = $identity->scopes;
-        $account->microsoft_email = $identity->primaryEmail();
-        $account->last_login_at = $now;
-        $account->save();
     }
 }
