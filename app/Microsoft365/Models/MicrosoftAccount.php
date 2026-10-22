@@ -13,7 +13,7 @@ use Illuminate\Support\Carbon;
 /**
  * Link between a solidtime user and a Microsoft identity (tenant id + object id), plus the tokens.
  *
- * Deliberately not Auditable: an audit row would capture the token attributes.
+ * Deliberately excluded from auditing: an audit row would capture the token attributes.
  *
  * @property string $id
  * @property string $user_id
