@@ -19,7 +19,7 @@
 - [x] **AUTH-04**: On first Microsoft sign-in where a verified non-placeholder solidtime user with the same email (case-insensitive) exists, the Microsoft identity is linked to that user instead of creating a duplicate; unverified password accounts are never silently linked
 - [x] **AUTH-05**: Subsequent sign-ins match the user by Microsoft identity (`tid` + `oid`), not by email; concurrent first sign-ins never produce duplicate users
 - [x] **AUTH-06**: Microsoft sign-in works even when public registration is disabled (`APP_ENABLE_REGISTRATION=off`/invite-only); Entra MFA is the second factor for Microsoft sign-ins
-- [ ] **AUTH-07**: User can see their Microsoft connection status in their profile and disconnect it; disconnecting deletes stored Microsoft tokens but keeps all time entries already created
+- [x] **AUTH-07**: User can see their Microsoft connection status in their profile and disconnect it; disconnecting deletes stored Microsoft tokens but keeps all time entries already created
 
 ### Token Security (SEC)
 
@@ -114,7 +114,7 @@
 | AUTH-04 | Phase 2 | Complete |
 | AUTH-05 | Phase 2 | Complete |
 | AUTH-06 | Phase 2 | Complete |
-| AUTH-07 | Phase 2 | Pending |
+| AUTH-07 | Phase 2 | Complete |
 | SEC-01 | Phase 2 | Complete |
 | SEC-02 | Phase 3 | Pending |
 | SEC-03 | Phase 7 | Pending |

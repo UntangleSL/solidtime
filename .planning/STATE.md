@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 2
 current_phase_name: Sign in with Microsoft
 status: executing
-stopped_at: Completed 02-07-PLAN.md
-last_updated: "2026-10-22T23:46:52.147Z"
+stopped_at: Completed 02-08-PLAN.md
+last_updated: "2026-10-23T00:01:21.642Z"
 last_activity: 2026-10-22
 last_activity_desc: Phase 2 execution started
-state_head: d45ae4d88a6ccc47247763ddd845f1e3670edf47
+state_head: 21cfe305910ca89aaaf62b43cb89ca12dab0a914
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 19
-  completed_plans: 15
+  completed_plans: 16
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 2 (Sign in with Microsoft) — EXECUTING
-Plan: 8 of 11
+Plan: 9 of 11
 Status: Ready to execute
 Last activity: 2026-10-22 — Phase 2 execution started
 
@@ -71,6 +71,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 02 P05 | 25min | 2 tasks | 3 files |
 | Phase 02 P06 | 35min | 2 tasks | 5 files |
 | Phase 02 P07 | 50min | 2 tasks | 4 files |
+| Phase 02 P08 | 45min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -113,6 +114,7 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-06: provisioning joins via MemberService default path (Role::Employee), identity resolution retries once on unique violation under pg_advisory_xact_lock
 - [Phase 02]: 02-07: Microsoft sign-ins are never refused for missing mfa evidence; amr_mfa is logged as evidence for the 02-11 release gate
 - [Phase 02]: 02-07: Intended URL after Microsoft sign-in comes only from the server-written url.intended key; remember-me is never set
+- [Phase 02]: 02-08: Disconnect keeps the microsoft_accounts row so passwordless users are never locked out; connect intent lives only in session state written by redirect()
 
 ### Pending Todos
 
@@ -134,6 +136,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-22T23:46:52.075Z
-Stopped at: Completed 02-07-PLAN.md
+Last session: 2026-10-23T00:01:21.570Z
+Stopped at: Completed 02-08-PLAN.md
 Resume file: None
