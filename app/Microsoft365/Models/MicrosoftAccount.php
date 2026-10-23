@@ -6,6 +6,7 @@ namespace App\Microsoft365\Models;
 
 use App\Models\Concerns\HasUuids;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
@@ -70,6 +71,17 @@ class MicrosoftAccount extends Model
     public function isConnected(): bool
     {
         return $this->refresh_token !== null && $this->disconnected_at === null;
+    }
+
+    /**
+     * Query counterpart of isConnected(), so callers can count connected accounts without loading tokens.
+     *
+     * @param  Builder<MicrosoftAccount>  $query
+     * @return Builder<MicrosoftAccount>
+     */
+    public function scopeConnected(Builder $query): Builder
+    {
+        return $query->whereNotNull('refresh_token')->whereNull('disconnected_at');
     }
 
     /**

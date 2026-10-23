@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Microsoft365;
 
+use Illuminate\Support\Str;
+
 /**
  * Typed view over config/microsoft365.php.
  *
@@ -13,14 +15,34 @@ namespace App\Microsoft365;
 final class MicrosoftConfig
 {
     /**
-     * The integration is usable only when client id, secret and tenant are all filled in. Dokploy passes
-     * empty strings for variables that are not set, so a blank value must count as missing.
+     * The integration is usable only when client id, secret and tenant are all filled in and the two ids
+     * are GUIDs. Dokploy passes empty strings for variables that are not set, so a blank value must count
+     * as missing; a tenant such as "common" or "organizations" must never become the authority (D-01).
      */
     public function isConfigured(): bool
     {
-        return $this->clientId() !== ''
-            && $this->clientSecret() !== ''
-            && $this->tenantId() !== '';
+        return $this->missingKeys() === [];
+    }
+
+    /**
+     * Names (never values) of the environment variables that are blank or invalid.
+     *
+     * @return list<string>
+     */
+    public function missingKeys(): array
+    {
+        $missing = [];
+        if (! Str::isUuid($this->clientId())) {
+            $missing[] = 'SOLIDTIME_MICROSOFT_CLIENT_ID';
+        }
+        if ($this->clientSecret() === '') {
+            $missing[] = 'SOLIDTIME_MICROSOFT_CLIENT_SECRET';
+        }
+        if (! Str::isUuid($this->tenantId())) {
+            $missing[] = 'SOLIDTIME_MICROSOFT_TENANT_ID';
+        }
+
+        return $missing;
     }
 
     public function clientId(): string
@@ -61,7 +83,8 @@ final class MicrosoftConfig
     {
         $organizationId = $this->string('organization_id');
 
-        return $organizationId === '' ? null : $organizationId;
+        // A malformed id only disables provisioning; it must never reach a query.
+        return Str::isUuid($organizationId) ? $organizationId : null;
     }
 
     /**
