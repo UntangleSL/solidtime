@@ -10,6 +10,7 @@ import type { Session } from '@/types/jetstream';
 import ApiTokensForm from '@/Pages/Profile/Partials/ApiTokensForm.vue';
 import ThemeForm from '@/Pages/Profile/Partials/ThemeForm.vue';
 import NotificationSettingsForm from '@/Pages/Profile/Partials/NotificationSettingsForm.vue';
+import MicrosoftConnectionForm from '@/m365/components/MicrosoftConnectionForm.vue';
 
 defineProps<{
     confirmsTwoFactorAuthentication: boolean;
@@ -56,6 +57,8 @@ defineProps<{
 
                     <SectionBorder />
                 </div>
+
+                <MicrosoftConnectionForm />
 
                 <LogoutOtherBrowserSessionsForm :sessions="sessions" class="mt-10 sm:mt-0" />
                 <SectionBorder />
