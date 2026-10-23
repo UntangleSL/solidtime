@@ -67,7 +67,7 @@
 
 ### Operations (OPS)
 
-- [ ] **OPS-01**: The M365 integration is configured entirely via environment variables (tenant, client id/secret, redirect URI, allowed domains list, target organization) and documented for the Dokploy deployment (HTTPS redirect URI behind proxy, trusted proxies)
+- [x] **OPS-01**: The M365 integration is configured entirely via environment variables (tenant, client id/secret, redirect URI, allowed domains list, target organization) and documented for the Dokploy deployment (HTTPS redirect URI behind proxy, trusted proxies)
 - [ ] **OPS-02**: The integration is disabled cleanly (no login button, no calendar overlay) when M365 env vars are not set
 - [ ] **OPS-03**: Fork code is isolated in its own module with a documented list of touched core files, and an upstream solidtime merge can be performed without conflicts beyond that list
 
@@ -141,7 +141,7 @@
 | OSYNC-01 | Phase 6 | Pending |
 | OSYNC-02 | Phase 6 | Pending |
 | OSYNC-03 | Phase 6 | Pending |
-| OPS-01 | Phase 2 | Pending |
+| OPS-01 | Phase 2 | Complete |
 | OPS-02 | Phase 7 | Pending |
 | OPS-03 | Phase 7 | Pending |
 
