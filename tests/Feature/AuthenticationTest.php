@@ -20,6 +20,18 @@ class AuthenticationTest extends TestCase
         $response->assertStatus(200);
     }
 
+    public function test_login_screen_offers_registration_only_when_registration_is_on(): void
+    {
+        config(['app.enable_registration' => 'on']);
+        $this->get('/login')->assertInertia(fn ($page) => $page->where('canRegister', true));
+
+        config(['app.enable_registration' => 'off']);
+        $this->get('/login')->assertInertia(fn ($page) => $page->where('canRegister', false));
+
+        config(['app.enable_registration' => 'invite-only']);
+        $this->get('/login')->assertInertia(fn ($page) => $page->where('canRegister', false));
+    }
+
     public function test_users_can_authenticate_using_the_login_screen(): void
     {
         $user = User::factory()->create();

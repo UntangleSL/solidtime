@@ -8,6 +8,7 @@ use App\Actions\Fortify\CreateNewUser;
 use App\Actions\Fortify\ResetUserPassword;
 use App\Actions\Fortify\UpdateUserPassword;
 use App\Actions\Fortify\UpdateUserProfileInformation;
+use App\Enums\RegistrationMode;
 use App\Extensions\Fortify\CustomLoginResponse;
 use App\Extensions\Fortify\CustomTwoFactorLoginResponse;
 use App\Models\User;
@@ -55,6 +56,7 @@ class FortifyServiceProvider extends ServiceProvider
         Fortify::loginView(function () {
             return Inertia::render('Auth/Login', [
                 'canResetPassword' => Route::has('password.request'),
+                'canRegister' => RegistrationMode::fromConfig(config('app.enable_registration')) === RegistrationMode::On,
                 'status' => session('status'),
             ]);
         });
