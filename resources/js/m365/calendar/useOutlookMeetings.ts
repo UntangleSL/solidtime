@@ -51,9 +51,11 @@ interface SyncRequest {
 
 type TestHook = (meetings: OutlookMeeting[], labels?: Partial<OutlookCalendarLabels>) => void;
 
-// Test hook name, set on window while the composable is mounted (same contract as
+// Test hook on window while the composable is mounted (same contract as
 // __TEST_SET_ACTIVITY_PERIODS__): a no-op in production unless test code calls it.
-const TEST_HOOK_NAME = '__TEST_SET_OUTLOOK_MEETINGS__';
+interface TestWindow {
+    __TEST_SET_OUTLOOK_MEETINGS__?: TestHook;
+}
 
 function parseRetryAfterHeader(error: unknown): number | null {
     const headers = (error as { response?: { headers?: Record<string, unknown> } } | null)?.response
@@ -254,11 +256,13 @@ export function useOutlookMeetings(
     }
 
     onMounted(() => {
-        const hook: TestHook = (injected, injectedLabels) => {
+        (window as unknown as TestWindow).__TEST_SET_OUTLOOK_MEETINGS__ = (
+            injected,
+            injectedLabels
+        ) => {
             testMeetings.value = injected;
             testLabels.value = injectedLabels ?? null;
         };
-        (window as unknown as Record<string, unknown>)[TEST_HOOK_NAME] = hook;
     });
 
     onUnmounted(() => {
@@ -266,7 +270,7 @@ export function useOutlookMeetings(
         if (timer !== undefined) clearTimeout(timer);
         timer = undefined;
         pending = null;
-        delete (window as unknown as Record<string, unknown>)[TEST_HOOK_NAME];
+        delete (window as unknown as TestWindow).__TEST_SET_OUTLOOK_MEETINGS__;
     });
 
     return {
