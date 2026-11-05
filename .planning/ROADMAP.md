@@ -130,11 +130,11 @@ Plans:
   4. User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it.
   5. When Graph is slow, down or throttled, the calendar keeps working and shows a non-blocking status (last synced time, retry later); expired access tokens refresh silently, and when refresh is impossible (revoked, expired, Conditional Access) the user sees a "Reconnect Microsoft" prompt instead of an error.
 
-**Plans**: 12 plans
+**Plans**: 1/12 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 03-01-PLAN.md — Backend tracer, Graph-to-cache: calendarView (literal URL, Prefer on every page, nextLink host check) -> fail-closed eligibility -> outlook_meetings in UTC; token seam; sync windows (wave 1)
+- [x] 03-01-PLAN.md — Backend tracer, Graph-to-cache: calendarView (literal URL, Prefer on every page, nextLink host check) -> fail-closed eligibility -> outlook_meetings in UTC; token seam; sync windows (wave 1)
 - [ ] 03-05-PLAN.md — Ghost layer: overlay slot, reserved right-hand Outlook lane (D-23, keeps D-01 reachable), pointer guard, DST layout and lanes, totals unchanged (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -252,10 +252,9 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 |-------|----------------|--------|-----------|
 | 1. Tenant Setup & Outlook Spike | 8/8 | Complete    | 2026-11-05 |
 | 2. Sign in with Microsoft | 11/11 | Complete    | 2026-11-05 |
-| 3. Outlook Meetings in the Calendar | 0/12 | Planned | - |
+| 3. Outlook Meetings in the Calendar | 1/12 | In Progress | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |
 | 7. Hardening & Release | 0/TBD | Not started | - |
 | 8. Project Hour Budgets & Profitability | 0/TBD | Not started | - |
-
