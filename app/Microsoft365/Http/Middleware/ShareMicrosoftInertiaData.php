@@ -14,8 +14,9 @@ use Inertia\Inertia;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Shares the `microsoft` prop with every Inertia page (the login page reads it) and, on the profile
- * page only, the signed-in user's `account` state.
+ * Shares the `microsoft` prop with every Inertia page (the login page reads it), on the profile page
+ * only the signed-in user's `account` state, and on the calendar page only the Outlook `calendar`
+ * block (connection state, URLs and the server-rendered copy; never meeting data).
  *
  * It lives in a web-group middleware, not in the provider boot(): Octane flushes the Inertia shared
  * props before every request, so anything shared at boot time would disappear after the first one.
@@ -53,10 +54,56 @@ class ShareMicrosoftInertiaData
                 }
             }
 
+            // Calendar page only: state and URLs, the copy, and nothing token-related.
+            if ($request->routeIs('calendar')) {
+                $user = Auth::guard('web')->user();
+                if ($user instanceof User) {
+                    $data['calendar'] = $this->calendar($user);
+                }
+            }
+
             return $data;
         });
 
         return $next($request);
+    }
+
+    /**
+     * @return array{state: string, urls: array{meetings: string, sync: string}, labels: array<string, string>}
+     */
+    private function calendar(User $user): array
+    {
+        $account = MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->first();
+
+        return [
+            'state' => $account?->calendarAccessState() ?? 'not_connected',
+            'urls' => [
+                'meetings' => route('microsoft.meetings.index'),
+                'sync' => route('microsoft.meetings.sync'),
+            ],
+            'labels' => $this->calendarLabels(),
+        ];
+    }
+
+    /**
+     * Every `microsoft365.calendar.*` string, resolved for the current locale. The key set comes from
+     * the English file (the Spanish mirror has the same keys, enforced by MicrosoftLangTest).
+     *
+     * @return array<string, string>
+     */
+    private function calendarLabels(): array
+    {
+        $english = trans('microsoft365.calendar', [], 'en');
+        if (! is_array($english)) {
+            return [];
+        }
+
+        $labels = [];
+        foreach (array_keys($english) as $key) {
+            $labels[(string) $key] = __('microsoft365.calendar.'.$key);
+        }
+
+        return $labels;
     }
 
     /**

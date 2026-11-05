@@ -33,6 +33,8 @@ export type MicrosoftSharedProps =
           labels: { sign_in: string; sign_in_hint: string };
           // Only present on profile.show
           account?: MicrosoftAccountProps;
+          // Only present on the calendar route
+          calendar?: OutlookCalendarProps;
       };
 
 // Outlook meeting as served by the server-side OutlookMeetingResource. `start` and `end` are UTC
@@ -86,4 +88,44 @@ export interface OutlookCalendarLabels {
     settings_heading: string;
     show_dismissed: string;
     show_dismissed_help: string;
+}
+
+// 'connected': Graph access works; 'reconnect': the Microsoft grant expired or lacks the calendar
+// scope; 'not_connected': no linked or disconnected account (MicrosoftAccount::calendarAccessState).
+export type OutlookConnectionState = 'connected' | 'reconnect' | 'not_connected';
+
+export interface OutlookSyncInfo {
+    last_synced_at: string | null;
+    retry_after: number | null;
+}
+
+// GET /m365/meetings
+export interface OutlookMeetingsResponse {
+    data: OutlookMeeting[];
+    sync: OutlookSyncInfo;
+}
+
+export type OutlookSyncStatus =
+    | 'ok'
+    | 'reused'
+    | 'coalesced'
+    | 'throttled'
+    | 'unavailable'
+    | 'reconnect'
+    | 'not_connected'
+    | 'no_mailbox';
+
+// POST /m365/meetings/sync (HTTP 200 for every expected degradation)
+export interface OutlookSyncResponse {
+    status: OutlookSyncStatus;
+    retry_after: number | null;
+    last_synced_at: string | null;
+    truncated: boolean;
+}
+
+// The `microsoft.calendar` shared prop, only present on the calendar route.
+export interface OutlookCalendarProps {
+    state: OutlookConnectionState;
+    urls: { meetings: string; sync: string };
+    labels: OutlookCalendarLabels;
 }

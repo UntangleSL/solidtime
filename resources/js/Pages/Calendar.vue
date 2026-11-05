@@ -26,6 +26,8 @@ import { canCreateProjects } from '@/utils/permissions';
 import { useCurrentTimeEntryStore } from '@/utils/useCurrentTimeEntry';
 import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
+import OutlookGhostLayer from '@/m365/calendar/OutlookGhostLayer.vue';
+import { useOutlookMeetings } from '@/m365/calendar/useOutlookMeetings';
 
 const { organization } = useOrganizationQuery(getCurrentOrganizationId()!);
 const calendarStart = ref<Dayjs | undefined>(undefined);
@@ -58,6 +60,10 @@ const { data: timeEntryResponse, isLoading: timeEntriesLoading } = useTimeEntrie
     calendarStart,
     calendarEnd
 );
+
+// Outlook meetings (fork): read after the time entries and drawn as ghosts in their own lane. They are
+// never merged into the time entries, and `loading` below stays bound to the time-entry query only.
+const outlook = useOutlookMeetings(calendarStart, calendarEnd);
 
 const currentTimeEntries = computed(() => {
     return timeEntryResponse?.value?.data || [];
@@ -140,7 +146,16 @@ function onRefresh() {
             :create-project="createProject"
             :create-tag="createTag"
             :activity-periods="testActivityPeriods"
+            :day-overlay-lane="outlook.dayOverlayLane"
             @dates-change="onDatesChange"
-            @refresh="onRefresh" />
+            @refresh="onRefresh">
+            <template #day-overlay="overlay">
+                <OutlookGhostLayer
+                    v-if="outlook.labels.value"
+                    v-bind="overlay"
+                    :meetings="outlook.meetings.value"
+                    :labels="outlook.labels.value" />
+            </template>
+        </TimeEntryCalendar>
     </AppLayout>
 </template>

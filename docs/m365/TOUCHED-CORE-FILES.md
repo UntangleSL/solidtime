@@ -18,6 +18,7 @@ checks these files first. Everything else the fork adds lives in fork-owned path
 | `resources/js/packages/ui/src/FullCalendar/CalendarDayColumn.vue` | A named `overlay` slot rendered as the first child of the column root and an optional `overlayLaneWidth` prop that, only when set, insets the events container on the right by the lane width plus 4px (layout decision D-23). Days without overlay content render exactly as upstream. | 03-05 | Re-apply the slot, the optional prop and the conditional right inset after taking upstream's file. |
 | `resources/js/packages/ui/src/FullCalendar/TimeEntryCalendar.vue` | An optional `dayOverlayLane(dayStr, isDayView)` prop forwarded to each day column as `overlayLaneWidth`, and a `day-overlay` slot forwarded as the column's `overlay` slot (with `minutesToPixels` and `settings`). | 03-05 | Re-apply the prop, the `overlay-lane-width` binding and the forwarded slot template after taking upstream's file. |
 | `resources/js/packages/ui/src/FullCalendar/useSlotSelection.ts` | One selector extended in `onSlotPointerDown` (`.fc-event, [data-calendar-overlay]`) so a pointerdown on an overlay block never starts a selection. | 03-05 | Re-apply the extended selector after taking upstream's file. |
+| `resources/js/Pages/Calendar.vue` | Two imports, one `useOutlookMeetings(calendarStart, calendarEnd)` call, the `:day-overlay-lane` binding and a `#day-overlay` slot template with `OutlookGhostLayer` (the self-closing `TimeEntryCalendar` became an open tag). `:loading` stays bound to the time-entry query only. | 03-06 | Re-apply the two imports, the composable call, the binding and the slot template after taking upstream's file; keep upstream's props and handlers. |
 
 ## New files inside core directories
 
@@ -35,10 +36,11 @@ These paths do not exist upstream, so they never conflict.
 | --- | --- |
 | `app/Microsoft365/` | Service provider, routes, migrations, models, auth classes, console command. |
 | `resources/js/m365/` | Vue components for the sign-in button and the profile card. |
-| `resources/js/m365/calendar/` | Outlook ghost layer for the calendar: layout helper, label helper, ghost component and their tests. |
+| `resources/js/m365/calendar/` | Outlook calendar integration: ghost layer, layout and label helpers, meetings API helpers, the `useOutlookMeetings` composable and their tests. |
 | `tests/Feature/Microsoft365/` | Feature tests. |
 | `tests/Unit/Microsoft365/` | Unit tests. |
 | `e2e/microsoft-signin.spec.ts` | Browser test of the sign-in page. |
+| `e2e/outlook-ghosts.spec.ts` | Browser test of the Outlook ghosts (reachability beside entries, totals, no create flow). |
 | `docs/deploy/dokploy-compose.fork.yml` | Compose for Dokploy. |
 | `.github/workflows/fork-image.yml` | Fork image build. |
 
