@@ -48,6 +48,11 @@ Not in this phase: turning a meeting into a time entry (Phase 4), series rules a
 - **D-18:** UI strings in English (Phase 2 D-18).
 - **D-19:** F1/freelance users without a mailbox must not see errors: a Graph "no mailbox" answer is treated as "no meetings" with a quiet status.
 
+### Decided after research (2026-11-05)
+- **D-20:** No location text in the detail panel. Keep the binding `$select` from `docs/m365/DECISIONS-graph.md` unchanged; the panel shows the Teams/online indicator and an "Open in Outlook" link (`webLink`, validated https) only. (Owner choice; overrides D-04's "location" wording.)
+- **D-21:** Disconnect purges the user's cached meetings, sync windows and dismissals (privacy first). Reconnecting re-fetches; earlier dismissals are lost. Time entries are never touched.
+- **D-22:** Impersonation guard now (pulled forward from SEC-04, Phase 7): while an admin is impersonating, the meetings endpoints return no meetings and never call Graph with the impersonated user's token (fail closed at the single Graph choke point). Phase 7 still owns the full SEC-04 verification.
+
 ### Claude's Discretion
 - Whether meetings are cached in the database or fetched live per range (must support dismissals now and Phase 4/6 linking later; research recommends).
 - Debounce timing, server reuse window, page cap, Graph timeouts.
