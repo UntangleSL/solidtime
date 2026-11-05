@@ -234,5 +234,7 @@ final class MicrosoftIdentityResolver
         $account->refresh_token = $identity->refreshToken;
         $account->access_token_expires_at = $identity->expiresIn === null ? null : $now->copy()->addSeconds($identity->expiresIn);
         $account->scopes = $identity->scopes;
+        // Fresh tokens from a real Microsoft sign-in: any earlier "sign in again" verdict is obsolete
+        $account->reconnect_required_at = null;
     }
 }

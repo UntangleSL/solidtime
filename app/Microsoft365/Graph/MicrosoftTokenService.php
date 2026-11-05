@@ -8,9 +8,11 @@ use App\Microsoft365\MicrosoftConfig;
 use App\Microsoft365\Models\MicrosoftAccount;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Hands out a usable Graph access token for a connected account and refreshes it silently with the
@@ -32,7 +34,42 @@ final class MicrosoftTokenService
      */
     private const string REFRESH_SCOPE = 'Calendars.Read offline_access';
 
+    /**
+     * The user can fix these only by signing in again: the stored grant is dead.
+     */
+    private const array TERMINAL_ERRORS = ['invalid_grant', 'interaction_required', 'consent_required'];
+
+    /**
+     * Operator errors (an expired or wrong client secret, a broken app registration): every user would hit
+     * them, and a new sign-in cannot fix them, so the tokens stay and the calendar shows "unavailable".
+     */
+    private const array CLIENT_ERRORS = [
+        'invalid_client',
+        'unauthorized_client',
+        'invalid_request',
+        'invalid_scope',
+        'unsupported_grant_type',
+        'invalid_resource',
+    ];
+
     public function __construct(private readonly MicrosoftConfig $config) {}
+
+    /**
+     * Records that the user has to sign in again (Graph kept answering 401/403 with a fresh token):
+     * same effect as a terminal refresh failure. A no-op once the marker is set or after a disconnect.
+     */
+    public function markReconnectRequired(MicrosoftAccount $account): void
+    {
+        DB::transaction(function () use ($account): void {
+            $locked = MicrosoftAccount::query()->whereKey($account->getKey())->lockForUpdate()->first();
+            if ($locked !== null && $locked->disconnected_at === null && $locked->reconnect_required_at === null) {
+                $this->requireReconnect($locked);
+            }
+            if ($locked !== null) {
+                $account->setRawAttributes($locked->getAttributes(), true);
+            }
+        });
+    }
 
     /**
      * @param  string|null  $rejectedToken  a token Graph answered 401 for; never handed out again
@@ -91,6 +128,12 @@ final class MicrosoftTokenService
 
     private function refresh(MicrosoftAccount $account): string|GraphException
     {
+        // The authority is built only from a GUID tenant (never common/organizations, Phase 2 D-01): an
+        // unconfigured integration sends nothing, not even to a malformed URL
+        if (! $this->config->isConfigured()) {
+            return $this->failure('client_error', null);
+        }
+
         try {
             $response = Http::asForm()
                 ->connectTimeout(3)
@@ -103,17 +146,17 @@ final class MicrosoftTokenService
                     'scope' => self::REFRESH_SCOPE,
                 ]);
         } catch (ConnectionException) {
-            return new GraphException(SyncStatus::Unavailable);
+            return $this->failure('transient', null);
         }
 
         if (! $response->successful()) {
-            return new GraphException(SyncStatus::Unavailable);
+            return $this->classifyFailure($account, $response);
         }
 
         $accessToken = $response->json('access_token');
         $expiresIn = $response->json('expires_in');
         if (! is_string($accessToken) || $accessToken === '' || ! is_numeric($expiresIn)) {
-            return new GraphException(SyncStatus::Unavailable);
+            return $this->failure('transient', null);
         }
 
         $account->access_token = $accessToken;
@@ -127,5 +170,51 @@ final class MicrosoftTokenService
         $account->save();
 
         return $accessToken;
+    }
+
+    /**
+     * Keyed on the OAuth `error` string, never on AADSTS numbers. Unknown errors and server-side
+     * failures are transient: the tokens stay and a later request tries again.
+     */
+    private function classifyFailure(MicrosoftAccount $account, Response $response): GraphException
+    {
+        $error = $response->json('error');
+        $error = is_string($error) ? $error : '';
+        $description = $response->json('error_description');
+        $providerCode = is_string($description) && preg_match('/AADSTS\d+/', $description, $matches) === 1
+            ? $matches[0]
+            : null;
+
+        if (in_array($error, self::TERMINAL_ERRORS, true)) {
+            $this->requireReconnect($account);
+            Log::warning('Microsoft token refresh failed', ['reason' => 'terminal', 'provider_code' => $providerCode]);
+
+            return new GraphException(SyncStatus::Reconnect, null, $providerCode);
+        }
+
+        if (in_array($error, self::CLIENT_ERRORS, true)) {
+            return $this->failure('client_error', $providerCode);
+        }
+
+        return $this->failure('transient', $providerCode);
+    }
+
+    /**
+     * Logs a fixed reason and the AADSTS code only: no token, secret, description or body.
+     */
+    private function failure(string $reason, ?string $providerCode): GraphException
+    {
+        Log::warning('Microsoft token refresh failed', ['reason' => $reason, 'provider_code' => $providerCode]);
+
+        return new GraphException(SyncStatus::Unavailable, null, $providerCode);
+    }
+
+    private function requireReconnect(MicrosoftAccount $account): void
+    {
+        $account->reconnect_required_at = Carbon::now();
+        $account->access_token = null;
+        $account->refresh_token = null;
+        $account->access_token_expires_at = null;
+        $account->save();
     }
 }

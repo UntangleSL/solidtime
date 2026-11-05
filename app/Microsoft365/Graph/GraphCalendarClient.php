@@ -6,6 +6,7 @@ namespace App\Microsoft365\Graph;
 
 use Carbon\CarbonImmutable;
 use Closure;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
 /**
@@ -24,7 +25,8 @@ final class GraphCalendarClient
     public const string PREFER = 'outlook.timezone="UTC", IdType="ImmutableId"';
 
     /**
-     * Fetches every page of the window. $token is called before each request with null.
+     * Fetches every page of the window. $token is called before each page with null, and once more with the
+     * rejected token after a 401/403 (a forced refresh).
      *
      * @param  Closure(?string): string  $token
      * @return array{events: list<array<string, mixed>>, complete: bool, failure: SyncStatus|null, retry_after: int|null}
@@ -58,11 +60,21 @@ final class GraphCalendarClient
                 return ['events' => $events, 'complete' => false, 'failure' => $exception->status, 'retry_after' => $exception->retryAfter];
             }
 
-            $response = Http::withHeaders(['Prefer' => self::PREFER, 'Accept' => 'application/json'])
-                ->withToken($accessToken)
-                ->connectTimeout($connectTimeout)
-                ->timeout($timeout)
-                ->get($nextUrl);
+            $response = $this->get($nextUrl, $accessToken, $connectTimeout, $timeout);
+
+            if ($response->status() === 401 || $response->status() === 403) {
+                // One forced refresh and one retry of the same page. The single mapping point of
+                // "Graph rejects a fresh token": 03-RESEARCH Assumption A2 (a 403 may become "unavailable").
+                try {
+                    $accessToken = $token($accessToken);
+                } catch (GraphException $exception) {
+                    return ['events' => $events, 'complete' => false, 'failure' => $exception->status, 'retry_after' => $exception->retryAfter];
+                }
+                $response = $this->get($nextUrl, $accessToken, $connectTimeout, $timeout);
+                if ($response->status() === 401 || $response->status() === 403) {
+                    return ['events' => $events, 'complete' => false, 'failure' => SyncStatus::Reconnect, 'retry_after' => null];
+                }
+            }
 
             if (! $response->successful()) {
                 return ['events' => $events, 'complete' => false, 'failure' => SyncStatus::Unavailable, 'retry_after' => null];
@@ -95,6 +107,15 @@ final class GraphCalendarClient
         }
 
         return ['events' => $events, 'complete' => true, 'failure' => null, 'retry_after' => null];
+    }
+
+    private function get(string $url, string $accessToken, int $connectTimeout, int $timeout): Response
+    {
+        return Http::withHeaders(['Prefer' => self::PREFER, 'Accept' => 'application/json'])
+            ->withToken($accessToken)
+            ->connectTimeout($connectTimeout)
+            ->timeout($timeout)
+            ->get($url);
     }
 
     /**

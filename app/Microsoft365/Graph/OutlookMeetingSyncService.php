@@ -72,6 +72,11 @@ final class OutlookMeetingSyncService
             Log::warning('Outlook meetings skipped', ['reason' => 'non_utc', 'count' => $nonUtc]);
         }
 
+        if ($result['failure'] === SyncStatus::Reconnect) {
+            // Graph kept rejecting a fresh token (or a refresh proved the grant dead): persist the state
+            $this->tokens->markReconnectRequired($account);
+        }
+
         if ($result['failure'] !== null) {
             // A traversal with a failure records no sync window
             return new SyncOutcome($result['failure'], $result['retry_after']);

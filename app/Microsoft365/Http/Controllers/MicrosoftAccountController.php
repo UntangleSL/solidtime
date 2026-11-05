@@ -39,6 +39,8 @@ class MicrosoftAccountController extends Controller
                 $account->refresh_token = null;
                 $account->access_token_expires_at = null;
                 $account->scopes = null;
+                $account->reconnect_required_at = null;
+                $account->graph_backoff_until = null;
                 if ($account->disconnected_at === null) {
                     $account->disconnected_at = Carbon::now();
                 }

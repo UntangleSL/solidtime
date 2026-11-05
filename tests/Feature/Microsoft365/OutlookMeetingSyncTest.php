@@ -179,10 +179,11 @@ class OutlookMeetingSyncTest extends TestCaseWithDatabase
         $this->assertSame(0, OutlookSyncWindow::query()->count());
     }
 
-    public function test_expired_token_without_refresh_answers_unavailable_without_graph(): void
+    public function test_expired_token_with_unconfigured_integration_answers_unavailable_without_http(): void
     {
         // Arrange
         Http::fake();
+        $this->configureMicrosoft365(overrides: ['client_secret' => '']);
         $user = $this->createUser();
         $this->connectedAccount($user, expired: true);
 

@@ -85,7 +85,7 @@ trait InteractsWithGraphFixtures
      * given. Http::fake replaces earlier fakes, so tests that need both set the map once through this.
      *
      * @param  array<string, mixed>|int  $response  JSON body, or an HTTP status for an empty body
-     * @param  ResponseSequence|null  $graph  answers for calendarView, see graphSequence()
+     * @param  ResponseSequence|null  $graph  answers for calendarView, see graphSequence(); default is a 500
      */
     protected function fakeTokenEndpoint(array|int $response, int $status = 200, ?ResponseSequence $graph = null): void
     {
@@ -93,11 +93,12 @@ trait InteractsWithGraphFixtures
             ? Http::response([], $response)
             : Http::response($response, $status);
 
-        $map = ['https://login.microsoftonline.com/*/oauth2/v2.0/token' => $tokenAnswer];
-        if ($graph !== null) {
-            $map['https://graph.microsoft.com/v1.0/me/calendarView*'] = $graph;
-        }
-        Http::fake($map);
+        // Without Graph answers a stray calendarView request must be visible, not reach the network
+        Http::fake([
+            'https://login.microsoftonline.com/*/oauth2/v2.0/token' => $tokenAnswer,
+            'https://graph.microsoft.com/v1.0/me/calendarView*' => $graph
+                ?? Http::response(['error' => ['code' => 'unexpected_graph_request']], 500),
+        ]);
     }
 
     /**
