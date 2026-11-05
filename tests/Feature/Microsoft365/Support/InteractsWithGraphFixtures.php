@@ -1,0 +1,95 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\Microsoft365\Support;
+
+use App\Microsoft365\Models\MicrosoftAccount;
+use App\Models\User;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Http;
+
+/**
+ * Replays the sanitized Microsoft Graph calendarView fixtures of phase 1 (tests/Fixtures/M365).
+ * File names come from manifest.json, never from a directory listing: page-10 sorts before page-2.
+ */
+trait InteractsWithGraphFixtures
+{
+    /**
+     * @return array<mixed>
+     */
+    protected function graphFixture(string $path): array
+    {
+        $json = file_get_contents(base_path('tests/Fixtures/M365/'.$path));
+        $this->assertNotFalse($json, 'Fixture file not readable: '.$path);
+
+        $data = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+        $this->assertIsArray($data, 'Fixture is not a JSON object or list: '.$path);
+
+        return $data;
+    }
+
+    /**
+     * The pages of one recorded round in manifest order.
+     *
+     * @return list<array<string, mixed>>
+     */
+    protected function graphPages(string $round, string $pass = 'prod-select'): array
+    {
+        $manifest = $this->graphFixture('manifest.json');
+        $files = $manifest['files']['calendarview'][$round][$pass]['pages'];
+        $this->assertNotEmpty($files);
+
+        return array_map(fn (string $file): array => $this->graphFixture($file), $files);
+    }
+
+    /**
+     * @return array{start: string, end: string}
+     */
+    protected function fixtureWindow(): array
+    {
+        $manifest = $this->graphFixture('manifest.json');
+
+        return [
+            'start' => (string) $manifest['window']['start'],
+            'end' => (string) $manifest['window']['end'],
+        ];
+    }
+
+    /**
+     * Fakes the Graph calendarView endpoint with the pages of a round, answered in order.
+     *
+     * @return list<array<string, mixed>> the pages that are replayed
+     */
+    protected function fakeGraphCalendar(string $round = 'A'): array
+    {
+        Config::set('microsoft365.graph.max_pages', 30);
+        $pages = $this->graphPages($round);
+        $sequence = Http::sequence();
+        foreach ($pages as $page) {
+            $sequence->push($page);
+        }
+        Http::fake([
+            'https://graph.microsoft.com/v1.0/me/calendarView*' => $sequence,
+        ]);
+
+        return $pages;
+    }
+
+    protected function connectedAccount(User $user, bool $expired = false): MicrosoftAccount
+    {
+        $account = new MicrosoftAccount;
+        $account->user()->associate($user);
+        $account->tenant_id = '00000000-0000-4000-8000-0000000000a1';
+        $account->microsoft_oid = '00000000-0000-4000-8000-0000000000b1';
+        $account->microsoft_email = 'ada@example.test';
+        $account->access_token = 'at-marker-7f3c';
+        $account->refresh_token = 'rt-marker-9d1e';
+        $account->access_token_expires_at = $expired ? Carbon::now()->subMinute() : Carbon::now()->addHour();
+        $account->scopes = ['openid', 'profile', 'email', 'offline_access', 'User.Read', 'Calendars.Read'];
+        $account->save();
+
+        return $account;
+    }
+}
