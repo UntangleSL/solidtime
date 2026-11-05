@@ -12,6 +12,7 @@ checks these files first. Everything else the fork adds lives in fork-owned path
 | `config/app.php` | One `use` line and one entry in the `providers` array for `Microsoft365ServiceProvider`. | 02-01 | Re-apply the two lines after the merge. |
 | `resources/js/Pages/Auth/Login.vue` | One import and one element after the login form (the Microsoft button). | 02-03 | Re-apply the import and the element; keep the rest of upstream's template. |
 | `app/Providers/FortifyServiceProvider.php` | `loginView` passes `canRegister` (true only when APP_ENABLE_REGISTRATION=on) so the login page hides "Register here!" when registration is off/invite-only. | post-02 (2026-11-04) | Re-apply the `canRegister` line and the `RegistrationMode` import. |
+| `tests/Feature/AuthenticationTest.php` | Two tests for the `canRegister` login prop (register link hidden unless registration is on). | post-02 (2026-11-04) | Keep upstream's file and re-add the two test methods. |
 | `resources/js/Pages/Profile/Show.vue` | One import and one element after the two-factor section (the Microsoft account card). | 02-10 | Re-apply the import and the element after upstream's two-factor section. |
 | `.env.example` | Appended block with the seven `SOLIDTIME_MICROSOFT_*` names. | 02-09 | Keep the block at the end of the file. |
 
@@ -39,9 +40,9 @@ These paths do not exist upstream, so they never conflict.
 
 ## Hot files deliberately not touched (D-15)
 
-Phase 2 does not edit these upstream hot spots, so they cannot conflict because of this phase:
+Phase 2 does not edit these upstream hot spots, so they cannot conflict because of this phase
+(`app/Providers/FortifyServiceProvider.php` was later touched by the register-link fix; see the first table):
 
-- `app/Providers/FortifyServiceProvider.php`
 - `app/Providers/AppServiceProvider.php`
 - `app/Providers/RouteServiceProvider.php`
 - `routes/web.php`

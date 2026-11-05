@@ -124,7 +124,7 @@ Plans:
 **Requirements**: SYNC-01, SYNC-02, SYNC-03, SYNC-04, SYNC-05, CAL-01, CAL-02, CAL-03, CAL-04, SEC-02
 **Success Criteria** (what must be TRUE):
   1. Opening the calendar shows time entries immediately, then the user's Outlook meetings for the visible week or day appear as visually distinct ghost blocks at the correct local times, including across DST changes; a "Sync" button refreshes them, and repeated presses or fast navigation cause no errors or Graph throttling.
-  2. Only meetings the user organized (including personal blocks without attendees) or accepted/tentatively accepted appear; declined, cancelled, all-day and private/confidential meetings never appear.
+  2. Every timed meeting in the user's calendar appears regardless of response status (organized, including personal blocks without attendees, accepted, tentative or not responded); declined (Graph removes them), cancelled, all-day and private/confidential meetings never appear.
   3. Ghost blocks cannot be dragged or resized, do not get in the way of creating or editing time entries, and are not counted in tracked time, totals, reports or exports; other members and managers never see another user's meetings.
   4. User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it.
   5. When Graph is slow, down or throttled, the calendar keeps working and shows a non-blocking status (last synced time, retry later); expired access tokens refresh silently, and when refresh is impossible (revoked, expired, Conditional Access) the user sees a "Reconnect Microsoft" prompt instead of an error.
