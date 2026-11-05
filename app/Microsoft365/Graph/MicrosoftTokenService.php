@@ -178,6 +178,12 @@ final class MicrosoftTokenService
      */
     private function classifyFailure(MicrosoftAccount $account, Response $response): GraphException
     {
+        // The token endpoint throttles too: a back-off like Graph's, tokens kept, nothing logged here
+        // (the sync service logs the degraded sync with the HTTP status)
+        if ($response->status() === 429) {
+            return new GraphException(SyncStatus::Throttled, RetryAfter::seconds($response->header('Retry-After')));
+        }
+
         $error = $response->json('error');
         $error = is_string($error) ? $error : '';
         $description = $response->json('error_description');

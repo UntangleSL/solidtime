@@ -9,6 +9,7 @@ use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -28,9 +29,46 @@ final class OutlookMeetingSyncService
         private readonly MicrosoftTokenService $tokens,
     ) {}
 
+    /**
+     * Guards in order: account state, persisted back-off, reuse window / minimum interval, per-user lock.
+     * Every guard answers without a Graph request. The lock only keeps concurrent requests of one user
+     * from traversing twice (D-11, D-12); services stay stateless, so nothing is kept on this object.
+     */
     public function sync(User $user, CarbonImmutable $start, CarbonImmutable $end, bool $force = false): SyncOutcome
     {
         $account = MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->first();
+        $early = $this->guard($account, $user, $start, $end, $force);
+        if ($early !== null) {
+            return $early;
+        }
+        assert($account !== null);
+
+        $lock = Cache::lock('m365:meetings-sync:'.$user->getKey(), $this->intConfig('lock_seconds', 20));
+        if (! $lock->get()) {
+            // A sync of this user is running: its result lands in the cache, which the client re-reads
+            return new SyncOutcome(SyncStatus::Coalesced, null, $this->windowSyncedAt($user, $start, $end));
+        }
+
+        try {
+            // A sync that finished (or a back-off it set) while this request was getting the lock
+            $account = MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->first();
+            $early = $this->guard($account, $user, $start, $end, $force);
+            if ($early !== null) {
+                return $early;
+            }
+            assert($account !== null);
+
+            return $this->traverse($user, $account, $start, $end);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * @return SyncOutcome|null the outcome that answers without any Graph request, or null to go on
+     */
+    private function guard(?MicrosoftAccount $account, User $user, CarbonImmutable $start, CarbonImmutable $end, bool $force): ?SyncOutcome
+    {
         $state = $account?->calendarAccessState() ?? 'not_connected';
         if ($account === null || $state === 'not_connected') {
             return new SyncOutcome(SyncStatus::NotConnected);
@@ -39,6 +77,26 @@ final class OutlookMeetingSyncService
             return new SyncOutcome(SyncStatus::Reconnect);
         }
 
+        // graph_backoff_until: set from a Retry-After answer, honoured without any Graph request
+        $backoff = $account->backoffRemainingSeconds();
+        if ($backoff !== null) {
+            return new SyncOutcome(SyncStatus::Throttled, $backoff);
+        }
+
+        // A forced sync (the Sync button) skips the reuse window but never the minimum interval
+        $window = $force
+            ? $this->intConfig('min_interval_seconds', 10)
+            : $this->intConfig('reuse_seconds', 60);
+        $syncedAt = $this->windowSyncedAt($user, $start, $end);
+        if ($syncedAt !== null && CarbonImmutable::now()->lessThan($syncedAt->addSeconds($window))) {
+            return new SyncOutcome(SyncStatus::Reused, null, $syncedAt);
+        }
+
+        return null;
+    }
+
+    private function traverse(User $user, MicrosoftAccount $account, CarbonImmutable $start, CarbonImmutable $end): SyncOutcome
+    {
         $syncStartedAt = CarbonImmutable::now('UTC');
 
         $result = $this->client->calendarView(
@@ -47,11 +105,23 @@ final class OutlookMeetingSyncService
             $end,
         );
 
+        if ($result['failure'] === SyncStatus::NoMailbox) {
+            // Not an error: the user has no Exchange Online mailbox. Nothing to store or reconcile.
+            Log::info('Outlook sync: no mailbox');
+
+            return new SyncOutcome(SyncStatus::NoMailbox);
+        }
+
         $rows = [];
+        $ineligibleIds = [];
         $nonUtc = 0;
         foreach ($result['events'] as $event) {
             // The filter runs before any row is built: an ineligible event's subject never reaches a query
             if (! $this->eligibility->isEligible($event)) {
+                if (is_string($event['id'] ?? null)) {
+                    $ineligibleIds[] = $event['id'];
+                }
+
                 continue;
             }
             if ($this->isNonUtc($event)) {
@@ -66,6 +136,8 @@ final class OutlookMeetingSyncService
         }
 
         $this->store(array_values($rows));
+        // A positive sighting, so it holds after a partial or failed traversal too
+        $this->scrubIneligible($user, $ineligibleIds);
 
         if ($nonUtc > 0) {
             // Count only: no subject, id or time of the skipped events is logged
@@ -78,13 +150,95 @@ final class OutlookMeetingSyncService
         }
 
         if ($result['failure'] !== null) {
-            // A traversal with a failure records no sync window
-            return new SyncOutcome($result['failure'], $result['retry_after']);
+            return $this->failureOutcome($user, $result['failure'], $result['retry_after'], $result['http_status']);
         }
 
+        if ($result['complete']) {
+            // Only a complete traversal proves that an unseen meeting is gone (never after a partial one)
+            $this->markUnseenGone($user, $start, $end, $syncStartedAt);
+        }
+
+        // A traversal with a failure records no sync window
         $this->recordWindow($user, $start, $end, $syncStartedAt);
 
         return new SyncOutcome(SyncStatus::Ok, null, $syncStartedAt, ! $result['complete']);
+    }
+
+    private function failureOutcome(User $user, SyncStatus $failure, ?int $retryAfter, ?int $httpStatus): SyncOutcome
+    {
+        if ($failure === SyncStatus::Throttled) {
+            $seconds = $retryAfter ?? RetryAfter::DEFAULT_SECONDS;
+            // Persisted, so every later request of this user waits without a Graph call (D-12)
+            MicrosoftAccount::query()
+                ->where('user_id', '=', $user->getKey())
+                ->update(['graph_backoff_until' => CarbonImmutable::now('UTC')->addSeconds($seconds)->format('Y-m-d H:i:s')]);
+            Log::warning('Outlook sync degraded', ['status' => 'throttled', 'http_status' => $httpStatus]);
+
+            return new SyncOutcome(SyncStatus::Throttled, $seconds);
+        }
+
+        if ($failure === SyncStatus::Unavailable) {
+            Log::warning('Outlook sync degraded', ['status' => 'unavailable', 'http_status' => $httpStatus]);
+        }
+
+        return new SyncOutcome($failure, $retryAfter);
+    }
+
+    private function windowSyncedAt(User $user, CarbonImmutable $start, CarbonImmutable $end): ?CarbonImmutable
+    {
+        $window = OutlookSyncWindow::query()
+            ->where('user_id', '=', $user->getKey())
+            ->where('window_start', '=', $start->utc()->format('Y-m-d H:i:s'))
+            ->where('window_end', '=', $end->utc()->format('Y-m-d H:i:s'))
+            ->first();
+
+        return $window?->synced_at->toImmutable();
+    }
+
+    /**
+     * A cached meeting that came back cancelled, private or otherwise ineligible is hidden and scrubbed:
+     * it never keeps a title, organizer or link that Outlook no longer allows us to show (T-03-13).
+     *
+     * @param  list<string>  $graphIds
+     */
+    private function scrubIneligible(User $user, array $graphIds): void
+    {
+        $now = CarbonImmutable::now('UTC')->format('Y-m-d H:i:s');
+        foreach (array_chunk(array_values(array_unique($graphIds)), self::UPSERT_CHUNK) as $chunk) {
+            OutlookMeeting::query()
+                ->where('user_id', '=', $user->getKey())
+                ->whereIn('graph_id', $chunk)
+                ->whereNull('gone_at')
+                ->update(['gone_at' => $now]);
+            OutlookMeeting::query()
+                ->where('user_id', '=', $user->getKey())
+                ->whereIn('graph_id', $chunk)
+                ->update(['subject' => null, 'organizer_name' => null, 'web_link' => null]);
+        }
+    }
+
+    /**
+     * Rows of the window that this complete traversal did not see: moved out, removed or declined in
+     * Outlook. Same overlap predicate as the calendarView request (starts before the end, ends after the
+     * start), so a long meeting that only touches the window is judged by the same rule Graph used.
+     * Rows are never deleted: the audit of what was shown and a later link to time entries stay intact.
+     */
+    private function markUnseenGone(User $user, CarbonImmutable $start, CarbonImmutable $end, CarbonImmutable $syncStartedAt): void
+    {
+        OutlookMeeting::query()
+            ->where('user_id', '=', $user->getKey())
+            ->where('starts_at', '<', $end->utc()->format('Y-m-d H:i:s'))
+            ->where('ends_at', '>', $start->utc()->format('Y-m-d H:i:s'))
+            ->where('last_seen_at', '<', $syncStartedAt->format('Y-m-d H:i:s'))
+            ->whereNull('gone_at')
+            ->update(['gone_at' => CarbonImmutable::now('UTC')->format('Y-m-d H:i:s')]);
+    }
+
+    private function intConfig(string $key, int $default): int
+    {
+        $value = config('microsoft365.graph.'.$key, $default);
+
+        return is_int($value) && $value > 0 ? $value : $default;
     }
 
     /**

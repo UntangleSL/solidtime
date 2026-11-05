@@ -121,6 +121,21 @@ class MicrosoftAccount extends Model
     }
 
     /**
+     * Whole seconds until Graph may be called again after a throttled answer, or null when there is no
+     * back-off (never set, or already over). At least 1 while a back-off is active.
+     */
+    public function backoffRemainingSeconds(): ?int
+    {
+        $until = $this->graph_backoff_until;
+        if ($until === null) {
+            return null;
+        }
+        $remaining = $until->getTimestamp() - Carbon::now()->getTimestamp();
+
+        return $remaining > 0 ? $remaining : null;
+    }
+
+    /**
      * Query counterpart of isConnected(), so callers can count connected accounts without loading tokens.
      *
      * @param  Builder<MicrosoftAccount>  $query

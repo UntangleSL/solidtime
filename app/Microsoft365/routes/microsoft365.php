@@ -25,9 +25,9 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
     ->group(function (): void {
         // Cache only: never calls Graph
         Route::get('/meetings', [OutlookMeetingController::class, 'index'])
-            ->middleware('throttle:60,1')
+            ->middleware('throttle:60,1,m365-read:')
             ->name('microsoft.meetings.index');
         Route::post('/meetings/sync', [OutlookMeetingController::class, 'sync'])
-            ->middleware('throttle:12,1')
+            ->middleware('throttle:12,1,m365-sync:')
             ->name('microsoft.meetings.sync');
     });

@@ -41,5 +41,13 @@ return [
         // Seconds
         'connect_timeout' => 3,
         'timeout' => 8,
+        // A sync answered less than this many seconds ago is reused instead of fetched again (D-11)
+        'reuse_seconds' => 60,
+        // Even a forced sync (the Sync button) is reused inside this interval
+        'min_interval_seconds' => 10,
+        // Lifetime of the per-user sync lock; a crashed sync frees it after this long
+        'lock_seconds' => 20,
+        // Total time one traversal may take before it stops as a partial result
+        'deadline_seconds' => 15,
     ],
 ];

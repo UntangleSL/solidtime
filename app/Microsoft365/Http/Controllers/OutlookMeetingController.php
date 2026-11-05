@@ -7,6 +7,7 @@ namespace App\Microsoft365\Http\Controllers;
 use App\Microsoft365\Graph\OutlookMeetingSyncService;
 use App\Microsoft365\Http\Requests\MeetingRangeRequest;
 use App\Microsoft365\Http\Resources\OutlookMeetingResource;
+use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Models\User;
@@ -48,9 +49,13 @@ class OutlookMeetingController extends Controller
             ->where('window_end', '=', $end->format('Y-m-d H:i:s'))
             ->first();
 
+        // Seconds Graph is still backed off for (D-12): a reload keeps the Sync control waiting
+        $account = MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->first();
+
         return OutlookMeetingResource::collection($meetings)->additional([
             'sync' => [
                 'last_synced_at' => $window?->synced_at->utc()->format('Y-m-d\TH:i:s\Z'),
+                'retry_after' => $account?->backoffRemainingSeconds(),
             ],
         ]);
     }
@@ -65,6 +70,7 @@ class OutlookMeetingController extends Controller
             $this->sessionUser($request->user()),
             $request->rangeStart(),
             $request->rangeEnd(),
+            $request->force(),
         );
 
         return response()->json($outcome->toArray());

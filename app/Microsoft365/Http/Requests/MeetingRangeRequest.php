@@ -32,6 +32,8 @@ class MeetingRangeRequest extends FormRequest
         return [
             'start' => ['required', 'string', 'date_format:'.self::FORMAT],
             'end' => ['required', 'string', 'date_format:'.self::FORMAT, 'after:start'],
+            // The Sync button: skips the 60 s reuse window, never the 10 s minimum interval
+            'force' => ['sometimes', 'boolean'],
         ];
     }
 
@@ -50,6 +52,11 @@ class MeetingRangeRequest extends FormRequest
                 }
             },
         ];
+    }
+
+    public function force(): bool
+    {
+        return $this->boolean('force');
     }
 
     public function rangeStart(): CarbonImmutable
