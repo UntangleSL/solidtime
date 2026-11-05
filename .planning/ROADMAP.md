@@ -130,7 +130,7 @@ Plans:
   4. User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it.
   5. When Graph is slow, down or throttled, the calendar keeps working and shows a non-blocking status (last synced time, retry later); expired access tokens refresh silently, and when refresh is impossible (revoked, expired, Conditional Access) the user sees a "Reconnect Microsoft" prompt instead of an error.
 
-**Plans**: 2/12 plans executed
+**Plans**: 3/12 plans executed
 
 Plans:
 **Wave 1**
@@ -138,7 +138,7 @@ Plans:
 - [x] 03-05-PLAN.md — Ghost layer: overlay slot, reserved right-hand Outlook lane (D-23, keeps D-01 reachable), pointer guard, DST layout and lanes, totals unchanged (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 03-02-PLAN.md — Read and sync endpoints (cache-only GET /m365/meetings, POST sync), owner scoping, validation, off switch; eligibility and Graph-client contract tests (wave 2)
+- [x] 03-02-PLAN.md — Read and sync endpoints (cache-only GET /m365/meetings, POST sync), owner scoping, validation, off switch; eligibility and Graph-client contract tests (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 03-03-PLAN.md — Silent token refresh under row lock; reconnect vs unavailable classification; Graph 401/403 retry; reconnect_required_at / graph_backoff_until columns (wave 3)
@@ -252,7 +252,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 |-------|----------------|--------|-----------|
 | 1. Tenant Setup & Outlook Spike | 8/8 | Complete    | 2026-11-05 |
 | 2. Sign in with Microsoft | 11/11 | Complete    | 2026-11-05 |
-| 3. Outlook Meetings in the Calendar | 2/12 | In Progress | - |
+| 3. Outlook Meetings in the Calendar | 3/12 | In Progress | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |
