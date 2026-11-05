@@ -13,7 +13,7 @@ import type {
     OutlookMeetingsResponse,
     OutlookSyncResponse,
 } from '@/m365/types';
-import { useOutlookMeetings, weekBucket } from './useOutlookMeetings';
+import { OUTLOOK_MEETINGS_KEY, useOutlookMeetings, weekBucket } from './useOutlookMeetings';
 
 const { pageProps } = vi.hoisted(() => ({ pageProps: {} as Record<string, unknown> }));
 
@@ -497,5 +497,151 @@ describe('useOutlookMeetings', () => {
         await advance(2000);
 
         expect(axiosPost).not.toHaveBeenCalled();
+    });
+});
+
+describe('useOutlookMeetings sync control state', () => {
+    // A read of the current week that is fresh enough to skip the automatic sync
+    function freshRead(retryAfter: number | null = null): { data: OutlookMeetingsResponse } {
+        return {
+            data: {
+                data: [],
+                sync: {
+                    last_synced_at: new Date(Date.now() - 5_000).toISOString(),
+                    retry_after: retryAfter,
+                },
+            },
+        };
+    }
+
+    it('provides the context to descendants under OUTLOOK_MEETINGS_KEY', async () => {
+        axiosGet.mockResolvedValue(freshRead());
+        const mounted = mountComposable();
+
+        // What a descendant's inject(OUTLOOK_MEETINGS_KEY) resolves to
+        const provides = (mounted.wrapper.vm as unknown as { $: { provides: object } }).$.provides;
+        expect(Reflect.get(provides, OUTLOOK_MEETINGS_KEY)).toBe(mounted.api);
+        mounted.wrapper.unmount();
+    });
+
+    it('is disabled for 10 s after a settled sync and ignores a forced sync meanwhile', async () => {
+        axiosGet.mockResolvedValue(freshRead());
+        const mounted = mountComposable();
+        await advance(0);
+        expect(mounted.api.canSync.value).toBe(true);
+
+        mounted.api.requestSync(true);
+        await advance(0);
+        await advance(0);
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+        expect(mounted.api.canSync.value).toBe(false);
+
+        mounted.api.requestSync(true);
+        await advance(5_000);
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+
+        await advance(5_000);
+        expect(mounted.api.canSync.value).toBe(true);
+        mounted.wrapper.unmount();
+    });
+
+    it('is not available while a sync is in flight', async () => {
+        axiosGet.mockResolvedValue(freshRead());
+        const first = deferred<{ data: OutlookSyncResponse }>();
+        axiosPost.mockReturnValueOnce(first.promise);
+        const mounted = mountComposable();
+        await advance(0);
+
+        mounted.api.requestSync(true);
+        await advance(0);
+        expect(mounted.api.isSyncing.value).toBe(true);
+        expect(mounted.api.canSync.value).toBe(false);
+
+        mounted.api.requestSync(true);
+        await advance(0);
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+
+        first.resolve(syncResponse());
+        await advance(0);
+        mounted.wrapper.unmount();
+    });
+
+    it('honours the retry_after of a throttled answer and of a read response', async () => {
+        axiosGet.mockResolvedValue(freshRead(15));
+        const read = mountComposable();
+        await advance(0);
+        await advance(0);
+        expect(read.api.canSync.value).toBe(false);
+        await advance(14_999);
+        expect(read.api.canSync.value).toBe(false);
+        await advance(1);
+        expect(read.api.canSync.value).toBe(true);
+        read.wrapper.unmount();
+
+        axiosGet.mockResolvedValue(freshRead());
+        axiosPost.mockResolvedValue(syncResponse({ status: 'throttled', retry_after: 20 }));
+        const throttled = mountComposable();
+        await advance(0);
+        throttled.api.requestSync(true);
+        await advance(0);
+        await advance(0);
+        await advance(19_999);
+        expect(throttled.api.canSync.value).toBe(false);
+        await advance(1);
+        expect(throttled.api.canSync.value).toBe(true);
+        throttled.wrapper.unmount();
+    });
+
+    it('keeps a reconnect answer for the page life', async () => {
+        axiosGet.mockResolvedValue(freshRead());
+        axiosPost.mockResolvedValueOnce(syncResponse({ status: 'reconnect' }));
+        const mounted = mountComposable();
+        await advance(0);
+        mounted.api.requestSync(true);
+        await advance(0);
+        await advance(0);
+        expect(mounted.api.connectionState.value).toBe('reconnect');
+        expect(mounted.api.canSync.value).toBe(false);
+
+        // Navigating on cannot flip it back
+        await goTo(mounted, WEEK_B);
+        await advance(20_000);
+        expect(mounted.api.connectionState.value).toBe('reconnect');
+        mounted.wrapper.unmount();
+    });
+
+    it('tracks the last synced time per week and counts visible meetings of the range', async () => {
+        axiosGet.mockResolvedValue({
+            data: {
+                data: [
+                    meeting('in', '2026-11-03T09:00:00Z', '2026-11-03T10:00:00Z'),
+                    {
+                        ...meeting('gone', '2026-11-04T09:00:00Z', '2026-11-04T10:00:00Z'),
+                        dismissed: true,
+                    },
+                    meeting('next', '2026-11-10T09:00:00Z', '2026-11-10T10:00:00Z'),
+                ],
+                sync: { last_synced_at: '2026-11-05T09:00:00Z', retry_after: null },
+            },
+        });
+        axiosPost.mockResolvedValue(syncResponse({ last_synced_at: '2026-11-05T09:59:00Z' }));
+        const mounted = mountComposable();
+        await advance(0);
+        expect(mounted.api.syncedAt.value).toBe('2026-11-05T09:00:00Z');
+        // Dismissed and out-of-range meetings do not count
+        expect(mounted.api.visibleCount.value).toBe(1);
+
+        mounted.api.requestSync(true);
+        await advance(0);
+        await advance(0);
+        expect(mounted.api.syncedAt.value).toBe('2026-11-05T09:59:00Z');
+
+        // Another week: the answer for week A says nothing about it
+        axiosGet.mockResolvedValue(readResponse([], null));
+        await goTo(mounted, WEEK_B);
+        await advance(0);
+        await advance(0);
+        expect(mounted.api.syncedAt.value).toBeNull();
+        mounted.wrapper.unmount();
     });
 });
