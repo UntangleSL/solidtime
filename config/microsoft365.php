@@ -33,4 +33,13 @@ return [
 
     // Used when the browser did not send a valid timezone at sign-in.
     'default_timezone' => env('SOLIDTIME_MICROSOFT_DEFAULT_TIMEZONE', 'Europe/Madrid'),
+
+    // Microsoft Graph calendarView reads. Plain values on purpose: no new environment variables.
+    'graph' => [
+        // Pages fetched per sync (100 events each) before the result is reported as truncated
+        'max_pages' => 10,
+        // Seconds
+        'connect_timeout' => 3,
+        'timeout' => 8,
+    ],
 ];

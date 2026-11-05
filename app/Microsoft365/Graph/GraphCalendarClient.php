@@ -52,8 +52,14 @@ final class GraphCalendarClient
             }
             $pages++;
 
+            try {
+                $accessToken = $token(null);
+            } catch (GraphException $exception) {
+                return ['events' => $events, 'complete' => false, 'failure' => $exception->status, 'retry_after' => $exception->retryAfter];
+            }
+
             $response = Http::withHeaders(['Prefer' => self::PREFER, 'Accept' => 'application/json'])
-                ->withToken($token(null))
+                ->withToken($accessToken)
                 ->connectTimeout($connectTimeout)
                 ->timeout($timeout)
                 ->get($nextUrl);

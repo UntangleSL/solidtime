@@ -6,8 +6,10 @@ namespace App\Microsoft365\Graph;
 
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
+use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -23,6 +25,7 @@ final class OutlookMeetingSyncService
     public function __construct(
         private readonly GraphCalendarClient $client,
         private readonly OutlookMeetingEligibility $eligibility,
+        private readonly MicrosoftTokenService $tokens,
     ) {}
 
     public function sync(User $user, CarbonImmutable $start, CarbonImmutable $end, bool $force = false): SyncOutcome
@@ -35,15 +38,21 @@ final class OutlookMeetingSyncService
         $syncStartedAt = CarbonImmutable::now('UTC');
 
         $result = $this->client->calendarView(
-            fn (?string $rejected): string => (string) $account->access_token,
+            fn (?string $rejected): string => $this->tokens->accessToken($account, $rejected),
             $start,
             $end,
         );
 
         $rows = [];
+        $nonUtc = 0;
         foreach ($result['events'] as $event) {
             // The filter runs before any row is built: an ineligible event's subject never reaches a query
             if (! $this->eligibility->isEligible($event)) {
+                continue;
+            }
+            if ($this->isNonUtc($event)) {
+                $nonUtc++;
+
                 continue;
             }
             $row = $this->buildRow($user, $event, $syncStartedAt);
@@ -54,9 +63,17 @@ final class OutlookMeetingSyncService
 
         $this->store(array_values($rows));
 
+        if ($nonUtc > 0) {
+            // Count only: no subject, id or time of the skipped events is logged
+            Log::warning('Outlook meetings skipped', ['reason' => 'non_utc', 'count' => $nonUtc]);
+        }
+
         if ($result['failure'] !== null) {
+            // A traversal with a failure records no sync window
             return new SyncOutcome($result['failure'], $result['retry_after']);
         }
+
+        $this->recordWindow($user, $start, $end, $syncStartedAt);
 
         return new SyncOutcome(SyncStatus::Ok, null, $syncStartedAt, ! $result['complete']);
     }
@@ -79,6 +96,34 @@ final class OutlookMeetingSyncService
         }
 
         return CarbonImmutable::createFromFormat('Y-m-d\TH:i:s', $matches[1], 'UTC');
+    }
+
+    /**
+     * The request asks for UTC, so another zone name is a contract violation: such events are skipped.
+     *
+     * @param  array<string, mixed>  $event
+     */
+    private function isNonUtc(array $event): bool
+    {
+        foreach (['start', 'end'] as $key) {
+            $value = $event[$key] ?? null;
+            if (is_array($value) && ($value['timeZone'] ?? null) !== 'UTC') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function recordWindow(User $user, CarbonImmutable $start, CarbonImmutable $end, CarbonImmutable $syncedAt): void
+    {
+        OutlookSyncWindow::query()->upsert([[
+            'id' => (string) Str::uuid(),
+            'user_id' => $user->getKey(),
+            'window_start' => $start->utc()->format('Y-m-d H:i:s'),
+            'window_end' => $end->utc()->format('Y-m-d H:i:s'),
+            'synced_at' => $syncedAt->format('Y-m-d H:i:s'),
+        ]], ['user_id', 'window_start', 'window_end'], ['synced_at']);
     }
 
     /**
