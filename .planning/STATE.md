@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 3
 current_phase_name: Outlook Meetings in the Calendar
 status: executing
-stopped_at: Completed 03-01-PLAN.md
-last_updated: "2026-11-05T16:58:18.501Z"
+stopped_at: Completed 03-05-PLAN.md
+last_updated: "2026-11-05T17:25:18.741Z"
 last_activity: 2026-11-05
 last_activity_desc: Phase 3 execution started
-state_head: 5f75f4855fb01a78a0b2f6721c73c996ce63d0d7
+state_head: 17b5a82b05d64382ce9d357d416833307fa42008
 progress:
   total_phases: 8
   completed_phases: 2
   total_plans: 31
-  completed_plans: 20
+  completed_plans: 21
   percent: 25
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 3 (Outlook Meetings in the Calendar) — EXECUTING
-Plan: 2 of 12
+Plan: 3 of 12
 Status: Ready to execute
 Last activity: 2026-11-05 — Phase 3 execution started
 
@@ -76,6 +76,7 @@ Progress: [███░░░░░░░] 25%
 | Phase 02 P09 | 40min | 2 tasks | 10 files |
 | Phase 2 P10 | 75min | 2 tasks | 6 files |
 | Phase 3 P01 | 45min | 2 tasks | 13 files |
+| Phase 03 P05 | 55 min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -123,6 +124,7 @@ Recent decisions affecting current work:
 - [Phase 2]: 02-10: Microsoft 365 profile section renders only the server payload labels; Connect uses navigateTo (full-page), Disconnect uses router.delete with preserveScroll behind a DialogModal
 - [Phase 3]: 03-01: a Graph failure mid-traversal keeps the eligible rows fetched so far but records no sync window and returns the failure status
 - [Phase 3]: 03-01: GraphCalendarClient catches GraphException from the token closure and reports it as the failure status; nextLink followed only for https graph.microsoft.com without userinfo or port
+- [Phase 03]: 03-05: ghost overlap decided on drawn pixel extent (min 16px), back-to-back share a lane; CAL-01/CAL-02 stay open until 03-06 wires data
 
 ### Roadmap Evolution
 
@@ -148,6 +150,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-05T16:58:18.216Z
-Stopped at: Completed 03-01-PLAN.md
+Last session: 2026-11-05T17:25:18.474Z
+Stopped at: Completed 03-05-PLAN.md
 Resume file: None
