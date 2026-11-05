@@ -537,19 +537,25 @@ async function runPending() {
 | A8 | `scope=Calendars.Read offline_access` on the refresh request returns a Graph token and a rotated refresh token | Pattern 1 | Medium: if the token endpoint rejects the narrower scope, omit `scope` (documented as optional); covered by a first-deploy smoke (UAT) |
 | A9 | AADSTS numbers behind `invalid_grant` (70008, 700082, 50076, 53003) are expiry/inactivity/MFA/Conditional Access | Pattern 1 | None for logic: classification uses the OAuth `error` string only |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+All four questions were resolved on 2026-11-05; the resolution is recorded inline under each question.
 
 1. **Impersonation window between Phase 3 and Phase 7 (SEC-04).**
    - Known: an admin impersonating a user via Filament runs in that user's session; `STS\FilamentImpersonate\Facades\Impersonation::isImpersonating()` exists [VERIFIED: `vendor/stechstudio/filament-impersonate/src/Facades/Impersonation.php` declares `@method static bool isImpersonating()`]. SEC-04 is formally Phase 7, but from Phase 3 on, an impersonating admin would see the user's meeting titles and trigger Graph with the user's token.
    - Unclear: whether the owner wants the guard now.
    - Recommendation: route every Graph and meeting read through one choke point (the controller base or one middleware) and add a 5-line fail-closed check there now (return `status: not_connected`-like empty payload while impersonating); Phase 7 then verifies and extends. If rejected, record the exposure in the Phase 3 SUMMARY.
+   - **RESOLVED (D-22):** the guard ships in Phase 3. `GraphAccessGuard` fails closed at the `MicrosoftTokenService` choke point, and the meetings endpoints and the calendar shared prop return nothing while an admin impersonates (plan 03-11). Phase 7 still owns the full SEC-04 verification.
 
 2. **Location text in the detail panel (A1).**
    - Recommendation: ship without it; webLink covers "see details in Outlook".
+   - **RESOLVED (D-20):** no location text. The binding `$select` stays unchanged; the panel shows the online-meeting indicator and an "Open in Outlook" link (https only) (plan 03-09).
 
 3. **Playwright and the integration-off CI environment.** See Validation Architecture: the CI Playwright job sets no `SOLIDTIME_MICROSOFT_*`, and the Phase 2 spec asserts the login button is absent in that environment, so the integration cannot be switched on globally. Recommendation: the test-hook approach below.
+   - **RESOLVED:** Playwright injects meetings through `window.__TEST_SET_OUTLOOK_MEETINGS__(meetings, labels?)` (a no-op unless test code calls it, same contract as `__TEST_SET_ACTIVITY_PERIODS__`), so the suite runs with the integration off in CI (plans 03-06 and 03-09).
 
 4. **Ghost fully covered by an entry is not clickable.** Accepted under D-01; switch to a reserved lane if UAT objects.
+   - **RESOLVED (D-23, supersedes the acceptance above):** ghosts render in a reserved right-hand Outlook lane (week `max(16px, 30%)`, day `min(240px, 25%)`) and entries on those days are inset by the lane width plus 4px, so a meeting that exactly overlaps a logged entry stays visible and clickable and the entry stays draggable, resizable and editable. Proven by a Vitest geometry test (plan 03-05) and a Playwright click test (plan 03-06). The "behind entries, full width" consequence described in Pattern 3 no longer applies.
 
 ## Environment Availability
 

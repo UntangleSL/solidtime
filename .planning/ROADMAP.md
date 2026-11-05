@@ -129,30 +129,41 @@ Plans:
   4. User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it.
   5. When Graph is slow, down or throttled, the calendar keeps working and shows a non-blocking status (last synced time, retry later); expired access tokens refresh silently, and when refresh is impossible (revoked, expired, Conditional Access) the user sees a "Reconnect Microsoft" prompt instead of an error.
 
-**Plans**: 8 plans
+**Plans**: 12 plans
 
 Plans:
 **Wave 1**
-- [ ] 03-01-PLAN.md — Backend tracer: Graph calendarView (literal URL, Prefer on every page, nextLink host check) -> fail-closed eligibility -> outlook_meetings cache -> cache-only GET /m365/meetings, owner-scoped (wave 1)
+- [ ] 03-01-PLAN.md — Backend tracer, Graph-to-cache: calendarView (literal URL, Prefer on every page, nextLink host check) -> fail-closed eligibility -> outlook_meetings in UTC; token seam; sync windows (wave 1)
+- [ ] 03-05-PLAN.md — Ghost layer: overlay slot, reserved right-hand Outlook lane (D-23, keeps D-01 reachable), pointer guard, DST layout and lanes, totals unchanged (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 03-02-PLAN.md — Silent token refresh under row lock; reconnect vs unavailable classification; Graph 401/403 retry; reconnect_required_at / graph_backoff_until columns (wave 2)
+- [ ] 03-02-PLAN.md — Read and sync endpoints (cache-only GET /m365/meetings, POST sync), owner scoping, validation, off switch; eligibility and Graph-client contract tests (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 03-03-PLAN.md — Sync resilience: Retry-After back-off, reuse window, forced minimum interval, per-user lock, outages and no-mailbox statuses, reconcile only complete traversals, scrub ineligible rows (wave 3)
-- [ ] 03-04-PLAN.md — Ghost blocks in the calendar: calendar shared prop, debounced single-flight composable, ghost layer through ledgered slots, pointer guard, DST layout, Playwright test hook (wave 3)
+- [ ] 03-03-PLAN.md — Silent token refresh under row lock; reconnect vs unavailable classification; Graph 401/403 retry; reconnect_required_at / graph_backoff_until columns (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 03-05-PLAN.md — Toolbar controls: Sync Outlook with cooldown, quiet status line, Connect / Reconnect returning to the calendar (allow-listed return target) (wave 4)
+- [ ] 03-04-PLAN.md — Sync resilience: Retry-After back-off, reuse window, forced minimum interval, per-user lock, outages and no-mailbox statuses, reconcile only complete traversals, scrub ineligible rows (wave 4)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 03-06-PLAN.md — Ghost detail panel (extendable), per-occurrence Dismiss / Restore, "Show dismissed meetings" in calendar settings (wave 5)
+- [ ] 03-06-PLAN.md — Calendar data wiring: calendar shared prop and full copy, debounced single-flight composable, Calendar.vue slot + lane wiring, test hook, Playwright proof (wave 5)
 
 **Wave 6** *(blocked on Wave 5 completion)*
-- [ ] 03-07-PLAN.md — Privacy: impersonation guard at the Graph choke point (D-22), disconnect purge (D-21), owner-only role matrix, leak matrix, time entries untouched (wave 6)
+- [ ] 03-07-PLAN.md — Toolbar Sync control: Sync Outlook with cooldown and back-off, quiet status line, responsive collapse (wave 6)
 
 **Wave 7** *(blocked on Wave 6 completion)*
-- [ ] 03-08-PLAN.md — Release: all ten workflows green, operator docs, ledger check, sha-pinned compose, owner-approved Dokploy deploy, production UAT (wave 7, owner checkpoint)
+- [ ] 03-08-PLAN.md — Connect / Reconnect in the calendar returning through an allow-listed return target, notice on the calendar (wave 7)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 03-09-PLAN.md — Ghost detail panel (extendable) and per-occurrence Dismiss; dismiss/restore/include_dismissed backend (wave 8)
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [ ] 03-10-PLAN.md — "Show dismissed meetings" in calendar settings (ledgered slot chain), dismissed variant, Restore (wave 9)
+- [ ] 03-11-PLAN.md — Privacy: impersonation guard at the Graph choke point (D-22), disconnect purge (D-21), owner-only role matrix, reports unchanged by sync, leak matrix (wave 9)
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [ ] 03-12-PLAN.md — Release: all ten workflows green, operator docs, ledger check, sha-pinned compose, owner-approved Dokploy deploy, production UAT (wave 10, owner checkpoint)
+
 **Research focus**: real `calendarView` response shapes vs the Phase 1 fixtures; `Retry-After` behaviour on Outlook 429s; pointer handling in `useSlotSelection.ts` / `useEventDrag.ts` so ghost blocks stay non-interactive
 **UI hint**: yes
 
@@ -227,7 +238,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 |-------|----------------|--------|-----------|
 | 1. Tenant Setup & Outlook Spike | 8/8 | Complete    | 2026-11-05 |
 | 2. Sign in with Microsoft | 11/11 | Complete    | 2026-11-05 |
-| 3. Outlook Meetings in the Calendar | 0/8 | Planned | - |
+| 3. Outlook Meetings in the Calendar | 0/12 | Planned | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |

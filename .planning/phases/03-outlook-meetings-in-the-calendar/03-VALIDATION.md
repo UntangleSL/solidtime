@@ -56,32 +56,39 @@ Filled by the planner per task (each task's `<verify><automated>`). Requirement 
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
-### Per-task map (filled by the planner, 2026-11-05)
+### Per-task map (filled by the planner, 2026-11-05; revised after plan-check iteration 1: 12 plans)
 
 | Plan / Task | Requirements | Local automated verify | CI gate | Test files created / extended |
 |-------------|--------------|------------------------|---------|-------------------------------|
-| 03-01 T1 (tracer) | SYNC-01, SYNC-03, SYNC-04 | Pint + PHPStan (`$PHP_BIN`) | at T3 | OutlookMeetingSyncTest, Support/InteractsWithGraphFixtures |
-| 03-01 T2 | SYNC-03, SYNC-04 | Pint + PHPStan | at T3 | OutlookMeetingEligibilityTest, GraphCalendarClientTest |
-| 03-01 T3 | SYNC-01, CAL-03 | Pint + PHPStan | Gate A + Gate B = 12 | OutlookMeetingEndpointTest |
-| 03-02 T1 (tracer) | SEC-02 | Pint + PHPStan | at T2 | MicrosoftTokenRefreshTest |
-| 03-02 T2 | SEC-02 | Pint + PHPStan | Gate A + Gate B = 12 | MicrosoftTokenRefreshTest |
-| 03-03 T1 (tracer) | SYNC-05 | Pint + PHPStan | at T3 | OutlookSyncResilienceTest |
-| 03-03 T2 | SYNC-02 | Pint + PHPStan | at T3 | OutlookSyncResilienceTest |
-| 03-03 T3 | SYNC-03, SYNC-05 | Pint + PHPStan | Gate A + Gate B = 12 | OutlookSyncResilienceTest, GraphCalendarClientTest |
-| 03-04 T1 (tracer) | CAL-01, CAL-02, SYNC-01 | `npx vitest run resources/js/m365 && npm run type-check`; Pint + PHPStan | at T3 | OutlookCalendarPropTest, OutlookGhostLayer.test.ts |
-| 03-04 T2 | SYNC-04, CAL-01 | `npx vitest run resources/js/m365/calendar` + eslint + prettier | at T3 | ghostLayout.test.ts, OutlookGhostLayer.test.ts |
-| 03-04 T3 | SYNC-02, CAL-02 | Gate F + `npx playwright test --list e2e/outlook-ghosts.spec.ts` | 9 workflows (incl. Playwright) + Gate B = 12 | useOutlookMeetings.test.ts, e2e/outlook-ghosts.spec.ts |
-| 03-05 T1 (tracer) | SYNC-02 | vitest + vue-tsc; Pint + PHPStan | at T3 | OutlookCalendarControls.test.ts, OutlookCalendarPropTest |
-| 03-05 T2 | SYNC-05, SEC-02 | vitest + eslint + prettier | at T3 | OutlookCalendarControls.test.ts, useOutlookMeetings.test.ts |
-| 03-05 T3 | SEC-02 | Gate F | 9 workflows + Gate B = 15 | MicrosoftCalendarConnectTest |
-| 03-06 T1 (tracer) | CAL-04 | vitest + vue-tsc; Pint + PHPStan | at T3 | OutlookMeetingDismissTest, OutlookGhostDetail.test.ts |
-| 03-06 T2 | CAL-04 | vitest (m365 + FullCalendar) + vue-tsc + eslint + prettier | at T3 | useOutlookMeetings.test.ts, OutlookGhostLayer.test.ts |
-| 03-06 T3 | CAL-04 | Gate F + Playwright listing | 9 workflows + Gate B = 12 | OutlookGhostDetail.test.ts, e2e/outlook-ghosts.spec.ts |
-| 03-07 T1 (tracer) | CAL-03 | Pint + PHPStan | at T2 | OutlookMeetingPrivacyTest |
-| 03-07 T2 | CAL-03 | Pint + PHPStan | Gate A + Gate B = 15 | OutlookMeetingPrivacyTest |
-| 03-08 T1 (tracer) | all | docs secrets gate | 10 workflows + Microsoft365 PASS >= 75 | none |
-| 03-08 T2 (owner checkpoint) | all | public curl checks (health 200, login prop, /m365/meetings 401) | n/a | none |
-| 03-08 T3 | SYNC-04, SEC-02, CAL-03 | docs runbook + secrets gates; human-checks (end-of-phase) | n/a | none |
+| 03-01 T1 (tracer) | SYNC-01, SYNC-03, SYNC-04 | Pint + PHPStan (`$PHP_BIN`) | at T2 | OutlookMeetingSyncTest, Support/InteractsWithGraphFixtures |
+| 03-01 T2 | SYNC-02 (not_connected), SYNC-04 | Pint + PHPStan | Gate A + Gate B = 3 | OutlookMeetingSyncTest |
+| 03-02 T1 (tracer) | SYNC-01 | Pint + PHPStan | at T3 | OutlookMeetingEndpointTest |
+| 03-02 T2 | SYNC-03, SYNC-04 | Pint + PHPStan | at T3 | OutlookMeetingEligibilityTest, GraphCalendarClientTest |
+| 03-02 T3 | SYNC-01, CAL-03 | Pint + PHPStan | Gate A + Gate B = 12 | OutlookMeetingEndpointTest |
+| 03-03 T1 (tracer) | SEC-02 | Pint + PHPStan | at T2 | MicrosoftTokenRefreshTest |
+| 03-03 T2 | SEC-02 | Pint + PHPStan | Gate A + Gate B = 12 | MicrosoftTokenRefreshTest |
+| 03-04 T1 (tracer) | SYNC-05 | Pint + PHPStan | at T3 | OutlookSyncResilienceTest |
+| 03-04 T2 | SYNC-02 | Pint + PHPStan | at T3 | OutlookSyncResilienceTest |
+| 03-04 T3 | SYNC-03, SYNC-05 | Pint + PHPStan | Gate A + Gate B = 12 | OutlookSyncResilienceTest, GraphCalendarClientTest |
+| 03-05 T1 (tracer) | CAL-02 | `npx vitest run resources/js/m365 && npm run type-check` | at T2 | OutlookGhostLayer.test.ts |
+| 03-05 T2 | CAL-01, CAL-02, SYNC-04 (D-01/D-23 geometry, totals) | Gate F | 9 workflows (incl. Playwright regression) | ghostLayout.test.ts, OutlookGhostLayer.test.ts |
+| 03-06 T1 (tracer) | SYNC-01 | vitest + vue-tsc; Pint + PHPStan | at T3 | OutlookCalendarPropTest |
+| 03-06 T2 | SYNC-02 | vitest + eslint + prettier | at T3 | useOutlookMeetings.test.ts |
+| 03-06 T3 | CAL-01, CAL-02 (D-01 in the browser) | Playwright listing + eslint + prettier | 9 workflows + Gate B = 12 | e2e/outlook-ghosts.spec.ts |
+| 03-07 T1 (tracer) | SYNC-02 | vitest + vue-tsc | at T2 | OutlookCalendarControls.test.ts |
+| 03-07 T2 | SYNC-05 | Gate F | 9 workflows | OutlookCalendarControls.test.ts, useOutlookMeetings.test.ts |
+| 03-08 T1 (tracer) | SEC-02 | vitest + vue-tsc; Pint + PHPStan | at T2 | MicrosoftCalendarConnectTest, OutlookCalendarControls.test.ts |
+| 03-08 T2 | SEC-02 | Gate F | 9 workflows + Gate B = 12 | MicrosoftCalendarConnectTest, OutlookCalendarPropTest |
+| 03-09 T1 (tracer) | CAL-04 | vitest + vue-tsc; Pint + PHPStan | at T3 | OutlookMeetingDismissTest, OutlookGhostDetail.test.ts |
+| 03-09 T2 | CAL-04 | Pint + PHPStan | at T3 | OutlookMeetingDismissTest |
+| 03-09 T3 | CAL-04 | Gate F + Playwright listing | 9 workflows + Gate B = 6 | OutlookGhostDetail.test.ts, OutlookGhostLayer.test.ts, useOutlookMeetings.test.ts, e2e/outlook-ghosts.spec.ts |
+| 03-10 T1 (tracer) | CAL-04 | vitest (m365 + FullCalendar) + vue-tsc | at T2 | OutlookDismissedSetting.test.ts, useOutlookMeetings.test.ts |
+| 03-10 T2 | CAL-04 | Gate F | 9 workflows | OutlookGhostLayer.test.ts, useOutlookMeetings.test.ts |
+| 03-11 T1 (tracer) | CAL-03 | Pint + PHPStan | at T2 | OutlookMeetingPrivacyTest |
+| 03-11 T2 | CAL-03, CAL-01 (reports unchanged) | Pint + PHPStan | Gate A + Gate B = 15 | OutlookMeetingPrivacyTest |
+| 03-12 T1 (tracer) | all | docs secrets gate | 10 workflows + Microsoft365 PASS >= 75 | none |
+| 03-12 T2 (owner checkpoint) | all | public curl checks (health 200, login prop, /m365/meetings 401) | n/a | none |
+| 03-12 T3 | SYNC-04, SEC-02, CAL-03 | docs runbook + secrets gates; human-checks (end-of-phase) | n/a | none |
 
 Sampling continuity: every task has an automated verify; no three consecutive tasks rely on CI only (each backend task runs Pint + PHPStan locally, each frontend task runs Vitest locally).
 

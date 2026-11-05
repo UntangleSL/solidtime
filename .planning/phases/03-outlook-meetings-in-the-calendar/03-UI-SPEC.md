@@ -68,7 +68,7 @@ Declared values (multiples of 4, Tailwind units in parentheses):
 Exceptions:
 - Ghost block minimum height is 16px (a meeting shorter than 15 minutes is still drawn and clickable). The 44px touch-target rule does not apply inside a time grid; this matches existing time entries. Keyboard access (Tab, Enter, Space) is the equivalent path.
 - 1px borders and the 2px focus ring are inherited from the existing system; they are not declared spacing values.
-- Ghost horizontal placement declares NO spacing value of its own (route taken for the 2px issue: inherited geometry, not a new token). The ghost layer must align edge-to-edge with the existing time entries, so it reuses the core event container geometry verbatim: the same horizontal offsets that `CalendarDayColumn.vue` applies to its events container (the default offset, plus `left: 8px` or `left: 204px` when activity status is on in week or day view). The slot content copies these offsets from slot props because the scoped CSS does not reach slot content. A 4px substitute would misalign ghosts against entries by 2px per side, so none is used. Planner: copy the class and offset values from `CalendarDayColumn.vue` rather than writing new ones.
+- Ghost horizontal placement (revised 2026-11-05, D-23, so D-01 holds): ghosts render in a reserved right-hand "Outlook lane" of every day column that has at least one ghost. Lane width: `max(16px, 30%)` of the column in week view, `min(240px, 25%)` in day view; the lane is flush with the core 2px right edge (`right-0.5`). On those days the core events container is inset on the right by the lane width plus 4px (2px default edge + 2px gap) through an optional core prop, so entries and ghosts never overlap. Days without ghosts keep the upstream geometry unchanged. The activity-status left offsets (`left: 8px` / `left: 204px`) keep applying to the entries only; the ghost lane is on the opposite side and needs none of them.
 - Popover width is 320px (`w-80`).
 
 ---
@@ -130,7 +130,7 @@ Other color rules:
 ### 1. Ghost blocks (week and day views)
 
 Rendering layer
-- Rendered through the `overlay` slot of `CalendarDayColumn`, as the **first child** of the column root, so every real `.fc-event`, the selection rectangle (`z-[2]`), the now indicator (`z-50`) and the activity boxes (`z-10`) paint above it.
+- Rendered through the `overlay` slot of `CalendarDayColumn`, as the **first child** of the column root, inside the reserved Outlook lane (see Spacing exceptions, D-23). Entries never overlap the lane; the selection rectangle (`z-[2]`), the now indicator (`z-50`) and the activity boxes (`z-10`) still paint above it.
 - The layer container is `pointer-events-none`; each ghost is `pointer-events-auto`.
 - Each ghost carries `data-calendar-overlay`, class `m365-ghost`, `role="button"`, `tabindex="0"`, `aria-haspopup="dialog"`, `aria-expanded` bound to the popover state, `select-none`. It carries NONE of: `.fc-event`, `data-event-id`, `.fc-timegrid-col`, `touch-none`, resizer children. The ghost is never draggable or resizable, never starts a slot selection (the core `onSlotPointerDown` ignores `[data-calendar-overlay]`), and clicking it only toggles its popover.
 - Layer container: `role="group"` with `aria-label="Outlook meetings, {weekday} {date}"`, rendered only when that day has at least one ghost.
@@ -138,7 +138,7 @@ Rendering layer
 Geometry
 - Top and height from the same `minutesToPixels` the entries use; clipped to the day (`dayStart` to `dayEnd`) and to the visible `startHour` to `endHour`. A ghost that continues across midnight gets square corners on the clipped side (`rounded-t-none` / `rounded-b-none`), like entries.
 - Minimum height 16px.
-- Concurrent ghosts: greedy lane assignment, width `100% / lanes`, capped at 3 lanes; a 4th or later overlapping ghost shares lane 3 and stacks on top in start-time order (known limitation, see UI Considerations).
+- Concurrent ghosts: greedy lane assignment inside the Outlook lane, width `100% / lanes` of the lane, capped at 3 lanes; a 4th or later overlapping ghost shares lane 3 and stacks on top in start-time order (known limitation, see UI Considerations).
 - Rounded `rounded-sm`, no shadow (entries use `shadow-card`; the absence of elevation is part of the "not a real entry" cue).
 
 Content by available height (all text truncates with ellipsis, single line each)
@@ -287,7 +287,7 @@ Copy is delivered from the server in the shared prop `calendar.labels` (keys und
 
 ## UI Considerations
 
-Applicable state considerations resolved: 12 covered, 2 backstop, 0 unresolved.
+Applicable state considerations resolved: 13 covered, 1 backstop, 0 unresolved (revised 2026-11-05: the covered-ghost row moved from backstop to covered under D-23).
 
 | Category | Element(s) | Status | Resolution / Reason |
 |----------|------------|--------|---------------------|
@@ -303,7 +303,7 @@ Applicable state considerations resolved: 12 covered, 2 backstop, 0 unresolved.
 | populated | Overnight meetings and DST days | ✅ covered | Clipped per day with square corners on the clipped side; positions come from the existing `minutesToPixels` and the user's timezone via `getLocalizedDayJs` |
 | zero-one-many | Connection state variants | ✅ covered | Off or impersonating renders nothing; not connected, reconnect, connected are specified in the visibility table |
 | overflow | More than 3 concurrent ghosts in one slot | 🧪 backstop | Lanes capped at 3; extras stack in lane 3 by start time and stay reachable by keyboard. Held-out visual test with 5 overlapping fixtures |
-| overflow | Ghost fully covered by a logged entry | 🧪 backstop | By design (D-01): the entry paints above the ghost and hides it; if UAT disagrees, add a reserved right-hand lane using the same inset mechanism as `has-activity-status`. Visual test with an exactly overlapping entry |
+| overflow | Ghost fully covered by a logged entry | ✅ covered | A ghost that exactly overlaps a logged entry stays fully visible and clickable in the reserved right-hand Outlook lane while the entry stays draggable, resizable and editable (D-01, D-23): Vitest geometry test and Playwright click test with an exactly overlapping entry |
 | overflow | Narrow toolbar width | ✅ covered | The responsive collapse table fixes behavior at 1024px, 768px and below: status text collapses first (tooltip plus live region), then button labels (icon-only with aria-label and tooltip) |
 
 ---
