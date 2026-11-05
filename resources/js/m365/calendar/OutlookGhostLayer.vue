@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { computed, inject, type ComputedRef } from 'vue';
+import { CalendarDays, Video } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
 import { formatTime, getLocalizedDayJsFromMinutes } from '@/packages/ui/src/utils/time';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 import { fillLabel } from './labels';
-import { ghostLaneWidth, layoutGhostsForDay, type GhostVisibleSettings } from './ghostLayout';
+import {
+    ghostLaneWidth,
+    layoutGhostsForDay,
+    type GhostBox,
+    type GhostVisibleSettings,
+} from './ghostLayout';
 
 // Ghost blocks for one day column, rendered through the core `overlay` slot of CalendarDayColumn
 // inside the reserved Outlook lane. Ghosts are inert for every time-entry interaction: they carry
@@ -41,6 +47,29 @@ const layerLabel = computed(() => {
     return fillLabel(props.labels.layer_label, { weekday, date, day: `${weekday} ${date}` });
 });
 
+// UI-SPEC "Content by available height": under 24px subject only; 24px to 39px adds the time
+// inline in day view; 40px and over adds a time line (and the organizer in day view).
+const TIME_INLINE_MIN_HEIGHT = 24;
+const TIME_LINE_MIN_HEIGHT = 40;
+
+function timeRangeOf(meeting: OutlookMeeting): string {
+    return `${formatTime(meeting.start, timeFormat.value)} – ${formatTime(meeting.end, timeFormat.value)}`;
+}
+
+function showsInlineTime(box: GhostBox): boolean {
+    return (
+        props.isDayView && box.height >= TIME_INLINE_MIN_HEIGHT && box.height < TIME_LINE_MIN_HEIGHT
+    );
+}
+
+function showsTimeLine(box: GhostBox): boolean {
+    return box.height >= TIME_LINE_MIN_HEIGHT;
+}
+
+function showsOrganizer(box: GhostBox): boolean {
+    return props.isDayView && box.height >= TIME_LINE_MIN_HEIGHT && !!box.meeting.organizer_name;
+}
+
 function subjectOf(meeting: OutlookMeeting): string {
     return meeting.subject?.trim() ? meeting.subject : props.labels.no_subject;
 }
@@ -64,15 +93,49 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
         <div
             v-for="box in boxes"
             :key="box.meeting.id"
-            class="m365-ghost absolute pointer-events-auto select-none cursor-pointer rounded-sm border border-dashed border-text-tertiary"
+            class="m365-ghost absolute pointer-events-auto select-none cursor-pointer rounded-sm border border-dashed border-text-tertiary overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            :class="{
+                'rounded-t-none': box.isClippedStart,
+                'rounded-b-none': box.isClippedEnd,
+            }"
             data-calendar-overlay
             role="button"
             tabindex="0"
             :aria-label="ariaLabelOf(box.meeting)"
-            :style="{ top: box.top + 'px', height: box.height + 'px' }">
-            <span class="block px-1 text-2xs font-semibold text-text-secondary truncate">
-                {{ subjectOf(box.meeting) }}
-            </span>
+            :style="{
+                top: box.top + 'px',
+                height: box.height + 'px',
+                left: (box.lane * 100) / box.lanes + '%',
+                width: 100 / box.lanes + '%',
+            }">
+            <div class="flex h-full items-start gap-1 px-1 py-px text-2xs leading-tight">
+                <CalendarDays
+                    class="mt-px h-3 w-3 shrink-0 text-text-tertiary"
+                    aria-hidden="true" />
+                <div class="min-w-0 flex-1">
+                    <div class="flex items-baseline gap-1">
+                        <span class="truncate font-semibold text-text-secondary">
+                            {{ subjectOf(box.meeting) }}
+                        </span>
+                        <span
+                            v-if="showsInlineTime(box)"
+                            class="truncate text-text-tertiary"
+                            data-ghost-time-inline>
+                            {{ timeRangeOf(box.meeting) }}
+                        </span>
+                    </div>
+                    <div v-if="showsTimeLine(box)" class="truncate text-text-tertiary">
+                        {{ timeRangeOf(box.meeting) }}
+                    </div>
+                    <div v-if="showsOrganizer(box)" class="truncate text-text-tertiary">
+                        {{ box.meeting.organizer_name }}
+                    </div>
+                </div>
+                <Video
+                    v-if="box.meeting.is_online_meeting"
+                    class="mt-px h-3 w-3 shrink-0 text-text-tertiary"
+                    aria-hidden="true" />
+            </div>
         </div>
     </div>
 </template>
