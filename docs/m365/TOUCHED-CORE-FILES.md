@@ -1,4 +1,4 @@
-# Touched core files (Phase 2: Sign in with Microsoft)
+# Touched core files (Phase 2: Sign in with Microsoft, Phase 3: Outlook meetings)
 
 Ledger for upstream merges. The Phase 7 merge rehearsal (and every later `git merge upstream/main`)
 checks these files first. Everything else the fork adds lives in fork-owned paths (second table).
@@ -15,6 +15,9 @@ checks these files first. Everything else the fork adds lives in fork-owned path
 | `tests/Feature/AuthenticationTest.php` | Two tests for the `canRegister` login prop (register link hidden unless registration is on). | post-02 (2026-11-04) | Keep upstream's file and re-add the two test methods. |
 | `resources/js/Pages/Profile/Show.vue` | One import and one element after the two-factor section (the Microsoft account card). | 02-10 | Re-apply the import and the element after upstream's two-factor section. |
 | `.env.example` | Appended block with the seven `SOLIDTIME_MICROSOFT_*` names. | 02-09 | Keep the block at the end of the file. |
+| `resources/js/packages/ui/src/FullCalendar/CalendarDayColumn.vue` | A named `overlay` slot rendered as the first child of the column root and an optional `overlayLaneWidth` prop that, only when set, insets the events container on the right by the lane width plus 4px (layout decision D-23). Days without overlay content render exactly as upstream. | 03-05 | Re-apply the slot, the optional prop and the conditional right inset after taking upstream's file. |
+| `resources/js/packages/ui/src/FullCalendar/TimeEntryCalendar.vue` | An optional `dayOverlayLane(dayStr, isDayView)` prop forwarded to each day column as `overlayLaneWidth`, and a `day-overlay` slot forwarded as the column's `overlay` slot (with `minutesToPixels` and `settings`). | 03-05 | Re-apply the prop, the `overlay-lane-width` binding and the forwarded slot template after taking upstream's file. |
+| `resources/js/packages/ui/src/FullCalendar/useSlotSelection.ts` | One selector extended in `onSlotPointerDown` (`.fc-event, [data-calendar-overlay]`) so a pointerdown on an overlay block never starts a selection. | 03-05 | Re-apply the extended selector after taking upstream's file. |
 
 ## New files inside core directories
 
@@ -32,6 +35,7 @@ These paths do not exist upstream, so they never conflict.
 | --- | --- |
 | `app/Microsoft365/` | Service provider, routes, migrations, models, auth classes, console command. |
 | `resources/js/m365/` | Vue components for the sign-in button and the profile card. |
+| `resources/js/m365/calendar/` | Outlook ghost layer for the calendar: layout helper, label helper, ghost component and their tests. |
 | `tests/Feature/Microsoft365/` | Feature tests. |
 | `tests/Unit/Microsoft365/` | Unit tests. |
 | `e2e/microsoft-signin.spec.ts` | Browser test of the sign-in page. |

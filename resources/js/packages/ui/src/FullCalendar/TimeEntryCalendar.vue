@@ -79,6 +79,9 @@ const props = defineProps<{
     organizationBillableRate: number | null;
     // Local date (YYYY-MM-DD) to open the calendar on, e.g. from a "Fix in calendar" deep link
     initialDate?: string | null;
+    // Fork seam (D-23): width of the right-hand lane a `day-overlay` slot occupies on a given day,
+    // or null when the day has no overlay content. Days without a lane render exactly as upstream.
+    dayOverlayLane?: (dayStr: string, isDayView: boolean) => string | null;
 
     createTimeEntry: (
         entry: Omit<TimeEntry, 'id' | 'organization_id' | 'user_id'>
@@ -671,6 +674,12 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                                             :get-activity-text="getActivityText"
                                             :get-top-activity="getTopActivity"
                                             :is-day-view="activeView === 'timeGridDay'"
+                                            :overlay-lane-width="
+                                                dayOverlayLane?.(
+                                                    day.format('YYYY-MM-DD'),
+                                                    activeView === 'timeGridDay'
+                                                ) ?? null
+                                            "
                                             :show-selection="
                                                 isSelecting || showCreateTimeEntryModal
                                             "
@@ -709,7 +718,17 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                                                         edge,
                                                         day.format('YYYY-MM-DD')
                                                     )
-                                            " />
+                                            ">
+                                            <template
+                                                v-if="$slots['day-overlay']"
+                                                #overlay="overlay">
+                                                <slot
+                                                    name="day-overlay"
+                                                    v-bind="overlay"
+                                                    :minutes-to-pixels="minutesToPixels"
+                                                    :settings="calendarSettings" />
+                                            </template>
+                                        </CalendarDayColumn>
                                     </div>
                                 </div>
                             </div>

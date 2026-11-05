@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import FullCalendarEventContent from './FullCalendarEventContent.vue';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '..';
 import type { DayEvent, ActivityBox } from './calendarTypes';
@@ -37,6 +38,10 @@ const props = defineProps<{
     getTopActivity: (box: ActivityBox) => WindowActivityInPeriod | null;
     isDayView: boolean;
 
+    // Fork seam (D-23): width of a reserved right-hand lane that the `overlay` slot content
+    // occupies. When set, the events container is inset on the right so entries never overlap it.
+    overlayLaneWidth?: string | null;
+
     // Selection
     showSelection: boolean;
     isSelectionStart: boolean;
@@ -47,6 +52,15 @@ const props = defineProps<{
     selectionEndTop: number;
     selectionEndHeight: number;
 }>();
+
+// Everything an overlay (fork-owned) needs to place itself inside this column.
+const overlaySlotProps = computed(() => ({
+    dayStr: props.dayStr,
+    isDayView: props.isDayView,
+    hasActivityStatus: props.hasActivityStatus,
+    totalGridHeight: props.totalGridHeight,
+    overlayLaneWidth: props.overlayLaneWidth ?? null,
+}));
 
 function isUncoveredByEvents(abox: ActivityBox): boolean {
     return !props.dayEvents.some((de) => {
@@ -80,12 +94,16 @@ const emit = defineEmits<{
         }"
         :data-date="dayStr"
         :style="{ height: totalGridHeight + 'px' }">
+        <slot name="overlay" v-bind="overlaySlotProps" />
         <div
             class="absolute inset-y-0 left-0.5 right-0.5"
             :class="{
                 'fc-events-inset': hasActivityStatus && !isDayView,
                 'fc-events-inset-expanded': hasActivityStatus && isDayView,
-            }">
+            }"
+            :style="
+                overlayLaneWidth ? { right: 'calc(' + overlayLaneWidth + ' + 4px)' } : undefined
+            ">
             <div
                 v-for="dayEvent in dayEvents"
                 :key="dayEvent.event.id"

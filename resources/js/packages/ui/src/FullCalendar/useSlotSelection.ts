@@ -29,7 +29,7 @@ export function useSlotSelection(params: {
     function onSlotPointerDown(e: PointerEvent) {
         if (e.button !== 0) return;
         const target = e.target as HTMLElement;
-        if (target.closest('.fc-event')) return;
+        if (target.closest('.fc-event, [data-calendar-overlay]')) return;
 
         const dateStr = params.getDayFromClientX(e.clientX);
         if (!dateStr) return;
