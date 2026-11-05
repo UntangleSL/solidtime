@@ -6,6 +6,9 @@ namespace Tests\Feature\Microsoft365\Support;
 
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Models\User;
+use GuzzleHttp\Promise\PromiseInterface;
+use Illuminate\Http\Client\Response;
+use Illuminate\Http\Client\ResponseSequence;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Http;
@@ -75,6 +78,46 @@ trait InteractsWithGraphFixtures
         ]);
 
         return $pages;
+    }
+
+    /**
+     * Fakes the Entra token endpoint of any tenant, together with the Graph calendarView pages when
+     * given. Http::fake replaces earlier fakes, so tests that need both set the map once through this.
+     *
+     * @param  array<string, mixed>|int  $response  JSON body, or an HTTP status for an empty body
+     * @param  ResponseSequence|null  $graph  answers for calendarView, see graphSequence()
+     */
+    protected function fakeTokenEndpoint(array|int $response, int $status = 200, ?ResponseSequence $graph = null): void
+    {
+        $tokenAnswer = is_int($response)
+            ? Http::response([], $response)
+            : Http::response($response, $status);
+
+        $map = ['https://login.microsoftonline.com/*/oauth2/v2.0/token' => $tokenAnswer];
+        if ($graph !== null) {
+            $map['https://graph.microsoft.com/v1.0/me/calendarView*'] = $graph;
+        }
+        Http::fake($map);
+    }
+
+    /**
+     * Graph answers for the calendarView endpoint: the given first answers, then the pages of a round.
+     * Use with fakeTokenEndpoint() so that one Http::fake call holds both endpoints.
+     *
+     * @param  list<PromiseInterface|Response>  $first
+     */
+    protected function graphSequence(array $first, string $round = 'A'): ResponseSequence
+    {
+        Config::set('microsoft365.graph.max_pages', 30);
+        $sequence = Http::sequence();
+        foreach ($first as $answer) {
+            $sequence->push($answer);
+        }
+        foreach ($this->graphPages($round) as $page) {
+            $sequence->push($page);
+        }
+
+        return $sequence;
     }
 
     protected function connectedAccount(User $user, bool $expired = false): MicrosoftAccount

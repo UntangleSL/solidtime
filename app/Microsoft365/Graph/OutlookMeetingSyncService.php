@@ -31,8 +31,12 @@ final class OutlookMeetingSyncService
     public function sync(User $user, CarbonImmutable $start, CarbonImmutable $end, bool $force = false): SyncOutcome
     {
         $account = MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->first();
-        if ($account === null || ! $account->isConnected()) {
+        $state = $account?->calendarAccessState() ?? 'not_connected';
+        if ($account === null || $state === 'not_connected') {
             return new SyncOutcome(SyncStatus::NotConnected);
+        }
+        if ($state === 'reconnect') {
+            return new SyncOutcome(SyncStatus::Reconnect);
         }
 
         $syncStartedAt = CarbonImmutable::now('UTC');

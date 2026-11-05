@@ -26,6 +26,8 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $access_token_expires_at
  * @property array<int, string>|null $scopes
  * @property Carbon|null $disconnected_at
+ * @property Carbon|null $reconnect_required_at
+ * @property Carbon|null $graph_backoff_until
  * @property Carbon|null $last_login_at
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
@@ -61,6 +63,8 @@ class MicrosoftAccount extends Model
         'access_token_expires_at' => 'datetime',
         'scopes' => 'array',
         'disconnected_at' => 'datetime',
+        'reconnect_required_at' => 'datetime',
+        'graph_backoff_until' => 'datetime',
         'last_login_at' => 'datetime',
     ];
 
@@ -71,6 +75,49 @@ class MicrosoftAccount extends Model
     public function isConnected(): bool
     {
         return $this->refresh_token !== null && $this->disconnected_at === null;
+    }
+
+    /**
+     * The user has to sign in with Microsoft again: a refresh or a Graph call proved it, or the stored
+     * scopes (when known) do not include calendar access. Empty or missing scopes never block.
+     */
+    public function needsReconnect(): bool
+    {
+        if ($this->disconnected_at !== null) {
+            return false;
+        }
+        if ($this->reconnect_required_at !== null) {
+            return true;
+        }
+
+        $scopes = $this->scopes;
+        if (! is_array($scopes) || $scopes === []) {
+            return false;
+        }
+        foreach ($scopes as $scope) {
+            if (strcasecmp($scope, 'Calendars.Read') === 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Single source for how the calendar treats this account.
+     *
+     * @return 'connected'|'reconnect'|'not_connected'
+     */
+    public function calendarAccessState(): string
+    {
+        if ($this->disconnected_at !== null) {
+            return 'not_connected';
+        }
+        if ($this->needsReconnect()) {
+            return 'reconnect';
+        }
+
+        return $this->isConnected() ? 'connected' : 'not_connected';
     }
 
     /**
