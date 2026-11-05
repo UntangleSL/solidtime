@@ -38,8 +38,8 @@
 
 ### Meeting Suggestions in Calendar (CAL)
 
-- [ ] **CAL-01**: Eligible meetings render in the calendar week/day views as visually distinct "ghost" suggestion blocks that are not counted in tracked time, totals, reports or exports
-- [ ] **CAL-02**: Ghost blocks cannot be dragged/resized and do not interfere with creating or editing normal time entries in the calendar
+- [x] **CAL-01**: Eligible meetings render in the calendar week/day views as visually distinct "ghost" suggestion blocks that are not counted in tracked time, totals, reports or exports
+- [x] **CAL-02**: Ghost blocks cannot be dragged/resized and do not interfere with creating or editing normal time entries in the calendar
 - [ ] **CAL-03**: Meetings are visible only to their owner (never to other members or managers) until converted to a time entry
 - [ ] **CAL-04**: User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it
 
@@ -133,8 +133,8 @@ High level, added by the owner 2026-11-05; details to be refined in Phase 8 disc
 | SYNC-03 | Phase 3 | Complete |
 | SYNC-04 | Phase 3 | Complete |
 | SYNC-05 | Phase 3 | Pending |
-| CAL-01 | Phase 3 | Pending |
-| CAL-02 | Phase 3 | Pending |
+| CAL-01 | Phase 3 | Complete |
+| CAL-02 | Phase 3 | Complete |
 | CAL-03 | Phase 3 | Pending |
 | CAL-04 | Phase 3 | Pending |
 | ASGN-01 | Phase 4 | Pending |

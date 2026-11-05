@@ -130,7 +130,7 @@ Plans:
   4. User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it.
   5. When Graph is slow, down or throttled, the calendar keeps working and shows a non-blocking status (last synced time, retry later); expired access tokens refresh silently, and when refresh is impossible (revoked, expired, Conditional Access) the user sees a "Reconnect Microsoft" prompt instead of an error.
 
-**Plans**: 5/12 plans executed
+**Plans**: 6/12 plans executed
 
 Plans:
 **Wave 1**
@@ -147,7 +147,7 @@ Plans:
 - [x] 03-04-PLAN.md — Sync resilience: Retry-After back-off, reuse window, forced minimum interval, per-user lock, outages and no-mailbox statuses, reconcile only complete traversals, scrub ineligible rows (wave 4)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 03-06-PLAN.md — Calendar data wiring: calendar shared prop and full copy, debounced single-flight composable, Calendar.vue slot + lane wiring, test hook, Playwright proof (wave 5)
+- [x] 03-06-PLAN.md — Calendar data wiring: calendar shared prop and full copy, debounced single-flight composable, Calendar.vue slot + lane wiring, test hook, Playwright proof (wave 5)
 
 **Wave 6** *(blocked on Wave 5 completion)*
 - [ ] 03-07-PLAN.md — Toolbar Sync control: Sync Outlook with cooldown and back-off, quiet status line, responsive collapse (wave 6)
@@ -252,7 +252,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 |-------|----------------|--------|-----------|
 | 1. Tenant Setup & Outlook Spike | 8/8 | Complete    | 2026-11-05 |
 | 2. Sign in with Microsoft | 11/11 | Complete    | 2026-11-05 |
-| 3. Outlook Meetings in the Calendar | 5/12 | In Progress | - |
+| 3. Outlook Meetings in the Calendar | 6/12 | In Progress | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |
