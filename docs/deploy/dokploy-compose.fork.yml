@@ -7,7 +7,7 @@
 version: "3.8"
 services:
   app:
-    image: ghcr.io/untanglesl/solidtime:sha-dbb91cd
+    image: ghcr.io/untanglesl/solidtime:sha-d24a04b
     restart: unless-stopped
     user: 1000:1000
     expose:
@@ -78,7 +78,7 @@ services:
       timeout: 10s
       retries: 5
   scheduler:
-    image: ghcr.io/untanglesl/solidtime:sha-dbb91cd
+    image: ghcr.io/untanglesl/solidtime:sha-d24a04b
     restart: unless-stopped
     user: 1000:1000
     networks:
@@ -126,7 +126,7 @@ services:
       database:
         condition: service_healthy
   queue:
-    image: ghcr.io/untanglesl/solidtime:sha-dbb91cd
+    image: ghcr.io/untanglesl/solidtime:sha-d24a04b
     restart: unless-stopped
     user: 1000:1000
     networks:
