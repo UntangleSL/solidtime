@@ -112,7 +112,7 @@ trait InteractsWithGraphFixtures
         Config::set('microsoft365.graph.max_pages', 30);
         $sequence = Http::sequence();
         foreach ($first as $answer) {
-            $sequence->push($answer);
+            $sequence->pushResponse($answer);
         }
         foreach ($this->graphPages($round) as $page) {
             $sequence->push($page);
