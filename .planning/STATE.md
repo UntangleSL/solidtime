@@ -121,6 +121,10 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-09: m365:check and MicrosoftConfig::missingKeys report misconfiguration by variable name only; blank or non-GUID tenant/client id = integration off
 - [Phase 2]: 02-10: Microsoft 365 profile section renders only the server payload labels; Connect uses navigateTo (full-page), Disconnect uses router.delete with preserveScroll behind a DialogModal
 
+### Roadmap Evolution
+
+- Phase 8 added (2026-11-05): Project Hour Budgets & Profitability — scheduled renewing hour budgets on projects/contracts, time counts against them, profitability per month and contract
+
 ### Pending Todos
 
 None yet.

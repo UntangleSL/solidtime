@@ -2,7 +2,7 @@
 
 ## Overview
 
-This milestone extends Untangle's fork of solidtime so the team signs in with Microsoft 365 and finds their Outlook meetings already waiting as suggestions in the calendar, ready to become time entries in one click. The work moves from facts to features. First the Untangle M365 admin registers and consents the app, and real Outlook responses are recorded (Phase 1). Then come Microsoft sign-in with secure token storage (Phase 2), the read-only meeting overlay in the calendar (Phase 3), and turning meetings into time entries (Phase 4). Recurring-series rules (Phase 5) and out-of-sync detection (Phase 6) both build on the meeting-to-entry link and can run in parallel. Phase 7 finishes deletion cleanup, impersonation safety, the off switch and an upstream merge rehearsal before the whole team relies on the integration.
+This milestone extends Untangle's fork of solidtime so the team signs in with Microsoft 365 and finds their Outlook meetings already waiting as suggestions in the calendar, ready to become time entries in one click. The work moves from facts to features. First the Untangle M365 admin registers and consents the app, and real Outlook responses are recorded (Phase 1). Then come Microsoft sign-in with secure token storage (Phase 2), the read-only meeting overlay in the calendar (Phase 3), and turning meetings into time entries (Phase 4). Recurring-series rules (Phase 5) and out-of-sync detection (Phase 6) both build on the meeting-to-entry link and can run in parallel. Phase 7 finishes deletion cleanup, impersonation safety, the off switch and an upstream merge rehearsal before the whole team relies on the integration. Phase 8 adds scheduled hour budgets on projects and contracts, so reported time measures project profitability per month and per contract.
 
 ## Cross-Phase Constraints
 
@@ -30,6 +30,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 5: Recurring Meeting Rules** - "This series goes to project X" and "always ignore this series" rules with one-click confirmation and a rules manager
 - [ ] **Phase 6: Out-of-Sync Detection** - Logged meetings moved or cancelled in Outlook are flagged, never changed automatically; user chooses keep, adjust or delete
 - [ ] **Phase 7: Hardening & Release** - Complete deletion cleanup, impersonation guard, clean off switch, documented fork seams and upstream merge rehearsal
+- [ ] **Phase 8: Project Hour Budgets & Profitability** - Projects and contracts carry scheduled, renewing hour budgets; reported time counts against them; profitability per month and contract
 
 ## Phase Details
 
@@ -229,10 +230,23 @@ Plans:
 
 **Plans**: TBD
 
+### Phase 8: Project Hour Budgets & Profitability
+
+**Goal**: As Untangle management, I want to load projects and contracts with assigned hours that renew on a schedule, and have the team's reported time count against them, so that we can see project profitability per month and per contract.
+**Depends on**: Phase 7 (independent of the Microsoft 365 work; can be re-ordered earlier if needed)
+**Requirements**: BUDG-01, BUDG-02, BUDG-03, BUDG-04 (high level; refined in discuss-phase)
+**Success Criteria** (what must be TRUE):
+  1. A manager can give a project or contract an hour budget, either one-off or renewing on a schedule (for example monthly or weekly).
+  2. When a budget period starts, the new allocation is created automatically according to its schedule.
+  3. Time entries the team reports on that project count against the budget period they fall into, with no extra steps for the person logging time.
+  4. A manager can see, per month and per contract, hours budgeted versus hours consumed, as the basis for profitability.
+
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both depend only on Phase 4) → 7
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both depend only on Phase 4) → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -243,3 +257,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |
 | 7. Hardening & Release | 0/TBD | Not started | - |
+| 8. Project Hour Budgets & Profitability | 0/TBD | Not started | - |
+

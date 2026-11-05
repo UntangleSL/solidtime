@@ -71,6 +71,15 @@
 - [ ] **OPS-02**: The integration is disabled cleanly (no login button, no calendar overlay) when M365 env vars are not set
 - [ ] **OPS-03**: Fork code is isolated in its own module with a documented list of touched core files, and an upstream solidtime merge can be performed without conflicts beyond that list
 
+### Project Hour Budgets (BUDG)
+
+High level, added by the owner 2026-11-05; details to be refined in Phase 8 discuss-phase.
+
+- [ ] **BUDG-01**: A manager can assign an hour budget to a project or contract
+- [ ] **BUDG-02**: Budgets can renew on a schedule (e.g. start of month, start of week)
+- [ ] **BUDG-03**: Time entries reported by the team count against the active budget period
+- [ ] **BUDG-04**: Managers can see budgeted vs consumed hours per month and per contract, as the basis for profitability
+
 ## v2 Requirements
 
 ### Productivity
@@ -144,6 +153,10 @@
 | OPS-01 | Phase 2 | Complete |
 | OPS-02 | Phase 7 | Pending |
 | OPS-03 | Phase 7 | Pending |
+| BUDG-01 | Phase 8 | Pending |
+| BUDG-02 | Phase 8 | Pending |
+| BUDG-03 | Phase 8 | Pending |
+| BUDG-04 | Phase 8 | Pending |
 
 **Coverage:**
 - v1 requirements: 39 total
