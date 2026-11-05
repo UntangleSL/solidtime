@@ -524,7 +524,11 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                 @next="handleNext"
                 @today="handleToday"
                 @change-view="handleChangeView"
-                @update:settings="onSettingsUpdate" />
+                @update:settings="onSettingsUpdate">
+                <template v-if="$slots['toolbar-extra']" #extra>
+                    <slot name="toolbar-extra" />
+                </template>
+            </CalendarToolbar>
 
             <ContextMenu v-model:open="contextMenuOpen">
                 <ContextMenuTrigger

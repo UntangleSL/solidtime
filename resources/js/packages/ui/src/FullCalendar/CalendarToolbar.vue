@@ -32,6 +32,7 @@ const emit = defineEmits<{
 
         <!-- Right: View switcher + Settings -->
         <div class="flex items-center gap-1">
+            <slot name="extra" />
             <Tabs
                 :model-value="activeView"
                 @update:model-value="(v) => emit('change-view', String(v))">

@@ -1,4 +1,13 @@
-import { computed, onMounted, onUnmounted, ref, watch, type Ref } from 'vue';
+import {
+    computed,
+    onMounted,
+    onUnmounted,
+    provide,
+    ref,
+    watch,
+    type InjectionKey,
+    type Ref,
+} from 'vue';
 import { usePage } from '@inertiajs/vue3';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import type { Dayjs } from 'dayjs';
@@ -31,6 +40,33 @@ export interface WeekBucket {
 const SYNC_DEBOUNCE_MS = 400;
 const AUTO_SYNC_FRESH_MS = 60_000;
 const MEETINGS_QUERY_KEY = ['m365', 'meetings'] as const;
+// The Sync button stays disabled this long after every settled sync (a throttled or unavailable
+// answer with a larger retry_after wins).
+const SYNC_COOLDOWN_MS = 10_000;
+
+// What the toolbar controls (injected through a core slot, so not props of the calendar) read.
+export interface OutlookMeetingsContext {
+    calendar: Readonly<Ref<OutlookCalendarProps | null>>;
+    labels: Readonly<Ref<OutlookCalendarLabels | null>>;
+    bucket: Readonly<Ref<WeekBucket | null>>;
+    meetings: Readonly<Ref<OutlookMeeting[]>>;
+    connectionState: Readonly<Ref<OutlookConnectionState | null>>;
+    isSyncing: Readonly<Ref<boolean>>;
+    lastSync: Readonly<Ref<OutlookSyncResponse | null>>;
+    readFailed: Readonly<Ref<boolean>>;
+    // Last known last_synced_at of the visible week (read response or latest sync answer).
+    syncedAt: Readonly<Ref<string | null>>;
+    // Meetings overlapping the visible range, dismissed ones excluded.
+    visibleCount: Readonly<Ref<number>>;
+    // False while syncing, during the cooldown / retry_after window, or without a connection.
+    canSync: Readonly<Ref<boolean>>;
+    cooldownUntil: Readonly<Ref<number>>;
+    requestSync: (force?: boolean) => void;
+    dayOverlayLane: (dayStr: string, isDayView: boolean) => string | null;
+}
+
+export const OUTLOOK_MEETINGS_KEY: InjectionKey<OutlookMeetingsContext> =
+    Symbol('outlook-meetings');
 
 // The calendar is read and synced one whole week at a time, so day-to-day navigation inside a week
 // causes no extra request. The week starts on the user's week start day (local midnight) and runs
@@ -73,7 +109,7 @@ function parseRetryAfterHeader(error: unknown): number | null {
 export function useOutlookMeetings(
     calendarStart: Ref<Dayjs | undefined>,
     calendarEnd: Ref<Dayjs | undefined>
-) {
+): OutlookMeetingsContext {
     const page = usePage<{ microsoft?: MicrosoftSharedProps }>();
     const queryClient = useQueryClient();
 
@@ -89,14 +125,41 @@ export function useOutlookMeetings(
     const lastSync = ref<OutlookSyncResponse | null>(null);
     const isSyncing = ref(false);
 
-    // A sync that answers reconnect or not_connected is authoritative; a transport or session
-    // failure (unavailable) never changes the connection state.
+    // A sync that answers reconnect or not_connected is authoritative and sticks for the rest of the
+    // page life (so the Sync control disappears without a reload); a transport or session failure
+    // (unavailable) never changes the connection state.
+    const stickyState = ref<OutlookConnectionState | null>(null);
     const connectionState = computed<OutlookConnectionState | null>(() => {
         if (!calendar.value) return null;
-        if (lastSync.value?.status === 'reconnect') return 'reconnect';
-        if (lastSync.value?.status === 'not_connected') return 'not_connected';
-        return calendar.value.state;
+        return stickyState.value ?? calendar.value.state;
     });
+
+    // last_synced_at of the latest sync answer, tied to the bucket it was for.
+    const syncAnswerAt = ref<{ key: string; at: string } | null>(null);
+
+    // Cooldown of the manual Sync (ms timestamp). `now` is advanced by a single timeout so that
+    // canSync re-evaluates exactly when the cooldown ends.
+    const cooldownUntil = ref(0);
+    const now = ref(Date.now());
+    let cooldownTimer: ReturnType<typeof setTimeout> | undefined;
+    let unmounted = false;
+
+    function cooldownTick(): void {
+        cooldownTimer = undefined;
+        now.value = Date.now();
+        if (!unmounted && now.value < cooldownUntil.value) {
+            cooldownTimer = setTimeout(cooldownTick, cooldownUntil.value - now.value);
+        }
+    }
+
+    function extendCooldown(ms: number): void {
+        if (unmounted) return;
+        const until = Date.now() + ms;
+        if (until > cooldownUntil.value) cooldownUntil.value = until;
+        now.value = Date.now();
+        if (cooldownTimer !== undefined) clearTimeout(cooldownTimer);
+        cooldownTimer = setTimeout(cooldownTick, Math.max(0, cooldownUntil.value - now.value));
+    }
 
     // calendarEnd is only used to know that the calendar has reported a range; the bucket itself
     // comes from the start (week or day view both sit inside one bucket).
@@ -149,12 +212,61 @@ export function useOutlookMeetings(
     // True when the cached read of the bucket failed (meetings keep the last good data).
     const readFailed = computed(() => meetingsQuery.isError.value);
 
+    // A read response of the previous bucket (placeholder data) says nothing about this one.
+    const syncedAt = computed<string | null>(() => {
+        const fromRead = meetingsQuery.isPlaceholderData.value
+            ? null
+            : (meetingsQuery.data.value?.sync?.last_synced_at ?? null);
+        const answer = syncAnswerAt.value;
+        const fromAnswer = answer && answer.key === bucket.value?.key ? answer.at : null;
+        if (fromRead && fromAnswer) {
+            return new Date(fromAnswer).getTime() >= new Date(fromRead).getTime()
+                ? fromAnswer
+                : fromRead;
+        }
+        return fromAnswer ?? fromRead;
+    });
+
+    // Overlap with the visible range [start, end) of the calendar (the week or the day), dismissed
+    // meetings excluded; the status line shows "no meetings" from this count.
+    const visibleCount = computed(() => {
+        const start = calendarStart.value;
+        const end = calendarEnd.value;
+        if (!start || !end) return 0;
+        return meetings.value.filter((meeting) => {
+            if (meeting.dismissed) return false;
+            const from = getLocalizedDayJs(meeting.start);
+            const to = getLocalizedDayJs(meeting.end);
+            return to.isAfter(from)
+                ? from.isBefore(end) && to.isAfter(start)
+                : !from.isBefore(start) && from.isBefore(end);
+        }).length;
+    });
+
+    const canSync = computed(
+        () =>
+            calendar.value !== null &&
+            connectionState.value === 'connected' &&
+            !isSyncing.value &&
+            now.value >= cooldownUntil.value
+    );
+
+    // A read that reports a retry_after (the server is backing off) disables Sync until then.
+    watch(
+        () => meetingsQuery.dataUpdatedAt.value,
+        () => {
+            const retry = meetingsQuery.data.value?.sync?.retry_after;
+            if (!meetingsQuery.isPlaceholderData.value && typeof retry === 'number' && retry > 0) {
+                extendCooldown(retry * 1000);
+            }
+        }
+    );
+
     // Debounced, single-flight sync. Only the latest desired bucket is remembered; while a sync is
     // in flight a newer request waits and runs once after it settles (latest wins).
     let timer: ReturnType<typeof setTimeout> | undefined;
     let pending: SyncRequest | null = null;
     let inFlight = false;
-    let unmounted = false;
 
     // Reads `pending` through a function: TypeScript does not track the assignments other calls make
     // while a sync is awaited.
@@ -162,7 +274,7 @@ export function useOutlookMeetings(
         return pending;
     }
 
-    function canSync(): boolean {
+    function syncAllowed(): boolean {
         return calendar.value !== null && connectionState.value === 'connected';
     }
 
@@ -183,13 +295,20 @@ export function useOutlookMeetings(
 
         const target = pending;
         pending = null;
-        if (!canSync()) return;
+        if (!syncAllowed()) return;
         if (!target.force && isBucketFresh(target.bucket)) return;
 
         inFlight = true;
         isSyncing.value = true;
         try {
-            lastSync.value = await syncMutation.mutateAsync(target);
+            const answer = await syncMutation.mutateAsync(target);
+            lastSync.value = answer;
+            if (answer.last_synced_at) {
+                syncAnswerAt.value = { key: target.bucket.key, at: answer.last_synced_at };
+            }
+            if (answer.status === 'reconnect' || answer.status === 'not_connected') {
+                stickyState.value = answer.status;
+            }
         } catch (error) {
             // Transport, app 5xx, session expiry (401/419) and the route-level 429 all mean "Outlook
             // unavailable": the cached ghosts stay and nothing is retried. A 401/419 is a solidtime
@@ -208,6 +327,15 @@ export function useOutlookMeetings(
             isSyncing.value = false;
         }
 
+        // Every settled sync starts the cooldown, including the synthetic unavailable answer of a
+        // rejected request; a back-off the server (or a 429 Retry-After header) asked for wins.
+        const settled = lastSync.value;
+        const backoff =
+            settled && (settled.status === 'throttled' || settled.status === 'unavailable')
+                ? (settled.retry_after ?? 0) * 1000
+                : 0;
+        extendCooldown(Math.max(SYNC_COOLDOWN_MS, backoff));
+
         // Latest wins: run a queued request only if it targets another bucket (or is forced), and
         // leave it to the debounce timer when one is already counting down.
         const queued = queuedRequest();
@@ -221,7 +349,9 @@ export function useOutlookMeetings(
     }
 
     function requestSync(force = false): void {
-        if (unmounted || !bucket.value || !canSync()) return;
+        if (unmounted || !bucket.value || !syncAllowed()) return;
+        // A manual sync during the cooldown, a back-off or another sync is ignored.
+        if (force && !canSync.value) return;
 
         pending = { bucket: bucket.value, force: force || (pending?.force ?? false) };
         if (timer !== undefined) clearTimeout(timer);
@@ -269,11 +399,13 @@ export function useOutlookMeetings(
         unmounted = true;
         if (timer !== undefined) clearTimeout(timer);
         timer = undefined;
+        if (cooldownTimer !== undefined) clearTimeout(cooldownTimer);
+        cooldownTimer = undefined;
         pending = null;
         delete (window as unknown as TestWindow).__TEST_SET_OUTLOOK_MEETINGS__;
     });
 
-    return {
+    const context: OutlookMeetingsContext = {
         calendar,
         labels,
         bucket,
@@ -282,7 +414,16 @@ export function useOutlookMeetings(
         isSyncing,
         lastSync,
         readFailed,
+        syncedAt,
+        visibleCount,
+        canSync,
+        cooldownUntil,
         requestSync,
         dayOverlayLane,
     };
+
+    // The toolbar controls are rendered through core slots and inject this instead of taking props.
+    provide(OUTLOOK_MEETINGS_KEY, context);
+
+    return context;
 }

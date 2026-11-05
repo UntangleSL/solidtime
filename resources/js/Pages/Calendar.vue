@@ -26,6 +26,7 @@ import { canCreateProjects } from '@/utils/permissions';
 import { useCurrentTimeEntryStore } from '@/utils/useCurrentTimeEntry';
 import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
+import OutlookCalendarControls from '@/m365/calendar/OutlookCalendarControls.vue';
 import OutlookGhostLayer from '@/m365/calendar/OutlookGhostLayer.vue';
 import { useOutlookMeetings } from '@/m365/calendar/useOutlookMeetings';
 
@@ -155,6 +156,9 @@ function onRefresh() {
                     v-bind="overlay"
                     :meetings="outlook.meetings.value"
                     :labels="outlook.labels.value" />
+            </template>
+            <template v-if="outlook.calendar.value" #toolbar-extra>
+                <OutlookCalendarControls />
             </template>
         </TimeEntryCalendar>
     </AppLayout>
