@@ -60,6 +60,7 @@ Resultado de la comprobación del registro con la herramienta de captura (`captu
 - MFA del tenant comprobada (puerta de publicación, Fase 2): 2026-11-04, Security Defaults activados. Los inicios de sesión con Microsoft no piden el TOTP de solidtime (D-06); si se desactiva Security Defaults sin una política equivalente, desaparece el segundo factor. Repetir esta comprobación tras cualquier cambio de Security Defaults o de acceso condicional.
 - Inicio de sesión con Microsoft en producción (Fase 2): 2026-11-04, vinculado a la cuenta de arranque de la propietaria; amr_mfa=yes; m365:check: configurado, URI https, organización Untangle encontrada, registro desactivado, sesión 720 min
 - UAT manual de la Fase 2 aprobada por la propietaria: 2026-11-05 (segunda cuenta del tenant dada de alta como empleada, rechazo de cuentas externas, app de escritorio vía inicio de sesión web, sección Microsoft 365 del perfil con Desconectar/Conectar, inicio de sesión con contraseña)
+- Extensión del navegador conectada vía inicio de sesión web con Microsoft (Fase 2): 2026-11-05, tras crear su cliente OAuth público en la instancia (ver `docs/deploy/MICROSOFT-SIGNIN.md`, «Clientes OAuth de la app de escritorio y la extensión»)
 
 ## Doppler
 
@@ -142,3 +143,4 @@ PHPUnit (`CalendarViewFixturesTest`): no disponible el 2026-10-19 (el equipo de 
 | 2026-10-19 | Limpieza en Entra (URI spike y secreto `spike-2026-10`) APLAZADA hasta producción; pendiente en Fase 7 | propietaria (decisión) |
 | 2026-11-04 | Fase 2: MFA del tenant comprobada antes de publicar (Security Defaults) | propietaria / orquestación |
 | 2026-11-04 | Fase 2: primer inicio de sesión con Microsoft en producción | propietaria / orquestación |
+| 2026-11-05 | Fase 2: cliente OAuth de la extensión creado; extensión conectada | propietaria / orquestación |

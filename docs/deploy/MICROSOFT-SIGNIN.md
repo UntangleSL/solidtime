@@ -172,6 +172,41 @@ Quien se da de alta con Microsoft no tiene contraseña en solidtime. Consecuenci
   Las entradas de tiempo no se tocan. En el siguiente inicio de sesión con Microsoft la cuenta se
   vuelve a vincular por dirección de correo verificada, o se rechaza si no coincide ninguna.
 
+## Clientes OAuth de la app de escritorio y la extensión
+
+La app de escritorio y la extensión del navegador se conectan por OAuth (Passport) a través del
+inicio de sesión web, así que funcionan igual con Microsoft que con contraseña. Cada una necesita
+su propio cliente público en esta instancia: los Client ID que traen de fábrica son los de la nube de
+solidtime y aquí no existen. Con un Client ID desconocido, `/oauth/authorize` responde 401 y la
+extensión muestra «Authorization page could not be loaded».
+
+**Configuración de la extensión para time.untangle.es** (Instance Settings de la extensión):
+
+| Campo | Valor |
+| --- | --- |
+| Solidtime Instance Endpoint | `https://time.untangle.es` |
+| Solidtime Instance Client Id | `01a1abb9-d919-7314-8d56-118a74adf57b` |
+
+Cliente «Browser Extension» creado el 2026-11-05 con la URI de redirección de la extensión de la
+Chrome Web Store. Sirve para cualquier persona que instale esa extensión.
+
+Crear el cliente (solo si no existe, por ejemplo con una base de datos nueva), en la terminal del
+contenedor `app`:
+
+```bash
+cd /var/www/html && php artisan passport:client --public --name="Browser Extension" --redirect_uri="https://<ID-EXTENSION>.chromiumapp.org/"
+```
+
+- La URI de redirección es la que muestra la extensión en «show redirect url to oauth». La de la
+  extensión de la Chrome Web Store es `https://hpanifeankiobmgbemnhjmhpjeebdhdd.chromiumapp.org/`.
+- Si pregunta por el *provider*, elegir `users`.
+- El Client ID que muestra el comando se pega en la extensión (Instance Settings) junto con el
+  endpoint `https://time.untangle.es`. No es secreto (cliente público sin contraseña).
+- El cliente vive en la tabla `oauth_clients` de la base de datos: no cambia al redesplegar. Solo se
+  pierde si se crea una base de datos nueva; entonces hay que volver a crearlo y actualizar el ID en
+  cada equipo. Las claves `PASSPORT_PRIVATE_KEY`/`PASSPORT_PUBLIC_KEY` del entorno deben mantenerse,
+  o las sesiones ya conectadas tendrán que volver a iniciar sesión.
+
 ## Apagar la integración
 
 Vacía `SOLIDTIME_MICROSOFT_CLIENT_ID`, `SOLIDTIME_MICROSOFT_CLIENT_SECRET` o

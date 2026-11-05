@@ -24,7 +24,7 @@ These apply to every phase (from PROJECT.md and research/SUMMARY.md):
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 1: Tenant Setup & Outlook Spike** - Untangle M365 admin registers and consents the app; real Outlook responses recorded as fixtures; series and cancellation decisions written down
-- [ ] **Phase 2: Sign in with Microsoft** - "Sign in with Microsoft" next to password login, safe auto-provision and linking, encrypted tokens, connect/disconnect, env-only config for Dokploy
+- [x] **Phase 2: Sign in with Microsoft** - "Sign in with Microsoft" next to password login, safe auto-provision and linking, encrypted tokens, connect/disconnect, env-only config for Dokploy (completed 2026-11-05)
 - [ ] **Phase 3: Outlook Meetings in the Calendar** - Eligible meetings appear as ghost suggestions on calendar open and via Sync, with dismiss, privacy and graceful Graph failures
 - [ ] **Phase 4: Assign Meetings to Projects** - Single and bulk conversion of meeting suggestions into real time entries using core rules, with no duplicates
 - [ ] **Phase 5: Recurring Meeting Rules** - "This series goes to project X" and "always ignore this series" rules with one-click confirmation and a rules manager
@@ -87,7 +87,7 @@ Plans:
   4. User sees their Microsoft connection status in their profile and can disconnect it; disconnecting deletes the stored Microsoft tokens and leaves all time entries untouched.
   5. Microsoft tokens exist only encrypted in the dedicated table and never appear in the `users` table, session, cache, logs, audits, API responses or Inertia props; the integration is configured purely through documented env vars, including the Dokploy setup for the HTTPS redirect URI and trusted proxies.
 
-**Plans**: 9/11 plans executed
+**Plans**: 11/11 plans complete
 
 Plans:
 **Wave 1**
@@ -108,10 +108,10 @@ Plans:
 - [x] 02-09-PLAN.md — Ops: fail-safe env config, m365:check, compose/.env.example, Dokploy deployment + bootstrap guide incl. Entra MFA section, touched-core-files ledger (wave 4)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 02-10-PLAN.md — Profile "Microsoft 365" section UI: status, Connect, confirmed Disconnect, Show.vue seam, Playwright guard (wave 5)
+- [x] 02-10-PLAN.md — Profile "Microsoft 365" section UI: status, Connect, confirmed Disconnect, Show.vue seam, Playwright guard (wave 5)
 
 **Wave 6** *(blocked on Wave 5 completion)*
-- [ ] 02-11-PLAN.md — Release: full CI gate, tenant-MFA release gate, owner-approved Dokploy deploy, D-22 bootstrap, first production Microsoft sign-in recorded in the runbook (wave 6, owner checkpoint)
+- [x] 02-11-PLAN.md — Release: full CI gate, tenant-MFA release gate, owner-approved Dokploy deploy, D-22 bootstrap, first production Microsoft sign-in recorded in the runbook (wave 6, owner checkpoint)
 
 **Research focus**: SocialiteProviders registration on Laravel 13; Socialite under Octane (no driver state leaking between users); consent at login with admin consent pre-granted
 **UI hint**: yes
@@ -203,7 +203,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Tenant Setup & Outlook Spike | 8/8 | In Progress | - |
-| 2. Sign in with Microsoft | 9/11 | In Progress | - |
+| 2. Sign in with Microsoft | 11/11 | Complete    | 2026-11-05 |
 | 3. Outlook Meetings in the Calendar | 0/TBD | Not started | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |

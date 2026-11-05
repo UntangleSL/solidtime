@@ -1,25 +1,33 @@
 ---
 phase: 02-sign-in-with-microsoft
-verified: 2026-11-05T10:37:00Z
-status: human_needed
+verified: 2026-11-05T12:43:00Z
+status: passed
 score: 11/11 must-haves verified
 covered_files: [".planning/phases/02-sign-in-with-microsoft/02-01-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-01-SUMMARY.md", ".planning/phases/02-sign-in-with-microsoft/02-02-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-02-SUMMARY.md", ".planning/phases/02-sign-in-with-microsoft/02-03-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-03-SUMMARY.md", ".planning/phases/02-sign-in-with-microsoft/02-04-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-04-SUMMARY.md", ".planning/phases/02-sign-in-with-microsoft/02-05-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-05-SUMMARY.md", ".planning/phases/02-sign-in-with-microsoft/02-06-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-06-SUMMARY.md", ".planning/phases/02-sign-in-with-microsoft/02-07-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-07-SUMMARY.md", ".planning/phases/02-sign-in-with-microsoft/02-08-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-08-SUMMARY.md", ".planning/phases/02-sign-in-with-microsoft/02-09-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-09-SUMMARY.md", ".planning/phases/02-sign-in-with-microsoft/02-10-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-10-SUMMARY.md", ".planning/phases/02-sign-in-with-microsoft/02-11-PLAN.md", ".planning/phases/02-sign-in-with-microsoft/02-11-SUMMARY.md", "app/Microsoft365/Auth/MicrosoftIdentity.php", "app/Microsoft365/Auth/MicrosoftIdentityGuard.php", "app/Microsoft365/Auth/MicrosoftIdentityResolver.php", "app/Microsoft365/Auth/MicrosoftOAuthGateway.php", "app/Microsoft365/Auth/MicrosoftSignInException.php", "app/Microsoft365/Auth/MicrosoftSignInFailure.php", "app/Microsoft365/Auth/MicrosoftUserProvisioner.php", "app/Microsoft365/Auth/SocialiteMicrosoftGateway.php", "app/Microsoft365/Console/MicrosoftCheckCommand.php", "app/Microsoft365/Http/Controllers/MicrosoftAccountController.php", "app/Microsoft365/Http/Controllers/MicrosoftAuthController.php", "app/Microsoft365/Http/Middleware/EnsureMicrosoftIsEnabled.php", "app/Microsoft365/Http/Middleware/ShareMicrosoftInertiaData.php", "app/Microsoft365/Microsoft365ServiceProvider.php", "app/Microsoft365/MicrosoftConfig.php", "app/Microsoft365/Models/MicrosoftAccount.php", "app/Microsoft365/database/migrations/2026_10_22_000001_create_microsoft_accounts_table.php", "app/Microsoft365/routes/microsoft365.php", "app/Providers/FortifyServiceProvider.php", "composer.json", "config/app.php", "config/microsoft365.php", "docs/deploy/MICROSOFT-SIGNIN.md", "docs/deploy/dokploy-compose.fork.yml", "docs/m365/RUNBOOK-entra-app.md", "docs/m365/TOUCHED-CORE-FILES.md", "e2e/microsoft-signin.spec.ts", "lang/en/microsoft365.php", "lang/es/microsoft365.php", "resources/js/Pages/Auth/Login.vue", "resources/js/Pages/Profile/Show.vue", "resources/js/m365/components/MicrosoftConnectionForm.test.ts", "resources/js/m365/components/MicrosoftConnectionForm.vue", "resources/js/m365/components/MicrosoftSignInButton.test.ts", "resources/js/m365/components/MicrosoftSignInButton.vue", "resources/js/m365/navigation.ts", "resources/js/m365/types.ts", "tests/Feature/AuthenticationTest.php", "tests/Feature/Microsoft365/MicrosoftAccountTest.php", "tests/Feature/Microsoft365/MicrosoftCheckCommandTest.php", "tests/Feature/Microsoft365/MicrosoftIdentityResolverTest.php", "tests/Feature/Microsoft365/MicrosoftLinkingTest.php", "tests/Feature/Microsoft365/MicrosoftLoginPageTest.php", "tests/Feature/Microsoft365/MicrosoftProvisioningTest.php", "tests/Feature/Microsoft365/MicrosoftRedirectTest.php", "tests/Feature/Microsoft365/MicrosoftSessionTest.php", "tests/Feature/Microsoft365/MicrosoftSignInFlowTest.php", "tests/Feature/Microsoft365/MicrosoftSignInRejectionTest.php", "tests/Feature/Microsoft365/MicrosoftTokenStorageTest.php", "tests/Feature/Microsoft365/Support/FakeMicrosoftOAuthGateway.php", "tests/Feature/Microsoft365/Support/InteractsWithMicrosoft365.php", "tests/Unit/Microsoft365/MicrosoftConfigTest.php", "tests/Unit/Microsoft365/MicrosoftIdentityGuardTest.php", "tests/Unit/Microsoft365/MicrosoftLangTest.php", "tests/Unit/Microsoft365/SocialiteMicrosoftGatewayTest.php"]
-covered_digest: "v3:sha256:3203ba1675f1202385354c77e7efb2ef704a271e14b5b06324c55c0309e4d5ef"
+covered_digest: "v3:sha256:178486a0c5854de851845c0a88b9bd2d7c3049e52b02f178c3ac54482ebbb8b9"
 behavior_unverified: 0
 overrides_applied: 0
-human_verification:
-  - test: "From the solidtime browser extension, while logged out of the web app, start the connection and sign in with Microsoft as a passwordless (Microsoft-only) user on the web login page that opens."
-    expected: "After the Microsoft sign-in the Passport authorization screen appears, and the extension connects."
-    why_human: "02-CONTEXT (Specific Ideas) and the 02-11 human-check ask for both the desktop app and the browser extension. The recorded UAT (runbook line 62, 02-11-SUMMARY 'Manual UAT') lists only the desktop app. The owner's general 'UAT todo aprobado' does not name the extension. The extension lives outside this repository, so this cannot be checked here. It uses the same /oauth/authorize intended-URL path that the desktop app proved, plus MicrosoftSessionTest::test_callback_resumes_intended_oauth_authorize_url, so the risk is low. It is not blocking Phase 3."
+re_verification:
+  previous_status: human_needed
+  previous_score: 11/11
+  gaps_closed: []
+  gaps_remaining: []
+  regressions: []
+  human_items_resolved:
+    - item: "Browser extension authorization via Microsoft web login"
+      result: passed
+      confirmed_by: "owner (chat, relayed by the orchestrator)"
+      confirmed_at: "2026-11-05"
+      evidence: "docs/deploy/MICROSOFT-SIGNIN.md section 'Clientes OAuth de la app de escritorio y la extensión' (lines 175-208, including the instance's extension settings table at lines 183-188: endpoint and public Client ID); docs/m365/RUNBOOK-entra-app.md Verificación line 63 and Historial line 146"
 ---
 
 # Phase 2: Sign in with Microsoft Verification Report
 
 **Phase Goal:** As a member of the Untangle team, I want to sign in to solidtime with my Microsoft 365 account, so that I get in with my work identity and Entra MFA while email/password login keeps working for everyone else.
 **Mode:** mvp (the user-story format check passed: `user-story.validate` returned `valid=true`)
-**Verified:** 2026-11-05T10:37:00Z (first pass 10:35Z; production re-sampled 10:36Z after the sha-d24a04b deploy finished at 10:31:04Z)
-**Status:** human_needed
-**Re-verification:** No. This is the first verification, updated in place after the orchestrator's re-check request.
+**Verified:** 2026-11-05T12:43:00Z (re-verification; first pass 10:35Z, production re-sampled 10:36Z after the sha-d24a04b deploy finished at 10:31:04Z, and again at 12:42Z)
+**Status:** passed
+**Re-verification:** Yes. The previous status was `human_needed` (11/11) with one open human item, the browser-extension authorization. The owner has now confirmed it (see "Resolved since the first pass"). No gaps were open. A regression check of the verified findings found no change.
 
 ## User Flow Coverage (MVP)
 
@@ -28,7 +36,7 @@ human_verification:
 | Member opens the login page | A "Sign in with Microsoft" button sits next to the password form, only when the integration is configured | `resources/js/Pages/Auth/Login.vue:109` `<MicrosoftSignInButton />`. The component renders on `props.microsoft.enabled`, which comes from `ShareMicrosoftInertiaData`. On production at 10:36Z, /login props include `"microsoft":{"enabled":true,...}` and `"canRegister":false` | VERIFIED |
 | Clicks the button | 302 to the tenant-pinned Entra authorize URL with state and PKCE | Production `Location` at 10:36Z: `https://login.microsoftonline.com/fad1cfee-…/oauth2/v2.0/authorize?…redirect_uri=https%3A%2F%2Ftime.untangle.es%2Fauth%2Fmicrosoft%2Fcallback&scope=openid+profile+email+offline_access+User.Read+Calendars.Read…&code_challenge_method=S256` | VERIFIED |
 | Authenticates with the work identity and Entra MFA | Tenant enforces MFA. Callback validates tenant, guest and domain, then signs in | Runbook line 60 dates Security Defaults ON on 2026-11-04. Runbook line 61 records the first production sign-in with `amr_mfa=yes`. `MicrosoftAuthController::callback` calls the guard and the resolver, then `Auth::login($user, false)` | VERIFIED |
-| Lands in solidtime | Dashboard (or the intended /oauth/authorize URL) | `redirect()->intended(route('dashboard'))`. Tests: `MicrosoftSessionTest::test_callback_resumes_intended_oauth_authorize_url`. Desktop app UAT approved 2026-11-05 | VERIFIED |
+| Lands in solidtime | Dashboard (or the intended /oauth/authorize URL) | `redirect()->intended(route('dashboard'))`. Tests: `MicrosoftSessionTest::test_callback_resumes_intended_oauth_authorize_url`. Desktop app UAT approved 2026-11-05. Browser extension connected through the Microsoft web login on 2026-11-05 (owner-confirmed; runbook line 63) | VERIFIED |
 | Email/password login keeps working for everyone else | Fortify login, reset and TOTP unchanged | Fortify core is untouched apart from the `canRegister` prop. `MicrosoftSessionTest::test_password_login_for_totp_user_still_requires_the_code`. Upstream `AuthenticationTest`, PasswordReset and TwoFactor tests pass in CI (PHPUnit success on d24a04b3). Owner UAT confirms password login works | VERIFIED |
 
 The outcome clause ("get in with my work identity and Entra MFA while email/password login keeps working") holds on the codebase and on production.
@@ -82,8 +90,8 @@ The outcome clause ("get in with my work identity and Entra MFA while email/pass
 | `app/Microsoft365/Http/Middleware/{EnsureMicrosoftIsEnabled,ShareMicrosoftInertiaData}.php` | Off switch (404) and a token-free prop | VERIFIED | Pushed to the `web` group in provider boot |
 | `app/Microsoft365/Console/MicrosoftCheckCommand.php` | Diagnostic | VERIFIED | Registered for console use |
 | `resources/js/m365/components/*.vue` | Button and profile section | VERIFIED | Imported by `Login.vue` and `Show.vue`. Vitest 15/15 pass |
-| `config/microsoft365.php`, `.env.example`, `docs/deploy/dokploy-compose.fork.yml`, `docs/deploy/MICROSOFT-SIGNIN.md` | Env-only config and the Dokploy guide | VERIFIED | |
-| `docs/m365/RUNBOOK-entra-app.md` | Dated MFA gate and first production sign-in | VERIFIED | Lines 59-62, 143-144 |
+| `config/microsoft365.php`, `.env.example`, `docs/deploy/dokploy-compose.fork.yml`, `docs/deploy/MICROSOFT-SIGNIN.md` | Env-only config and the Dokploy guide | VERIFIED | The guide now also documents the Passport public clients for the desktop app and the browser extension (lines 175-208) |
+| `docs/m365/RUNBOOK-entra-app.md` | Dated MFA gate and first production sign-in | VERIFIED | Lines 59-63, 143-146 (line 63 and row 146 record the browser extension connection on 2026-11-05) |
 | `docs/m365/TOUCHED-CORE-FILES.md` | Ledger | VERIFIED | Line 14 lists `FortifyServiceProvider.php` and line 15 lists `tests/Feature/AuthenticationTest.php`. The "not touched" list now points back to the first table for Fortify (line 44) |
 
 `verify.artifacts` gave 29/30 across all plans. The single miss is the superseded 02-01 pattern explained above.
@@ -113,13 +121,14 @@ The outcome clause ("get in with my work identity and Entra MFA while email/pass
 
 | Behavior | Command | Result | Status |
 | --- | --- | --- | --- |
-| Production is up | `curl https://time.untangle.es/health-check/up` | 200 (10:30Z and 10:36Z) | PASS |
+| Production is up | `curl https://time.untangle.es/health-check/up` | 200 (10:30Z, 10:36Z and 12:42Z) | PASS |
 | Login prop is on and public-only | `curl /login`, read the Inertia page JSON | `microsoft.enabled=true`, login_url, labels only, no token keys | PASS |
 | Tenant-pinned redirect with PKCE and https callback | `curl -D - /auth/microsoft/redirect` | 302 to `login.microsoftonline.com/<tenant GUID>/oauth2/v2.0/authorize`, `code_challenge_method=S256`, https callback (10:36Z) | PASS |
 | Session lifetime of 12 h (D-20) | Response `Set-Cookie` | `Max-Age=43200` | PASS |
 | Register link hidden in production (d24a04b3) | `curl /login` props, plus the Login chunk from `/build/manifest.json` | 10:30Z: FAIL (the deploy was still queued, and `Login-BFpWrI2-.js` had no `canRegister`). 10:36Z: `"canRegister":false`, and `Login-xTC3UJdQ.js` declares `canRegister:Boolean` | PASS (re-check) |
 | Frontend unit tests | `npx vitest run resources/js/m365` | 2 files, 15 tests passed | PASS |
-| Docs secret scan | `node tests/Tools/m365-spike/validate-docs.mjs secrets` | `secrets: OK (1892 checks)` | PASS |
+| Docs secret scan | `node tests/Tools/m365-spike/validate-docs.mjs secrets` | `secrets: OK (1892 checks)`, re-run at 12:42Z after the doc edits | PASS |
+| Login prop on and register hidden (regression) | `curl /login`, read the Inertia page JSON | 12:42Z: `"microsoft":{"enabled":true`, `"canRegister":false` | PASS |
 | CI for the release commit | `gh run list --commit d24a04b3…` | 10/10 success | PASS |
 
 ### Probe Execution
@@ -153,13 +162,15 @@ Resolved since the first pass: the 02-11-SUMMARY step 5 claim now holds (deploy 
 
 ### Human Verification Required
 
-### 1. Browser extension authorization via Microsoft web login
-
-**Test:** From the browser extension, while logged out, start the connection and sign in with Microsoft as a passwordless user.
-**Expected:** The Passport authorization screen appears and the extension connects.
-**Why human:** The recorded UAT names only the desktop app (runbook line 62). The owner's general "UAT todo aprobado" does not name the extension, and 02-CONTEXT plus the 02-11 human-check ask for both. The extension is outside this repository. The risk is low because the extension uses the same `/oauth/authorize` intended-URL resume as the desktop app, which passed UAT and is covered by `MicrosoftSessionTest::test_callback_resumes_intended_oauth_authorize_url`. This item does not block Phase 3.
+None. The one item from the previous pass is resolved (below).
 
 ### Resolved since the first pass
+
+- **Browser extension authorization via Microsoft web login** (the last open item): PASSED, owner-confirmed in chat on 2026-11-05 and relayed by the orchestrator.
+  - First attempt: the extension showed "Authorization page could not be loaded". The cause was configuration, not a Phase 2 defect. The extension ships with solidtime cloud's Client ID, which does not exist on this instance, so `/oauth/authorize` returned 401 for the unknown client.
+  - Fix: the owner created a public Passport client in production (`php artisan passport:client --public --name="Browser Extension"` with the Chrome Web Store extension's `chromiumapp.org` redirect URI) and entered its Client ID in the extension settings. The extension then connected through the Microsoft web login.
+  - Evidence: `docs/deploy/MICROSOFT-SIGNIN.md` section "Clientes OAuth de la app de escritorio y la extensión" (lines 175-208). It covers the 401 cause, the one-time command, the instance's extension settings table (endpoint `https://time.untangle.es` plus the public Client ID, lines 183-188), and persistence in `oauth_clients`. `docs/m365/RUNBOOK-entra-app.md` has the Verificación bullet at line 63 and the Historial row at line 146, both dated 2026-11-05.
+  - The Client ID is a public client identifier with no secret (the doc says so at line 204), and the docs secret scan still passes. The code path it exercises, the `/oauth/authorize` intended-URL resume, is the one `MicrosoftSessionTest::test_callback_resumes_intended_oauth_authorize_url` covers (`MicrosoftAuthController.php:122`).
 
 - **Production on sha-d24a04b** (was item 1): at 10:30Z the deploy was still queued in the shared Dokploy queue. It finished at 10:31:04Z, as the orchestrator relayed and 02-11-SUMMARY line 53 states. I re-sampled at 10:36Z:
   - /login carries `"canRegister":false` and `microsoft.enabled=true`.
@@ -170,11 +181,9 @@ Resolved since the first pass: the 02-11-SUMMARY step 5 claim now holds (deploy 
 
 ### Gaps Summary
 
-No gaps. All 5 roadmap success criteria and all 9 requirements are implemented, wired, tested in CI and observed on production. Microsoft sign-in is live, tenant-pinned with PKCE, and MFA evidence is recorded. Production now runs the release image `sha-d24a04b`.
-
-One item stays open for human confirmation: the browser-extension authorization through the Microsoft web login, which the recorded UAT does not include. It is low risk and does not block Phase 3. The status stays `human_needed` until the owner confirms it or explicitly waives it.
+No gaps and no open human items. All 5 roadmap success criteria and all 9 requirements are implemented, wired, tested in CI and observed on production. Microsoft sign-in is live, tenant-pinned with PKCE, and MFA evidence is recorded. Production runs the release image `sha-d24a04b`. The owner has confirmed both OAuth clients, the desktop app and the browser extension, through the Microsoft web login. Phase 2 is complete.
 
 ---
 
-_Verified: 2026-11-05T10:37:00Z_
+_Verified: 2026-11-05T12:43:00Z_
 _Verifier: Claude (gsd-verifier)_
