@@ -33,6 +33,16 @@ function formatSyncedAt(syncedAt: string, timeFormat: TimeFormat, now: Date): st
     return `${synced.format('D MMM')} ${time}`;
 }
 
+// "Last synced 14:32" on its own, for the states that have no sync status line (reconnect).
+export function describeLastSynced(
+    syncedAt: string,
+    labels: OutlookCalendarLabels,
+    timeFormat: TimeFormat,
+    now: Date
+): string {
+    return fillLabel(labels.last_synced, { time: formatSyncedAt(syncedAt, timeFormat, now) });
+}
+
 // Pure mapping from the sync state to the quiet status line. A failed read, a throttled or an
 // unavailable answer (and the synthetic unavailable answer of a rejected request) is "unavailable";
 // it is never a reconnect, which only the connection state decides.

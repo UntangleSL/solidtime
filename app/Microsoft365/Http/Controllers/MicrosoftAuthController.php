@@ -36,7 +36,17 @@ class MicrosoftAuthController extends Controller
 
     private const string CONNECT_INTENT = 'connect';
 
+    /**
+     * Where an authenticated Connect returns to. Written by redirect() only for the single allow-listed
+     * value `calendar` (never a URL), read (and removed) by callback() on every exit path.
+     */
+    private const string RETURN_SESSION_KEY = 'microsoft.return';
+
+    private const string RETURN_CALENDAR = 'calendar';
+
     private const string NOTICE_FLASH_KEY = 'microsoft365.notice';
+
+    private const string NOTICE_LEVEL_FLASH_KEY = 'microsoft365.notice_level';
 
     public function redirect(Request $request, MicrosoftOAuthGateway $gateway, TimezoneService $timezoneService): SymfonyRedirectResponse
     {
@@ -52,6 +62,13 @@ class MicrosoftAuthController extends Controller
             $request->session()->put(self::INTENT_SESSION_KEY, self::CONNECT_INTENT);
             $request->session()->put(self::CONNECT_USER_SESSION_KEY, Auth::guard('web')->id());
             $request->session()->forget(self::TIMEZONE_SESSION_KEY);
+
+            // Allow-list of exactly one value; anything else (a URL, "//host", another word) is dropped.
+            if ($request->query('return') === self::RETURN_CALENDAR) {
+                $request->session()->put(self::RETURN_SESSION_KEY, self::RETURN_CALENDAR);
+            } else {
+                $request->session()->forget(self::RETURN_SESSION_KEY);
+            }
 
             return $gateway->redirect($request);
         }
@@ -76,15 +93,23 @@ class MicrosoftAuthController extends Controller
         MicrosoftIdentityGuard $guard,
         MicrosoftIdentityResolver $resolver,
     ): RedirectResponse {
-        // Read-and-forget: both keys are gone on every exit path. The intent comes from the session
+        // Read-and-forget: all three keys are gone on every exit path. The intent comes from the session
         // state redirect() wrote for an authenticated user, never from the callback query.
         $intent = $request->session()->pull(self::INTENT_SESSION_KEY);
         $connectUserId = $request->session()->pull(self::CONNECT_USER_SESSION_KEY);
+        $returnTarget = $request->session()->pull(self::RETURN_SESSION_KEY);
 
         // Evaluated BEFORE the authenticated-user shortcut below, otherwise a signed-in user could
         // never complete a connect (the callback would answer with the dashboard redirect).
         if ($intent === self::CONNECT_INTENT) {
-            return $this->completeConnect($request, $gateway, $guard, $resolver, $connectUserId);
+            return $this->completeConnect(
+                $request,
+                $gateway,
+                $guard,
+                $resolver,
+                $connectUserId,
+                $returnTarget === self::RETURN_CALENDAR,
+            );
         }
 
         if (Auth::guard('web')->check()) {
@@ -140,7 +165,8 @@ class MicrosoftAuthController extends Controller
 
     /**
      * The authenticated Connect callback: links or re-connects the identity of the signed-in user and
-     * returns to the profile with a notice. No login happens, the session user stays the same.
+     * returns to the profile (or to the calendar when the connect started there) with a notice. No
+     * login happens, the session user stays the same.
      */
     private function completeConnect(
         Request $request,
@@ -148,6 +174,7 @@ class MicrosoftAuthController extends Controller
         MicrosoftIdentityGuard $guard,
         MicrosoftIdentityResolver $resolver,
         mixed $connectUserId,
+        bool $toCalendar,
     ): RedirectResponse {
         try {
             $user = Auth::guard('web')->user();
@@ -171,29 +198,43 @@ class MicrosoftAuthController extends Controller
             $guard->check($identity);
             $resolver->connect($identity, $user);
 
-            return redirect()->route('profile.show')
-                ->with(self::NOTICE_FLASH_KEY, __('microsoft365.ui.connected_notice'));
+            return $this->connectNoticeRedirect($toCalendar, __('microsoft365.ui.connected_notice'), 'success');
         } catch (MicrosoftSignInException $e) {
             Log::warning('Microsoft connect rejected', [
                 'reason' => $e->reason->value,
                 'provider_code' => $e->providerCode,
             ]);
 
-            return $this->connectFailureResponse($e->reason);
+            return $this->connectFailureResponse($e->reason, $toCalendar);
         } catch (Throwable $e) {
             Log::error('Microsoft connect failed', ['reason' => 'unexpected', 'exception' => $e::class]);
 
-            return $this->connectFailureResponse(MicrosoftSignInFailure::Generic);
+            return $this->connectFailureResponse(MicrosoftSignInFailure::Generic, $toCalendar);
         }
     }
 
-    private function connectFailureResponse(MicrosoftSignInFailure $reason): RedirectResponse
+    private function connectFailureResponse(MicrosoftSignInFailure $reason, bool $toCalendar): RedirectResponse
     {
         if (! Auth::guard('web')->check()) {
             return redirect()->route('login')->with('message', __($reason->messageKey()));
         }
 
-        return redirect()->route('profile.show')->with(self::NOTICE_FLASH_KEY, __($reason->messageKey()));
+        return $this->connectNoticeRedirect($toCalendar, __($reason->messageKey()), 'error');
+    }
+
+    /**
+     * The two destinations of a signed-in Connect: the calendar (with the level the notification store
+     * needs) when the connect started there, otherwise the profile exactly as before.
+     */
+    private function connectNoticeRedirect(bool $toCalendar, string $message, string $level): RedirectResponse
+    {
+        if (! $toCalendar) {
+            return redirect()->route('profile.show')->with(self::NOTICE_FLASH_KEY, $message);
+        }
+
+        return redirect()->route('calendar')
+            ->with(self::NOTICE_FLASH_KEY, $message)
+            ->with(self::NOTICE_LEVEL_FLASH_KEY, $level);
     }
 
     /**

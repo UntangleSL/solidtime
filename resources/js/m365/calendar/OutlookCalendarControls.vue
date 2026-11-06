@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, type ComputedRef } from 'vue';
-import { RefreshCw, TriangleAlert } from '@lucide/vue';
+import { Link, RefreshCw, TriangleAlert } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
 import Button from '@/packages/ui/src/Buttons/Button.vue';
 import {
@@ -9,13 +9,15 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from '@/packages/ui/src/tooltip';
+import { navigateTo } from '@/m365/navigation';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
-import { describeSyncStatus } from './syncStatus';
+import { describeLastSynced, describeSyncStatus } from './syncStatus';
 
 // Sync half of the Outlook cluster in the calendar toolbar (rendered through the core `extra`
 // slot). It reads everything from the injected composable context and never blocks the grid:
 // there is no dialog, and meetings are only ever a status text and a spinning icon here. The
-// Connect / Reconnect variants for the other connection states belong to the next plan.
+// connection state picks the variant: Sync + status (connected), "Reconnect Microsoft" in the Sync
+// position (reconnect) or only "Connect Microsoft 365" (not connected); no error banner anywhere.
 const context = inject(OUTLOOK_MEETINGS_KEY, null);
 const organization = inject<ComputedRef<Organization | undefined> | undefined>(
     'organization',
@@ -24,7 +26,10 @@ const organization = inject<ComputedRef<Organization | undefined> | undefined>(
 
 const labels = computed(() => context?.labels.value ?? null);
 const isConnected = computed(() => context?.connectionState.value === 'connected');
+const isReconnect = computed(() => context?.connectionState.value === 'reconnect');
+const isNotConnected = computed(() => context?.connectionState.value === 'not_connected');
 const isSyncing = computed(() => context?.isSyncing.value === true);
+const timeFormat = computed(() => organization?.value?.time_format ?? '24-hours');
 
 const status = computed(() => {
     if (!context || !labels.value) return null;
@@ -35,9 +40,16 @@ const status = computed(() => {
         syncedAt: context.syncedAt.value,
         visibleCount: context.visibleCount.value,
         labels: labels.value,
-        timeFormat: organization?.value?.time_format ?? '24-hours',
+        timeFormat: timeFormat.value,
         now: new Date(),
     });
+});
+
+// Reconnect keeps the last known meetings on screen, so it says when they were last synced.
+const reconnectStatus = computed(() => {
+    const syncedAt = context?.syncedAt.value;
+    if (!isReconnect.value || !labels.value || !syncedAt) return null;
+    return describeLastSynced(syncedAt, labels.value, timeFormat.value, new Date());
 });
 
 // The Sync tooltip carries the status (it is the only place a sighted user finds it below lg) and
@@ -52,6 +64,12 @@ const tooltipLines = computed(() => {
 
 function onSync() {
     context?.requestSync(true);
+}
+
+// Full-page navigation: the Microsoft OAuth redirect is cross-origin, so never Inertia's router.
+function onConnect() {
+    const url = context?.calendar.value?.connect_url;
+    if (url) navigateTo(url);
 }
 </script>
 
@@ -103,6 +121,51 @@ function onSync() {
                     </TooltipTrigger>
                     <TooltipContent>
                         <p v-for="line in tooltipLines" :key="line">{{ line }}</p>
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
+        </template>
+        <template v-else-if="(isReconnect || isNotConnected) && labels">
+            <div
+                v-if="reconnectStatus"
+                role="status"
+                aria-live="polite"
+                data-testid="outlook-sync-status"
+                class="flex min-w-0 items-center gap-1.5">
+                <span
+                    class="sr-only text-xs text-text-tertiary lg:not-sr-only lg:max-w-64 lg:truncate">
+                    {{ reconnectStatus }}
+                </span>
+            </div>
+            <TooltipProvider :delay-duration="300">
+                <Tooltip>
+                    <TooltipTrigger as-child>
+                        <span class="inline-flex">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                :data-testid="
+                                    isReconnect
+                                        ? 'outlook-reconnect-button'
+                                        : 'outlook-connect-button'
+                                "
+                                class="w-8 p-0 md:w-auto md:px-3"
+                                :aria-label="isReconnect ? labels.reconnect : labels.connect"
+                                @click="onConnect">
+                                <TriangleAlert
+                                    v-if="isReconnect"
+                                    class="text-amber-600 dark:text-amber-400"
+                                    aria-hidden="true" />
+                                <Link v-else aria-hidden="true" />
+                                <span class="hidden md:inline">
+                                    {{ isReconnect ? labels.reconnect : labels.connect }}
+                                </span>
+                            </Button>
+                        </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>{{ isReconnect ? labels.reconnect_hint : labels.connect_hint }}</p>
                     </TooltipContent>
                 </Tooltip>
             </TooltipProvider>

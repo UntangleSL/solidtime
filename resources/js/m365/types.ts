@@ -127,5 +127,9 @@ export interface OutlookSyncResponse {
 export interface OutlookCalendarProps {
     state: OutlookConnectionState;
     urls: { meetings: string; sync: string };
+    // Phase 2 connect flow that returns to the calendar (Connect and Reconnect navigate here)
+    connect_url: string;
+    // One-time outcome of a connect that returned to the calendar, shown as a notification
+    notice: { level: 'success' | 'error'; message: string } | null;
     labels: OutlookCalendarLabels;
 }

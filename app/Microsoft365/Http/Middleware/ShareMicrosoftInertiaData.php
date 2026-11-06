@@ -58,7 +58,7 @@ class ShareMicrosoftInertiaData
             if ($request->routeIs('calendar')) {
                 $user = Auth::guard('web')->user();
                 if ($user instanceof User) {
-                    $data['calendar'] = $this->calendar($user);
+                    $data['calendar'] = $this->calendar($request, $user);
                 }
             }
 
@@ -69,9 +69,9 @@ class ShareMicrosoftInertiaData
     }
 
     /**
-     * @return array{state: string, urls: array{meetings: string, sync: string}, labels: array<string, string>}
+     * @return array{state: string, urls: array{meetings: string, sync: string}, connect_url: string, notice: array{level: string, message: string}|null, labels: array<string, string>}
      */
-    private function calendar(User $user): array
+    private function calendar(Request $request, User $user): array
     {
         $account = MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->first();
 
@@ -81,7 +81,30 @@ class ShareMicrosoftInertiaData
                 'meetings' => route('microsoft.meetings.index'),
                 'sync' => route('microsoft.meetings.sync'),
             ],
+            // Connect and Reconnect start the Phase 2 connect flow and come back to the calendar; the
+            // only return value the server accepts is the word `calendar`.
+            'connect_url' => route('microsoft.redirect', ['intent' => 'connect', 'return' => 'calendar']),
+            'notice' => $this->calendarNotice($request),
             'labels' => $this->calendarLabels(),
+        ];
+    }
+
+    /**
+     * The one-time outcome of a connect that returned to the calendar (flash data lives for exactly
+     * the next request). The level is reduced to the two the notification store knows.
+     *
+     * @return array{level: string, message: string}|null
+     */
+    private function calendarNotice(Request $request): ?array
+    {
+        $message = $request->session()->get('microsoft365.notice');
+        if (! is_string($message) || $message === '') {
+            return null;
+        }
+
+        return [
+            'level' => $request->session()->get('microsoft365.notice_level') === 'error' ? 'error' : 'success',
+            'message' => $message,
         ];
     }
 

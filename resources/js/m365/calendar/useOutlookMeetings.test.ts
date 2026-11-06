@@ -54,6 +54,9 @@ function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
     return {
         state,
         urls: { meetings: MEETINGS_URL, sync: SYNC_URL },
+        connect_url:
+            'https://app.example.test/auth/microsoft/redirect?intent=connect&return=calendar',
+        notice: null,
         labels: { no_subject: '(No subject)', last_synced: 'Last synced :time' } as never,
     };
 }

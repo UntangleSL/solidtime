@@ -19,11 +19,18 @@ import {
     type OutlookMeetingsContext,
 } from './useOutlookMeetings';
 
-const { pageProps } = vi.hoisted(() => ({ pageProps: {} as Record<string, unknown> }));
+const { pageProps, navigateTo, routerVisit } = vi.hoisted(() => ({
+    pageProps: {} as Record<string, unknown>,
+    navigateTo: vi.fn(),
+    routerVisit: vi.fn(),
+}));
 
 vi.mock('@inertiajs/vue3', () => ({
     usePage: () => ({ props: pageProps }),
+    router: { visit: routerVisit, get: routerVisit, post: routerVisit },
 }));
+
+vi.mock('@/m365/navigation', () => ({ navigateTo }));
 
 vi.mock('axios', () => ({
     default: { get: vi.fn(), post: vi.fn() },
@@ -34,6 +41,8 @@ const axiosPost = vi.mocked(axios.post);
 
 const MEETINGS_URL = 'https://app.example.test/m365/meetings';
 const SYNC_URL = 'https://app.example.test/m365/meetings/sync';
+const CONNECT_URL =
+    'https://app.example.test/auth/microsoft/redirect?intent=connect&return=calendar';
 const NOW_ISO = '2026-11-05T10:00:00Z';
 // Monday of the week that contains NOW_ISO (week start monday, timezone UTC in the test setup)
 const WEEK_A = '2026-11-02T00:00:00Z';
@@ -50,6 +59,10 @@ const labels: OutlookCalendarLabels = {
         'Your time entries are not affected. Showing meetings from your last sync.',
     no_mailbox: 'No Outlook calendar for this account',
     no_subject: '(No subject)',
+    connect: 'Connect Microsoft 365',
+    connect_hint: 'Show your Outlook meetings in the calendar',
+    reconnect: 'Reconnect Microsoft',
+    reconnect_hint: 'Your Microsoft access expired. Reconnect to see your Outlook meetings.',
 } as OutlookCalendarLabels;
 
 function syncAnswer(overrides: Partial<OutlookSyncResponse> = {}): OutlookSyncResponse {
@@ -79,7 +92,13 @@ function statusInput(overrides: Partial<SyncStatusInput> = {}): SyncStatusInput 
 // A hand-made context for the component-only tests (the composable itself is covered below).
 function fakeContext(initial: Partial<Record<string, unknown>> = {}) {
     const state = {
-        calendar: ref<unknown>({ state: 'connected', urls: {}, labels }),
+        calendar: ref<unknown>({
+            state: 'connected',
+            urls: {},
+            connect_url: CONNECT_URL,
+            notice: null,
+            labels,
+        }),
         connectionState: ref<OutlookConnectionState | null>('connected'),
         isSyncing: ref(false),
         lastSync: ref<OutlookSyncResponse | null>(null),
@@ -117,6 +136,10 @@ function mountWithContext(context: OutlookMeetingsContext | null, timeFormat = '
 
 const syncButton = (wrapper: VueWrapper) => wrapper.find('[data-testid="outlook-sync-button"]');
 const statusRegion = (wrapper: VueWrapper) => wrapper.find('[role="status"]');
+const connectButton = (wrapper: VueWrapper) =>
+    wrapper.find('[data-testid="outlook-connect-button"]');
+const reconnectButton = (wrapper: VueWrapper) =>
+    wrapper.find('[data-testid="outlook-reconnect-button"]');
 
 describe('OutlookCalendarControls', () => {
     beforeEach(() => {
@@ -211,6 +234,101 @@ describe('OutlookCalendarControls', () => {
             expect(statusRegion(wrapper).exists()).toBe(false);
             wrapper.unmount();
         }
+    });
+
+    describe('Connect and Reconnect', () => {
+        beforeEach(() => {
+            navigateTo.mockReset();
+            routerVisit.mockReset();
+        });
+
+        it('reconnect renders Reconnect Microsoft with the amber icon in the Sync position', () => {
+            const { context } = fakeContext({ connectionState: 'reconnect' });
+            const wrapper = mountWithContext(context);
+            const button = reconnectButton(wrapper);
+
+            expect(button.exists()).toBe(true);
+            expect(button.text()).toBe('Reconnect Microsoft');
+            expect(button.attributes('aria-label')).toBe('Reconnect Microsoft');
+            expect(button.find('svg.text-amber-600').exists()).toBe(true);
+            expect(syncButton(wrapper).exists()).toBe(false);
+            expect(connectButton(wrapper).exists()).toBe(false);
+            // No error banner: the button itself is the prompt (SEC-02)
+            expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+            wrapper.unmount();
+        });
+
+        it('reconnect keeps the last synced text when it is known', () => {
+            const { context } = fakeContext({
+                connectionState: 'reconnect',
+                syncedAt: '2026-11-05T14:32:00Z',
+            });
+            const wrapper = mountWithContext(context);
+
+            expect(statusRegion(wrapper).text()).toBe('Last synced 14:32');
+            expect(statusRegion(wrapper).attributes('aria-live')).toBe('polite');
+            wrapper.unmount();
+        });
+
+        it('not_connected renders only Connect Microsoft 365 with the Link icon and no status', () => {
+            const { context } = fakeContext({
+                connectionState: 'not_connected',
+                syncedAt: '2026-11-05T14:32:00Z',
+            });
+            const wrapper = mountWithContext(context);
+            const button = connectButton(wrapper);
+
+            expect(button.exists()).toBe(true);
+            expect(button.text()).toBe('Connect Microsoft 365');
+            expect(button.attributes('aria-label')).toBe('Connect Microsoft 365');
+            expect(button.find('svg.lucide-link').exists()).toBe(true);
+            expect(wrapper.find('svg.text-amber-600').exists()).toBe(false);
+            expect(statusRegion(wrapper).exists()).toBe(false);
+            expect(syncButton(wrapper).exists()).toBe(false);
+            expect(reconnectButton(wrapper).exists()).toBe(false);
+            wrapper.unmount();
+        });
+
+        it('collapses the label below md and keeps the accessible name', () => {
+            for (const state of ['reconnect', 'not_connected'] as const) {
+                const { context } = fakeContext({ connectionState: state });
+                const wrapper = mountWithContext(context);
+                const button = wrapper.find('button');
+
+                expect(button.classes()).toEqual(
+                    expect.arrayContaining(['w-8', 'p-0', 'md:w-auto', 'md:px-3'])
+                );
+                expect(button.find('span').classes()).toEqual(
+                    expect.arrayContaining(['hidden', 'md:inline'])
+                );
+                expect(button.attributes('aria-label')).toBeTruthy();
+                wrapper.unmount();
+            }
+        });
+
+        it('navigates with navigateTo to the connect url and never through the Inertia router', async () => {
+            for (const state of ['reconnect', 'not_connected'] as const) {
+                navigateTo.mockReset();
+                const { context } = fakeContext({ connectionState: state });
+                const wrapper = mountWithContext(context);
+
+                await wrapper.find('button').trigger('click');
+
+                expect(navigateTo).toHaveBeenCalledTimes(1);
+                expect(navigateTo).toHaveBeenCalledWith(CONNECT_URL);
+                expect(routerVisit).not.toHaveBeenCalled();
+                wrapper.unmount();
+            }
+        });
+
+        it('connected state offers neither Connect nor Reconnect', () => {
+            const { context } = fakeContext();
+            const wrapper = mountWithContext(context);
+
+            expect(connectButton(wrapper).exists()).toBe(false);
+            expect(reconnectButton(wrapper).exists()).toBe(false);
+            wrapper.unmount();
+        });
     });
 
     it('shows the amber icon beside the unavailable text only in that state', async () => {
@@ -342,7 +460,13 @@ describe('OutlookCalendarControls with the real composable', () => {
             enabled: true,
             login_url: 'https://app.example.test/auth/microsoft/redirect',
             labels: { sign_in: 'Sign in', sign_in_hint: 'Hint' },
-            calendar: { state, urls: { meetings: MEETINGS_URL, sync: SYNC_URL }, labels },
+            calendar: {
+                state,
+                urls: { meetings: MEETINGS_URL, sync: SYNC_URL },
+                connect_url: CONNECT_URL,
+                notice: null,
+                labels,
+            },
         };
     }
 

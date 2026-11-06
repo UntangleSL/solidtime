@@ -56,7 +56,7 @@ class OutlookCalendarPropTest extends TestCaseWithDatabase
             ->where('microsoft.calendar.labels.sync', 'Sync Outlook')
             ->has('microsoft', fn (AssertableJson $microsoft) => $microsoft
                 ->has('calendar', fn (AssertableJson $calendar) => $calendar
-                    ->hasAll(['state', 'urls', 'labels'])
+                    ->hasAll(['state', 'urls', 'connect_url', 'notice', 'labels'])
                     ->has('urls', fn (AssertableJson $urls) => $urls->hasAll(['meetings', 'sync'])))
                 ->etc())
             ->etc());
