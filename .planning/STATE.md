@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 3
 current_phase_name: Outlook Meetings in the Calendar
 status: executing
-stopped_at: Completed 03-07-PLAN.md
-last_updated: "2026-11-06T13:31:56.704Z"
+stopped_at: Completed 03-08-PLAN.md
+last_updated: "2026-11-06T13:43:02.026Z"
 last_activity: 2026-11-05
 last_activity_desc: Phase 3 execution started
-state_head: d1339d9f86f9508a144fbb93409a1a066992af66
+state_head: fd5862a52b64f13185fc96b4bd67d276d117be27
 progress:
   total_phases: 8
   completed_phases: 2
   total_plans: 31
-  completed_plans: 26
+  completed_plans: 27
   percent: 25
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 ## Current Position
 
 Phase: 3 (Outlook Meetings in the Calendar) — EXECUTING
-Plan: 8 of 12
+Plan: 9 of 12
 Status: Ready to execute
 Last activity: 2026-11-05 — Phase 3 execution started
 
@@ -82,6 +82,7 @@ Progress: [███░░░░░░░] 25%
 | Phase 03 P04 | 95min | 3 tasks | 12 files |
 | Phase 3 P06 | 75 min | 3 tasks | 11 files |
 | Phase 03 P07 | 70min | 2 tasks | 9 files |
+| Phase 3 P08 | 45min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -137,6 +138,7 @@ Recent decisions affecting current work:
 - [Phase 3]: 03-06: a sync answer of reconnect/not_connected switches the composable connectionState and stops syncs; transport, 5xx, 401, 419, 429 only map to unavailable
 - [Phase 3]: 03-06: meetings read is a separate non-blocking query; TimeEntryCalendar loading stays bound to time entries only
 - [Phase 03]: 03-07: only forced (manual) Sync honours the client cooldown; reconnect/not_connected answers are sticky for the page life; empty-range status counts non-dismissed meetings overlapping the visible range
+- [Phase 3]: 03-08: connect return target is a one-value allow-list (calendar) in session microsoft.return, pulled on every callback exit; calendar notice level reduced to success/error server-side
 
 ### Roadmap Evolution
 
@@ -162,6 +164,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-06T13:31:56.399Z
-Stopped at: Completed 03-07-PLAN.md
+Last session: 2026-11-06T13:43:01.773Z
+Stopped at: Completed 03-08-PLAN.md
 Resume file: None
