@@ -31,10 +31,10 @@
 ### Outlook Sync (SYNC)
 
 - [x] **SYNC-01**: When the user opens the calendar, their Outlook meetings for the visible range are fetched from Microsoft Graph (read-only) without blocking the display of existing time entries
-- [ ] **SYNC-02**: User can press a "Sync" button to refresh meetings for the visible range; repeated presses/navigation are debounced and do not trigger Graph throttling
+- [x] **SYNC-02**: User can press a "Sync" button to refresh meetings for the visible range; repeated presses/navigation are debounced and do not trigger Graph throttling
 - [x] **SYNC-03**: Every timed meeting in the user's calendar is shown as a suggestion regardless of response status (organized, accepted, tentative, not responded); excluded: declined (Graph removes them), cancelled (`isCancelled`), all-day, and meetings marked private/confidential in Outlook. (Revised 2026-10-19: owner wants all meetings, not only accepted.)
 - [x] **SYNC-04**: Meeting times are correct in the user's timezone, including across DST changes
-- [ ] **SYNC-05**: If Graph is unavailable, slow or throttled, the calendar still works and shows a non-blocking status message (last synced time / retry later)
+- [x] **SYNC-05**: If Graph is unavailable, slow or throttled, the calendar still works and shows a non-blocking status message (last synced time / retry later)
 
 ### Meeting Suggestions in Calendar (CAL)
 
@@ -129,10 +129,10 @@ High level, added by the owner 2026-11-05; details to be refined in Phase 8 disc
 | SEC-03 | Phase 7 | Pending |
 | SEC-04 | Phase 7 | Pending |
 | SYNC-01 | Phase 3 | Complete |
-| SYNC-02 | Phase 3 | Pending |
+| SYNC-02 | Phase 3 | Complete |
 | SYNC-03 | Phase 3 | Complete |
 | SYNC-04 | Phase 3 | Complete |
-| SYNC-05 | Phase 3 | Pending |
+| SYNC-05 | Phase 3 | Complete |
 | CAL-01 | Phase 3 | Complete |
 | CAL-02 | Phase 3 | Complete |
 | CAL-03 | Phase 3 | Pending |
