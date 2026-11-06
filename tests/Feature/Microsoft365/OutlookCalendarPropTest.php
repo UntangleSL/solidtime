@@ -62,6 +62,91 @@ class OutlookCalendarPropTest extends TestCaseWithDatabase
             ->etc());
     }
 
+    public function test_calendar_carries_the_connect_url_with_the_calendar_return_target_and_no_notice(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $this->actingAs($this->createUser());
+
+        // Act
+        $response = $this->get(route('calendar', [], false));
+
+        // Assert
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.calendar.connect_url', route('microsoft.redirect', ['intent' => 'connect', 'return' => 'calendar']))
+            ->where('microsoft.calendar.notice', null)
+            ->etc());
+    }
+
+    public function test_connect_notice_reaches_the_calendar_once_with_its_level(): void
+    {
+        // Arrange: a refused connect that started in the calendar flashes an error notice
+        $this->configureMicrosoft365();
+        $holder = $this->createUser();
+        $this->connectedAccount($holder);
+        $user = $this->createUser();
+        $this->fakeMicrosoftGateway()->willReturn($this->microsoftIdentity());
+        $this->actingAs($user);
+        $this->get(route('microsoft.redirect', ['intent' => 'connect', 'return' => 'calendar'], false))->assertRedirect();
+        $this->get(route('microsoft.callback', ['code' => 'fake-code', 'state' => 'fake-state'], false))
+            ->assertRedirect(route('calendar', [], false));
+
+        // Act
+        $first = $this->get(route('calendar', [], false));
+        $second = $this->get(route('calendar', [], false));
+
+        // Assert
+        $first->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.calendar.notice.level', 'error')
+            ->where('microsoft.calendar.notice.message', __('microsoft365.error.identity_in_use'))
+            ->etc());
+        $second->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.calendar.notice', null)
+            ->etc());
+    }
+
+    public function test_successful_connect_notice_reaches_the_calendar_as_success(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $account = $this->connectedAccount($user);
+        $account->reconnect_required_at = Carbon::now();
+        $account->save();
+        $this->fakeMicrosoftGateway()->willReturn($this->microsoftIdentity());
+        $this->actingAs($user);
+        $this->get(route('microsoft.redirect', ['intent' => 'connect', 'return' => 'calendar'], false))->assertRedirect();
+        $this->get(route('microsoft.callback', ['code' => 'fake-code', 'state' => 'fake-state'], false))
+            ->assertRedirect(route('calendar', [], false));
+
+        // Act
+        $response = $this->get(route('calendar', [], false));
+
+        // Assert
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.calendar.state', 'connected')
+            ->where('microsoft.calendar.notice.level', 'success')
+            ->where('microsoft.calendar.notice.message', __('microsoft365.ui.connected_notice'))
+            ->etc());
+    }
+
+    public function test_notice_without_a_known_level_reads_as_success(): void
+    {
+        // Arrange: only the two levels of the notification store ever reach the page
+        $this->configureMicrosoft365();
+        $this->actingAs($this->createUser());
+
+        // Act
+        $response = $this->withSession(['microsoft365.notice' => 'Done.', 'microsoft365.notice_level' => 'critical'])
+            ->get(route('calendar', [], false));
+
+        // Assert
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.calendar.notice.level', 'success')
+            ->where('microsoft.calendar.notice.message', 'Done.')
+            ->etc());
+    }
+
     public function test_user_without_an_account_gets_not_connected(): void
     {
         // Arrange

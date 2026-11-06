@@ -19,11 +19,14 @@ import {
     type OutlookMeetingsContext,
 } from './useOutlookMeetings';
 
-const { pageProps, navigateTo, routerVisit } = vi.hoisted(() => ({
+const { pageProps, navigateTo, routerVisit, addNotification } = vi.hoisted(() => ({
     pageProps: {} as Record<string, unknown>,
     navigateTo: vi.fn(),
     routerVisit: vi.fn(),
+    addNotification: vi.fn(),
 }));
+
+vi.mock('@/utils/notification', () => ({ useNotificationsStore: () => ({ addNotification }) }));
 
 vi.mock('@inertiajs/vue3', () => ({
     usePage: () => ({ props: pageProps }),
@@ -696,9 +699,59 @@ describe('OutlookCalendarControls with the real composable', () => {
 
             expect(api.connectionState.value).toBe(status);
             expect(syncButton(wrapper).exists()).toBe(false);
+            // The Connect / Reconnect prompt takes the Sync position without a reload, and the last
+            // known meetings stay visible
+            expect(
+                (status === 'reconnect' ? reconnectButton : connectButton)(wrapper).exists()
+            ).toBe(true);
             expect(meetingCount(wrapper)).toBe('1');
             wrapper.unmount();
             await advance(20_000);
         }
+    });
+
+    describe('connect notice', () => {
+        function setNotice(notice: { level: 'success' | 'error'; message: string } | null): void {
+            setPage('connected');
+            (pageProps.microsoft as { calendar: { notice: unknown } }).calendar.notice = notice;
+        }
+
+        beforeEach(() => {
+            addNotification.mockReset();
+        });
+
+        it('shows an error notice once on mount through the notification store', async () => {
+            setNotice({ level: 'error', message: 'That Microsoft account is already in use.' });
+            const { wrapper } = mountPage();
+            await advance(0);
+
+            expect(addNotification).toHaveBeenCalledTimes(1);
+            expect(addNotification).toHaveBeenCalledWith(
+                'error',
+                'That Microsoft account is already in use.'
+            );
+            await advance(20_000);
+            expect(addNotification).toHaveBeenCalledTimes(1);
+            wrapper.unmount();
+        });
+
+        it('shows a success notice through the notification store', async () => {
+            setNotice({ level: 'success', message: 'Microsoft account connected.' });
+            const { wrapper } = mountPage();
+            await advance(0);
+
+            expect(addNotification).toHaveBeenCalledTimes(1);
+            expect(addNotification).toHaveBeenCalledWith('success', 'Microsoft account connected.');
+            wrapper.unmount();
+        });
+
+        it('shows nothing without a notice', async () => {
+            setNotice(null);
+            const { wrapper } = mountPage();
+            await advance(0);
+
+            expect(addNotification).not.toHaveBeenCalled();
+            wrapper.unmount();
+        });
     });
 });

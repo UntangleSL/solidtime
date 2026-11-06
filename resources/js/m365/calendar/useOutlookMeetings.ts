@@ -17,6 +17,7 @@ import {
     localDateToUtc,
 } from '@/packages/ui/src/utils/time';
 import { getWeekStartDayNumber } from '@/packages/ui/src/utils/settings';
+import { useNotificationsStore } from '@/utils/notification';
 import type {
     MicrosoftSharedProps,
     OutlookCalendarLabels,
@@ -384,6 +385,16 @@ export function useOutlookMeetings(
         }
         return null;
     }
+
+    // The outcome of a Connect / Reconnect that returned to the calendar (flashed by the server, so
+    // it is in the props for exactly one page load) goes through the existing notification store.
+    // The store is only touched when there is something to say.
+    onMounted(() => {
+        const notice = calendar.value?.notice;
+        if (notice) {
+            useNotificationsStore().addNotification(notice.level, notice.message);
+        }
+    });
 
     onMounted(() => {
         (window as unknown as TestWindow).__TEST_SET_OUTLOOK_MEETINGS__ = (
