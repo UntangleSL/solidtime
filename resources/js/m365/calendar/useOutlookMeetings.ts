@@ -1,5 +1,6 @@
 import {
     computed,
+    nextTick,
     onMounted,
     onUnmounted,
     provide,
@@ -67,6 +68,8 @@ export interface OutlookMeetingsContext {
     canAct: Readonly<Ref<boolean>>;
     // Optimistic: the meeting leaves the cache at once, the request follows.
     dismiss: (id: string) => Promise<void>;
+    // Polite live region text of the toolbar controls ("Meeting dismissed").
+    announcement: Readonly<Ref<string>>;
     dayOverlayLane: (dayStr: string, isDayView: boolean) => string | null;
 }
 
@@ -373,15 +376,52 @@ export function useOutlookMeetings(
 
     const canAct = computed(() => calendar.value !== null && testMeetings.value === null);
 
+    // Text of the polite live region in the toolbar controls (screen readers only).
+    const announcement = ref('');
+
+    // Clearing first makes the region change even when the same text is announced twice in a row.
+    function announce(text: string): void {
+        announcement.value = '';
+        void nextTick(() => {
+            announcement.value = text;
+        });
+    }
+
+    // Optimistic: the meeting leaves the cache before the request is sent (the removal is
+    // synchronous, so the caller can move focus right after a tick). A failure puts it back and says
+    // so through the notification store; a success is silent apart from the screen reader line.
     async function dismiss(id: string): Promise<void> {
         const url = calendar.value?.urls.meetings;
-        if (!url || !bucket.value) return;
+        const current = labels.value;
+        if (!url || !bucket.value || !current) return;
+
         const key = [...MEETINGS_QUERY_KEY, bucket.value.start];
-        await queryClient.cancelQueries({ queryKey: key });
+        // Stops an in-flight read of this week from overwriting the optimistic removal
+        void queryClient.cancelQueries({ queryKey: key });
+        const removed = queryClient
+            .getQueryData<OutlookMeetingsResponse>(key)
+            ?.data.find((meeting) => meeting.id === id);
         queryClient.setQueryData<OutlookMeetingsResponse>(key, (old) =>
             old ? { ...old, data: old.data.filter((meeting) => meeting.id !== id) } : old
         );
-        await dismissMeeting(url, id);
+
+        try {
+            await dismissMeeting(url, id);
+            announce(current.dismissed_announcement);
+        } catch {
+            if (removed) {
+                queryClient.setQueryData<OutlookMeetingsResponse>(key, (old) =>
+                    old && !old.data.some((meeting) => meeting.id === id)
+                        ? { ...old, data: [...old.data, removed] }
+                        : old
+                );
+            }
+            useNotificationsStore().addNotification(
+                'error',
+                current.dismiss_failed,
+                current.retry_body
+            );
+        }
         await queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
     }
 
@@ -450,6 +490,7 @@ export function useOutlookMeetings(
         requestSync,
         canAct,
         dismiss,
+        announcement,
         dayOverlayLane,
     };
 

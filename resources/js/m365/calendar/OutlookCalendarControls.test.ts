@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computed, defineComponent, h, ref, type Ref } from 'vue';
+import { computed, defineComponent, h, nextTick, ref, type Ref } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import axios from 'axios';
@@ -120,6 +120,7 @@ function fakeContext(initial: Partial<Record<string, unknown>> = {}) {
         bucket: ref(null),
         meetings: ref([]),
         cooldownUntil: ref(0),
+        announcement: ref(''),
         requestSync,
         dayOverlayLane: () => null,
     } as unknown as OutlookMeetingsContext;
@@ -163,6 +164,24 @@ describe('OutlookCalendarControls', () => {
         expect(syncButton(wrapper).attributes('aria-label')).toBe('Sync Outlook meetings');
         expect(syncButton(wrapper).attributes('disabled')).toBeUndefined();
         expect(statusRegion(wrapper).attributes('aria-live')).toBe('polite');
+        wrapper.unmount();
+    });
+
+    it('reads the dismiss announcement inside the polite status region', async () => {
+        const { context } = fakeContext();
+        const wrapper = mountWithContext(context);
+        const announcement = wrapper.find('[data-testid="outlook-announcement"]');
+
+        expect(statusRegion(wrapper).element.contains(announcement.element)).toBe(true);
+        expect(announcement.classes()).toContain('sr-only');
+        expect(announcement.text()).toBe('');
+
+        (context.announcement as Ref<string>).value = 'Meeting dismissed';
+        await nextTick();
+
+        expect(wrapper.find('[data-testid="outlook-announcement"]').text()).toBe(
+            'Meeting dismissed'
+        );
         wrapper.unmount();
     });
 

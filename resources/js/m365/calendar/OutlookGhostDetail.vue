@@ -1,6 +1,19 @@
+<script lang="ts">
+// Outlook links are untrusted values: only a well-formed https URL may become an href (T-03-23).
+export function safeHttpsUrl(value: string | null): string | null {
+    if (!value) return null;
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' ? url.href : null;
+    } catch {
+        return null;
+    }
+}
+</script>
+
 <script setup lang="ts">
 import { computed, inject, useId, type ComputedRef } from 'vue';
-import { CalendarDays, Clock } from '@lucide/vue';
+import { CalendarDays, Clock, ExternalLink, User, Video } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
 import Button from '@/packages/ui/src/Buttons/Button.vue';
 import { Popover, PopoverContent, PopoverTrigger } from '@/packages/ui/src/popover';
@@ -11,6 +24,7 @@ import {
     getLocalizedDayJs,
 } from '@/packages/ui/src/utils/time';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
+import { fillLabel } from './labels';
 
 // Detail panel of one ghost (non-modal popover). The default slot is the trigger (the ghost). It
 // owns no network code: Dismiss and Restore are emitted and the caller acts. Meeting values are only
@@ -59,6 +73,14 @@ const timeRow = computed(() => {
     return `${range} · ${duration}`;
 });
 
+const organizerText = computed(() => {
+    if (props.meeting.is_organizer) return props.labels.you_organize;
+    const name = props.meeting.organizer_name?.trim();
+    return name ? fillLabel(props.labels.organized_by, { name }) : null;
+});
+
+const link = computed(() => safeHttpsUrl(props.meeting.web_link));
+
 // Reka labels the dialog with its trigger (the ghost) and overrides any aria-labelledby passed to the
 // content, so the subject heading takes over the labelling once it is mounted.
 function labelDialogBySubject(el: unknown): void {
@@ -98,8 +120,32 @@ function onAction() {
                 <Clock class="mt-px size-3.5 shrink-0 text-text-tertiary" aria-hidden="true" />
                 <span data-testid="outlook-detail-time">{{ timeRow }}</span>
             </div>
-            <Separator class="my-3" />
-            <div class="flex justify-end gap-2">
+            <div
+                v-if="organizerText"
+                class="mt-1.5 flex items-start gap-1.5 text-xs text-text-secondary">
+                <User class="mt-px size-3.5 shrink-0 text-text-tertiary" aria-hidden="true" />
+                <span data-testid="outlook-detail-organizer">{{ organizerText }}</span>
+            </div>
+            <div
+                v-if="meeting.is_online_meeting"
+                class="mt-1.5 flex items-start gap-1.5 text-xs text-text-secondary">
+                <Video class="mt-px size-3.5 shrink-0 text-text-tertiary" aria-hidden="true" />
+                <span data-testid="outlook-detail-online">{{ labels.online }}</span>
+            </div>
+            <slot name="meta" />
+            <a
+                v-if="link"
+                :href="link"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="outlook-detail-link"
+                class="mt-2 inline-flex items-center gap-1 text-xs text-accent-500 hover:underline dark:text-accent-400">
+                <span>{{ labels.open_in_outlook }}</span>
+                <ExternalLink class="size-3" aria-hidden="true" />
+                <span class="sr-only">{{ labels.opens_new_tab }}</span>
+            </a>
+            <Separator class="mt-3" />
+            <div class="mt-4 flex justify-end gap-2">
                 <Button
                     v-if="canAct"
                     type="button"
@@ -109,6 +155,10 @@ function onAction() {
                     @click="onAction">
                     {{ meeting.dismissed ? labels.restore : labels.dismiss }}
                 </Button>
+                <slot name="actions" />
+            </div>
+            <div v-if="$slots['footer-note']" class="mt-2 text-xs text-text-tertiary">
+                <slot name="footer-note" />
             </div>
         </PopoverContent>
     </Popover>

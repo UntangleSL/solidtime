@@ -93,6 +93,9 @@ function onConnect() {
                     class="sr-only text-xs text-text-tertiary lg:not-sr-only lg:max-w-64 lg:truncate">
                     {{ status.text }}
                 </span>
+                <span class="sr-only" data-testid="outlook-announcement">
+                    {{ context.announcement.value }}
+                </span>
             </div>
             <TooltipProvider :delay-duration="300">
                 <Tooltip>
@@ -127,7 +130,7 @@ function onConnect() {
         </template>
         <template v-else-if="(isReconnect || isNotConnected) && labels">
             <div
-                v-if="reconnectStatus"
+                v-if="reconnectStatus || context.announcement.value"
                 role="status"
                 aria-live="polite"
                 data-testid="outlook-sync-status"
@@ -135,6 +138,9 @@ function onConnect() {
                 <span
                     class="sr-only text-xs text-text-tertiary lg:not-sr-only lg:max-w-64 lg:truncate">
                     {{ reconnectStatus }}
+                </span>
+                <span class="sr-only" data-testid="outlook-announcement">
+                    {{ context.announcement.value }}
                 </span>
             </div>
             <TooltipProvider :delay-duration="300">

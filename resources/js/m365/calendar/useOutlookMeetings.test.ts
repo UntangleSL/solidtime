@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { defineComponent, h, nextTick, ref, type Ref } from 'vue';
+import { defineComponent, h, nextTick, ref, watch, type Ref } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import axios from 'axios';
@@ -15,7 +15,12 @@ import type {
 } from '@/m365/types';
 import { OUTLOOK_MEETINGS_KEY, useOutlookMeetings, weekBucket } from './useOutlookMeetings';
 
-const { pageProps } = vi.hoisted(() => ({ pageProps: {} as Record<string, unknown> }));
+const { pageProps, addNotification } = vi.hoisted(() => ({
+    pageProps: {} as Record<string, unknown>,
+    addNotification: vi.fn(),
+}));
+
+vi.mock('@/utils/notification', () => ({ useNotificationsStore: () => ({ addNotification }) }));
 
 vi.mock('@inertiajs/vue3', () => ({
     usePage: () => ({ props: pageProps }),
@@ -57,7 +62,13 @@ function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
         connect_url:
             'https://app.example.test/auth/microsoft/redirect?intent=connect&return=calendar',
         notice: null,
-        labels: { no_subject: '(No subject)', last_synced: 'Last synced :time' } as never,
+        labels: {
+            no_subject: '(No subject)',
+            last_synced: 'Last synced :time',
+            dismiss_failed: 'Could not dismiss this meeting',
+            retry_body: 'Try again in a moment.',
+            dismissed_announcement: 'Meeting dismissed',
+        } as never,
     };
 }
 
@@ -156,6 +167,7 @@ beforeEach(() => {
     vi.setSystemTime(new Date('2026-11-05T10:00:00Z'));
     axiosGet.mockReset();
     axiosPost.mockReset();
+    addNotification.mockReset();
     axiosGet.mockResolvedValue(readResponse());
     axiosPost.mockResolvedValue(syncResponse());
     setPage('connected');
@@ -645,6 +657,100 @@ describe('useOutlookMeetings sync control state', () => {
         await advance(0);
         await advance(0);
         expect(mounted.api.syncedAt.value).toBeNull();
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings dismiss', () => {
+    const first = meeting('m-1', '2026-11-03T09:00:00Z', '2026-11-03T10:00:00Z');
+    const second = meeting('m-2', '2026-11-03T11:00:00Z', '2026-11-03T12:00:00Z');
+
+    function dismissUrl(id: string): string {
+        return MEETINGS_URL + '/' + id + '/dismiss';
+    }
+
+    async function mountWithMeetings(): Promise<Mounted> {
+        axiosGet.mockResolvedValue(readResponse([first, second]));
+        const mounted = mountComposable();
+        await advance(500);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        axiosPost.mockClear();
+        return mounted;
+    }
+
+    it('removes the meeting at once, posts to the dismiss url and stays silent on success', async () => {
+        const mounted = await mountWithMeetings();
+        const request = deferred<{ data: Record<string, never> }>();
+        axiosPost.mockReturnValue(request.promise);
+        axiosGet.mockResolvedValue(readResponse([second]));
+
+        const done = mounted.api.dismiss('m-1');
+
+        // Optimistic: gone before the request has answered
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-2']);
+        expect(axiosPost).toHaveBeenCalledWith(dismissUrl('m-1'));
+        request.resolve({ data: {} });
+        await done;
+        await advance(0);
+
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-2']);
+        expect(addNotification).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('announces "Meeting dismissed" after a successful dismiss, also the second time', async () => {
+        const mounted = await mountWithMeetings();
+        axiosPost.mockResolvedValue({ data: {} });
+        axiosGet.mockResolvedValue(readResponse([second]));
+
+        await mounted.api.dismiss('m-1');
+        await advance(0);
+        expect(mounted.api.announcement.value).toBe('Meeting dismissed');
+
+        const changes: string[] = [];
+        const stop = watch(mounted.api.announcement, (value) => changes.push(value), {
+            flush: 'sync',
+        });
+        axiosGet.mockResolvedValue(readResponse([]));
+        await mounted.api.dismiss('m-2');
+        await advance(0);
+        stop();
+
+        // Cleared first so that a screen reader reads the same text again
+        expect(changes).toEqual(['', 'Meeting dismissed']);
+        mounted.wrapper.unmount();
+    });
+
+    it('restores the ghost and reports the documented error when the request fails', async () => {
+        const mounted = await mountWithMeetings();
+        axiosPost.mockRejectedValue(httpError(500));
+
+        await mounted.api.dismiss('m-1');
+        await advance(0);
+
+        expect(mounted.api.meetings.value.map((m) => m.id).sort()).toEqual(['m-1', 'm-2']);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not dismiss this meeting',
+            'Try again in a moment.'
+        );
+        expect(mounted.api.announcement.value).toBe('');
+        mounted.wrapper.unmount();
+    });
+
+    it('can act on server meetings but not in test-hook mode', async () => {
+        const mounted = await mountWithMeetings();
+        expect(mounted.api.canAct.value).toBe(true);
+
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (list: OutlookMeeting[]) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__([first]);
+        await nextTick();
+
+        expect(mounted.api.canAct.value).toBe(false);
         mounted.wrapper.unmount();
     });
 });

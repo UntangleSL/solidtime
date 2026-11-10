@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref, type ComputedRef } from 'vue';
+import { computed, inject, nextTick, ref, type ComputedRef } from 'vue';
 import { CalendarDays, Video } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
 import { formatTime, getLocalizedDayJsFromMinutes } from '@/packages/ui/src/utils/time';
@@ -48,9 +48,24 @@ function setOpen(id: string, value: boolean): void {
     else if (openId.value === id) openId.value = null;
 }
 
-function onDismiss(meeting: OutlookMeeting): void {
+// After a dismiss the focused ghost is gone: focus moves to the next ghost of this day (the previous
+// one for the last), or to the Sync button when the day has no ghost left.
+const layerEl = ref<HTMLElement | null>(null);
+
+async function onDismiss(meeting: OutlookMeeting): Promise<void> {
+    const list = boxes.value;
+    const index = list.findIndex((box) => box.meeting.id === meeting.id);
+    const neighbour = list[index + 1] ?? list[index - 1] ?? null;
     openId.value = null;
     void context?.dismiss(meeting.id);
+
+    await nextTick();
+    const next = neighbour
+        ? layerEl.value?.querySelector<HTMLElement>(
+              `[data-ghost-id="${CSS.escape(neighbour.meeting.id)}"]`
+          )
+        : null;
+    (next ?? document.querySelector<HTMLElement>('[data-testid="outlook-sync-button"]'))?.focus();
 }
 
 const boxes = computed(() =>
@@ -105,6 +120,7 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
 <template>
     <div
         v-if="boxes.length > 0"
+        ref="layerEl"
         role="group"
         :aria-label="layerLabel"
         class="absolute inset-y-0 right-0.5 pointer-events-none"

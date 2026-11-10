@@ -15,12 +15,21 @@ interface InjectedMeeting {
     end: string;
 }
 
-// Subset of the English copy that the ghost layer reads (microsoft365.calendar.*)
+// Subset of the English copy that the ghost layer and its detail panel read (microsoft365.calendar.*)
 const LABELS = {
     no_subject: '(No subject)',
     ghost_label: ':subject, :start to :end, Outlook meeting suggestion',
     layer_label: 'Outlook meetings, :day',
     dismissed_suffix: ', dismissed',
+    eyebrow: 'Outlook meeting',
+    eyebrow_dismissed: 'Outlook meeting · Dismissed',
+    organized_by: 'Organized by :name',
+    you_organize: 'You are the organizer',
+    online: 'Online meeting',
+    open_in_outlook: 'Open in Outlook',
+    opens_new_tab: '(opens in a new tab)',
+    dismiss: 'Dismiss meeting',
+    restore: 'Restore meeting',
 };
 
 async function goToCalendar(page: Page) {
@@ -116,13 +125,15 @@ test.describe('Outlook ghosts', () => {
         ).toBeVisible();
     });
 
-    test('clicking a ghost opens no create-time-entry dialog', async ({ page }) => {
+    test('clicking a ghost opens the Outlook detail panel and never the create dialog', async ({
+        page,
+    }) => {
         await goToCalendar(page);
         await scrollCalendarToTime(page, '14:00:00');
         await injectMeetings(page, [
             {
                 id: 'm-click',
-                subject: 'Click target',
+                subject: 'Weekly sync',
                 start: todayAt('14:00:00'),
                 end: todayAt('15:00:00'),
             },
@@ -131,17 +142,24 @@ test.describe('Outlook ghosts', () => {
         await expect(ghost).toHaveCount(1);
 
         await ghost.click();
-        await page.waitForTimeout(500);
 
+        const dialog = page.getByRole('dialog');
+        await expect(dialog).toHaveCount(1);
+        await expect(dialog).toContainText('Weekly sync');
+        await expect(page.getByRole('button', { name: 'No Project' })).toHaveCount(0);
+
+        await page.keyboard.press('Escape');
         await expect(page.getByRole('dialog')).toHaveCount(0);
-        // A second pointer path: press and release on the ghost, then a short drag across it
+
+        // A second pointer path: press, short drag across the ghost and release. It may open the
+        // Outlook panel, but never the create-time-entry dialog.
         const box = await ghost.boundingBox();
         await page.mouse.move(box!.x + box!.width / 2, box!.y + 4);
         await page.mouse.down();
         await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height - 4, { steps: 5 });
         await page.mouse.up();
         await page.waitForTimeout(500);
-        await expect(page.getByRole('dialog')).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'No Project' })).toHaveCount(0);
     });
 
     test('a ghost exactly overlapping a time entry stays visible and clickable and the entry stays editable', async ({

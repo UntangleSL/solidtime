@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computed, createSSRApp, h, nextTick, ref, type Ref } from 'vue';
+import { computed, createSSRApp, defineComponent, h, nextTick, ref, type Ref } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { renderToString } from 'vue/server-renderer';
 import type { Dayjs } from 'dayjs';
@@ -7,6 +7,7 @@ import CalendarDayColumn from '@/packages/ui/src/FullCalendar/CalendarDayColumn.
 import { useSlotSelection } from '@/packages/ui/src/FullCalendar/useSlotSelection';
 import type { CalendarSettings } from '@/packages/ui/src/FullCalendar/calendarSettings';
 import OutlookGhostLayer from './OutlookGhostLayer.vue';
+import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
 import { ghostLaneWidth } from './ghostLayout';
 import { useCalendarEvents } from '@/packages/ui/src/FullCalendar/useCalendarEvents';
 import type { DayEvent } from '@/packages/ui/src/FullCalendar/calendarTypes';
@@ -21,6 +22,15 @@ const labels = {
     no_subject: '(No subject)',
     ghost_label: ':subject, :start to :end, Outlook meeting suggestion',
     layer_label: 'Outlook meetings, :weekday :date',
+    eyebrow: 'Outlook meeting',
+    eyebrow_dismissed: 'Outlook meeting · Dismissed',
+    organized_by: 'Organized by :name',
+    you_organize: 'You are the organizer',
+    online: 'Online meeting',
+    open_in_outlook: 'Open in Outlook',
+    opens_new_tab: '(opens in a new tab)',
+    dismiss: 'Dismiss meeting',
+    restore: 'Restore meeting',
 } as OutlookCalendarLabels;
 
 const settings: CalendarSettings = { snapMinutes: 15, startHour: 0, endHour: 24, slotMinutes: 15 };
@@ -569,5 +579,162 @@ describe('ghost content by available height', () => {
         expect((ghosts[0]!.element as HTMLElement).style.width).toBe('50%');
         expect((ghosts[0]!.element as HTMLElement).style.left).toBe('0%');
         expect((ghosts[1]!.element as HTMLElement).style.left).toBe('50%');
+    });
+});
+
+// The layer with its detail panels, an injected context and a stand-in Sync button (the focus
+// fallback after the last ghost of a day is dismissed).
+function mountInteractive(initial: OutlookMeeting[], canAct = true) {
+    const list = ref(initial);
+    const dismiss = vi.fn(async (id: string) => {
+        list.value = list.value.filter((item) => item.id !== id);
+    });
+    const context = { canAct: ref(canAct), dismiss } as unknown as OutlookMeetingsContext;
+    const Host = defineComponent({
+        setup() {
+            return () =>
+                h('div', [
+                    h(OutlookGhostLayer, {
+                        meetings: list.value,
+                        labels,
+                        dayStr: DAY,
+                        isDayView: false,
+                        minutesToPixels,
+                        settings,
+                    }),
+                    h('button', { 'data-testid': 'outlook-sync-button' }, 'Sync'),
+                ]);
+        },
+    });
+    const wrapper = mount(Host, {
+        attachTo: document.body,
+        global: {
+            provide: {
+                [OUTLOOK_MEETINGS_KEY as symbol]: context,
+                organization: computed(() => ({ time_format: '24-hours' })),
+            },
+        },
+    });
+    return { wrapper, dismiss };
+}
+
+function ghostElements(): HTMLElement[] {
+    return Array.from(document.body.querySelectorAll<HTMLElement>('[data-calendar-overlay]'));
+}
+
+function keydown(el: Element, key: string) {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+}
+
+async function settle() {
+    await nextTick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await nextTick();
+}
+
+describe('OutlookGhostLayer detail panel', () => {
+    let wrapper: VueWrapper | null = null;
+
+    beforeEach(() => {
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('Europe/Madrid');
+    });
+
+    afterEach(() => {
+        wrapper?.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+    });
+
+    it('announces a dialog popup on the ghost and is collapsed while closed', () => {
+        wrapper = mountInteractive([meeting()]).wrapper;
+
+        const ghost = ghostElements()[0]!;
+        expect(ghost.getAttribute('aria-haspopup')).toBe('dialog');
+        expect(ghost.getAttribute('aria-expanded')).toBe('false');
+        expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    it.each([
+        ['Enter', 'Enter'],
+        ['Space', ' '],
+    ])('%s on a focused ghost opens the panel', async (_name, key) => {
+        wrapper = mountInteractive([meeting()]).wrapper;
+        const ghost = ghostElements()[0]!;
+        ghost.focus();
+
+        keydown(ghost, key);
+        await settle();
+
+        expect(ghost.getAttribute('aria-expanded')).toBe('true');
+        expect(ghost.getAttribute('data-state')).toBe('open');
+        expect(ghost.className).toContain('data-[state=open]:ring-accent-500');
+        const dialog = document.body.querySelector('[role="dialog"]');
+        expect(dialog?.textContent).toContain('Sprint planning');
+    });
+
+    it('a click opens the panel and Escape closes it again', async () => {
+        wrapper = mountInteractive([meeting()]).wrapper;
+        const ghost = ghostElements()[0]!;
+
+        ghost.click();
+        await settle();
+        expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+
+        keydown(document.body, 'Escape');
+        await settle();
+
+        expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+        expect(ghost.getAttribute('aria-expanded')).toBe('false');
+        // Reka hands focus back to the trigger, which is the ghost
+        expect(document.activeElement).toBe(ghost);
+    });
+
+    it('offers no Dismiss button when the context cannot act', async () => {
+        wrapper = mountInteractive([meeting()], false).wrapper;
+
+        ghostElements()[0]!.click();
+        await settle();
+
+        expect(document.body.querySelector('[data-testid="outlook-detail-action"]')).toBeNull();
+    });
+
+    it('dismiss calls the context, closes the panel and focuses the next ghost of the day', async () => {
+        const mounted = mountInteractive([
+            meeting({ id: 'a', subject: 'First' }),
+            meeting({
+                id: 'b',
+                subject: 'Second',
+                start: '2026-10-20T10:00:00Z',
+                end: '2026-10-20T11:00:00Z',
+            }),
+        ]);
+        wrapper = mounted.wrapper;
+        ghostElements()[0]!.click();
+        await settle();
+
+        document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-action"]')!.click();
+        await settle();
+
+        expect(mounted.dismiss).toHaveBeenCalledWith('a');
+        expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+        const remaining = ghostElements();
+        expect(remaining).toHaveLength(1);
+        expect(document.activeElement).toBe(remaining[0]);
+    });
+
+    it('dismissing the last ghost of the day focuses the Sync button', async () => {
+        const mounted = mountInteractive([meeting()]);
+        wrapper = mounted.wrapper;
+        ghostElements()[0]!.click();
+        await settle();
+
+        document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-action"]')!.click();
+        await settle();
+
+        expect(ghostElements()).toHaveLength(0);
+        expect(document.activeElement).toBe(
+            document.body.querySelector('[data-testid="outlook-sync-button"]')
+        );
     });
 });
