@@ -20,6 +20,7 @@ use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Models\User;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -146,7 +147,16 @@ class OutlookMeetingDismissTest extends TestCaseWithDatabase
         $this->configureMicrosoft365();
         $user = $this->createUser();
         $this->connectedAccount($user);
-        $this->fakeGraphCalendar('A');
+        // One Http::fake for both syncs: a second Http::fake would not override the first, and an
+        // exhausted sequence answers with an exception
+        Config::set('microsoft365.graph.max_pages', 30);
+        $sequence = Http::sequence();
+        foreach ([1, 2] as $_round) {
+            foreach ($this->graphPages('A') as $page) {
+                $sequence->push($page);
+            }
+        }
+        Http::fake(['https://graph.microsoft.com/v1.0/me/calendarView*' => $sequence]);
         $this->actingAs($user);
         $window = $this->fixtureWindow();
         $this->postJson(route('microsoft.meetings.sync', [], false), $window)->assertOk();
@@ -155,8 +165,7 @@ class OutlookMeetingDismissTest extends TestCaseWithDatabase
         $stamp = $row->refresh()->dismissed_at;
 
         // Act: a later sync of the same window returns the same occurrence again
-        Carbon::setTestNow(Carbon::now()->addSeconds(61));
-        $this->fakeGraphCalendar('A');
+        $this->travel(61)->seconds();
         $resync = $this->postJson(route('microsoft.meetings.sync', [], false), $window);
 
         // Assert
