@@ -31,6 +31,7 @@ const labels = {
     opens_new_tab: '(opens in a new tab)',
     dismiss: 'Dismiss meeting',
     restore: 'Restore meeting',
+    dismissed_suffix: ', dismissed',
 } as OutlookCalendarLabels;
 
 const settings: CalendarSettings = { snapMinutes: 15, startHour: 0, endHour: 24, slotMinutes: 15 };
@@ -584,12 +585,25 @@ describe('ghost content by available height', () => {
 
 // The layer with its detail panels, an injected context and a stand-in Sync button (the focus
 // fallback after the last ghost of a day is dismissed).
-function mountInteractive(initial: OutlookMeeting[], canAct = true) {
+function mountInteractive(initial: OutlookMeeting[], canAct = true, includeDismissed = false) {
     const list = ref(initial);
+    // Mirrors the composable: a dismiss removes the ghost, or flags it while dismissed ones are shown
     const dismiss = vi.fn(async (id: string) => {
-        list.value = list.value.filter((item) => item.id !== id);
+        list.value = includeDismissed
+            ? list.value.map((item) => (item.id === id ? { ...item, dismissed: true } : item))
+            : list.value.filter((item) => item.id !== id);
     });
-    const context = { canAct: ref(canAct), dismiss } as unknown as OutlookMeetingsContext;
+    const restore = vi.fn(async (id: string) => {
+        list.value = list.value.map((item) =>
+            item.id === id ? { ...item, dismissed: false } : item
+        );
+    });
+    const context = {
+        canAct: ref(canAct),
+        includeDismissed: ref(includeDismissed),
+        dismiss,
+        restore,
+    } as unknown as OutlookMeetingsContext;
     const Host = defineComponent({
         setup() {
             return () =>
@@ -615,7 +629,7 @@ function mountInteractive(initial: OutlookMeeting[], canAct = true) {
             },
         },
     });
-    return { wrapper, dismiss };
+    return { wrapper, dismiss, restore };
 }
 
 function ghostElements(): HTMLElement[] {
@@ -736,5 +750,115 @@ describe('OutlookGhostLayer detail panel', () => {
         expect(document.activeElement).toBe(
             document.body.querySelector('[data-testid="outlook-sync-button"]')
         );
+    });
+});
+
+describe('OutlookGhostLayer dismissed variant', () => {
+    let wrapper: VueWrapper | null = null;
+
+    beforeEach(() => {
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('Europe/Madrid');
+    });
+
+    afterEach(() => {
+        wrapper?.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+    });
+
+    it('renders a dismissed meeting with the dotted variant, EyeOff icon and a ", dismissed" label', () => {
+        wrapper = mountInteractive(
+            [meeting({ dismissed: true }), meeting({ id: 'm-2' })],
+            true,
+            true
+        ).wrapper;
+
+        const [dismissed, regular] = ghostElements();
+        expect(dismissed!.classList.contains('m365-ghost--dismissed')).toBe(true);
+        expect(dismissed!.classList.contains('border-dotted')).toBe(true);
+        expect(dismissed!.classList.contains('border-dashed')).toBe(false);
+        expect(dismissed!.querySelector('svg.lucide-eye-off')).not.toBeNull();
+        expect(dismissed!.querySelector('svg.lucide-calendar-days')).toBeNull();
+        expect(dismissed!.getAttribute('aria-label')).toMatch(/, dismissed$/);
+
+        expect(regular!.classList.contains('m365-ghost--dismissed')).toBe(false);
+        expect(regular!.classList.contains('border-dashed')).toBe(true);
+        expect(regular!.querySelector('svg.lucide-calendar-days')).not.toBeNull();
+        expect(regular!.getAttribute('aria-label')).not.toMatch(/dismissed/);
+    });
+
+    it('the panel of a dismissed meeting offers Restore, which calls restore(id) and keeps focus on the ghost', async () => {
+        const mounted = mountInteractive([meeting({ dismissed: true })], true, true);
+        wrapper = mounted.wrapper;
+        ghostElements()[0]!.click();
+        await settle();
+
+        const action = document.body.querySelector<HTMLElement>(
+            '[data-testid="outlook-detail-action"]'
+        )!;
+        expect(action.textContent?.trim()).toBe('Restore meeting');
+        action.click();
+        await settle();
+
+        expect(mounted.restore).toHaveBeenCalledWith('m-1');
+        expect(mounted.dismiss).not.toHaveBeenCalled();
+        expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+        const ghosts = ghostElements();
+        expect(ghosts).toHaveLength(1);
+        expect(ghosts[0]!.classList.contains('m365-ghost--dismissed')).toBe(false);
+        expect(document.activeElement).toBe(ghosts[0]);
+    });
+
+    it('a dismiss with the switch on turns the ghost into the dismissed variant and keeps focus on it', async () => {
+        const mounted = mountInteractive(
+            [
+                meeting({ id: 'a', subject: 'First' }),
+                meeting({
+                    id: 'b',
+                    subject: 'Second',
+                    start: '2026-10-20T10:00:00Z',
+                    end: '2026-10-20T11:00:00Z',
+                }),
+            ],
+            true,
+            true
+        );
+        wrapper = mounted.wrapper;
+        const first = ghostElements()[0]!;
+        first.click();
+        await settle();
+
+        document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-action"]')!.click();
+        await settle();
+
+        expect(mounted.dismiss).toHaveBeenCalledWith('a');
+        const ghosts = ghostElements();
+        expect(ghosts).toHaveLength(2);
+        expect(ghosts[0]!.classList.contains('m365-ghost--dismissed')).toBe(true);
+        expect(document.activeElement).toBe(ghosts[0]);
+        // Not the neighbour: the focused ghost is the one that was dismissed
+        expect(document.activeElement).not.toBe(ghosts[1]);
+    });
+
+    it('with the switch off a dismiss still moves focus to the next ghost', async () => {
+        const mounted = mountInteractive(
+            [
+                meeting({ id: 'a' }),
+                meeting({ id: 'b', start: '2026-10-20T10:00:00Z', end: '2026-10-20T11:00:00Z' }),
+            ],
+            true,
+            false
+        );
+        wrapper = mounted.wrapper;
+        ghostElements()[0]!.click();
+        await settle();
+
+        document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-action"]')!.click();
+        await settle();
+
+        const remaining = ghostElements();
+        expect(remaining).toHaveLength(1);
+        expect(document.activeElement).toBe(remaining[0]);
     });
 });

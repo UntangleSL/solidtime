@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, type ComputedRef } from 'vue';
-import { CalendarDays, Video } from '@lucide/vue';
+import { CalendarDays, EyeOff, Video } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
 import { formatTime, getLocalizedDayJsFromMinutes } from '@/packages/ui/src/utils/time';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
@@ -48,23 +48,42 @@ function setOpen(id: string, value: boolean): void {
     else if (openId.value === id) openId.value = null;
 }
 
-// After a dismiss the focused ghost is gone: focus moves to the next ghost of this day (the previous
-// one for the last), or to the Sync button when the day has no ghost left.
 const layerEl = ref<HTMLElement | null>(null);
 
+function ghostElement(id: string): HTMLElement | null {
+    return layerEl.value?.querySelector<HTMLElement>(`[data-ghost-id="${CSS.escape(id)}"]`) ?? null;
+}
+
+// A restore, or a dismiss while dismissed meetings are shown, keeps the ghost rendered (as the
+// other variant): focus stays on that same ghost.
+async function keepFocusOn(id: string): Promise<void> {
+    await nextTick();
+    ghostElement(id)?.focus();
+}
+
+async function onRestore(meeting: OutlookMeeting): Promise<void> {
+    openId.value = null;
+    void context?.restore(meeting.id);
+    await keepFocusOn(meeting.id);
+}
+
+// After a dismiss that removes the focused ghost, focus moves to the next ghost of this day (the
+// previous one for the last), or to the Sync button when the day has no ghost left.
 async function onDismiss(meeting: OutlookMeeting): Promise<void> {
+    const stays = context?.includeDismissed.value === true;
     const list = boxes.value;
     const index = list.findIndex((box) => box.meeting.id === meeting.id);
     const neighbour = list[index + 1] ?? list[index - 1] ?? null;
     openId.value = null;
     void context?.dismiss(meeting.id);
 
+    if (stays) {
+        await keepFocusOn(meeting.id);
+        return;
+    }
+
     await nextTick();
-    const next = neighbour
-        ? layerEl.value?.querySelector<HTMLElement>(
-              `[data-ghost-id="${CSS.escape(neighbour.meeting.id)}"]`
-          )
-        : null;
+    const next = neighbour ? ghostElement(neighbour.meeting.id) : null;
     (next ?? document.querySelector<HTMLElement>('[data-testid="outlook-sync-button"]'))?.focus();
 }
 
@@ -109,11 +128,12 @@ function subjectOf(meeting: OutlookMeeting): string {
 }
 
 function ariaLabelOf(meeting: OutlookMeeting): string {
-    return fillLabel(props.labels.ghost_label, {
+    const label = fillLabel(props.labels.ghost_label, {
         subject: subjectOf(meeting),
         start: formatTime(meeting.start, timeFormat.value),
         end: formatTime(meeting.end, timeFormat.value),
     });
+    return meeting.dismissed ? label + props.labels.dismissed_suffix : label;
 }
 </script>
 
@@ -133,10 +153,13 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
             :can-act="canAct"
             :open="openId === box.meeting.id"
             @update:open="(value: boolean) => setOpen(box.meeting.id, value)"
-            @dismiss="onDismiss(box.meeting)">
+            @dismiss="onDismiss(box.meeting)"
+            @restore="onRestore(box.meeting)">
             <div
-                class="m365-ghost absolute pointer-events-auto select-none cursor-pointer rounded-sm border border-dashed border-text-tertiary overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[state=open]:ring-2 data-[state=open]:ring-accent-500"
+                class="m365-ghost absolute pointer-events-auto select-none cursor-pointer rounded-sm border border-text-tertiary overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[state=open]:ring-2 data-[state=open]:ring-accent-500"
                 :class="{
+                    'border-dashed': !box.meeting.dismissed,
+                    'border-dotted m365-ghost--dismissed': box.meeting.dismissed,
                     'rounded-t-none': box.isClippedStart,
                     'rounded-b-none': box.isClippedEnd,
                 }"
@@ -154,7 +177,12 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
                 @keydown.enter.prevent="($event.currentTarget as HTMLElement).click()"
                 @keydown.space.prevent="($event.currentTarget as HTMLElement).click()">
                 <div class="flex h-full items-start gap-1 px-1 py-px text-2xs leading-tight">
+                    <EyeOff
+                        v-if="box.meeting.dismissed"
+                        class="mt-px h-3 w-3 shrink-0 text-text-tertiary"
+                        aria-hidden="true" />
                     <CalendarDays
+                        v-else
                         class="mt-px h-3 w-3 shrink-0 text-text-tertiary"
                         aria-hidden="true" />
                     <div class="min-w-0 flex-1">
@@ -193,5 +221,12 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
 .m365-ghost:hover {
     background-color: color-mix(in srgb, var(--color-bg-tertiary) 80%, transparent);
     border-color: var(--color-text-primary);
+}
+/* Dismissed variant (only rendered while "Show dismissed meetings" is on): 25% fill */
+.m365-ghost--dismissed {
+    background-color: color-mix(in srgb, var(--color-bg-tertiary) 25%, transparent);
+}
+.m365-ghost--dismissed:hover {
+    background-color: color-mix(in srgb, var(--color-bg-tertiary) 50%, transparent);
 }
 </style>
