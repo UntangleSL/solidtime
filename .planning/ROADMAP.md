@@ -25,7 +25,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Tenant Setup & Outlook Spike** - Untangle M365 admin registers and consents the app; real Outlook responses recorded as fixtures; series and cancellation decisions written down (completed 2026-11-05)
 - [x] **Phase 2: Sign in with Microsoft** - "Sign in with Microsoft" next to password login, safe auto-provision and linking, encrypted tokens, connect/disconnect, env-only config for Dokploy (completed 2026-11-05)
-- [ ] **Phase 3: Outlook Meetings in the Calendar** - Eligible meetings appear as ghost suggestions on calendar open and via Sync, with dismiss, privacy and graceful Graph failures
+- [x] **Phase 3: Outlook Meetings in the Calendar** - Eligible meetings appear as ghost suggestions on calendar open and via Sync, with dismiss, privacy and graceful Graph failures (completed 2026-11-10)
+- [ ] **Phase 3.1: Calendar UX Polish** (INSERTED) - View options (weekends, hour range), readable high-contrast meeting blocks, hover tooltip, context-menu layering, wheel zoom/scroll, visible Sync cooldown
+- [ ] **Phase 3.2: Appearance & Untangle Branding** (INSERTED) - Untangle colours by default, light/dark theme and accent colour per user, organization icon in workspace settings
 - [ ] **Phase 4: Assign Meetings to Projects** - Single and bulk conversion of meeting suggestions into real time entries using core rules, with no duplicates
 - [ ] **Phase 5: Recurring Meeting Rules** - "This series goes to project X" and "always ignore this series" rules with one-click confirmation and a rules manager
 - [ ] **Phase 6: Out-of-Sync Detection** - Logged meetings moved or cancelled in Outlook are flagged, never changed automatically; user chooses keep, adjust or delete
@@ -130,7 +132,7 @@ Plans:
   4. User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it.
   5. When Graph is slow, down or throttled, the calendar keeps working and shows a non-blocking status (last synced time, retry later); expired access tokens refresh silently, and when refresh is impossible (revoked, expired, Conditional Access) the user sees a "Reconnect Microsoft" prompt instead of an error.
 
-**Plans**: 12/12 plans executed
+**Plans**: 12/12 plans complete
 
 Plans:
 **Wave 1**
@@ -168,11 +170,41 @@ Plans:
 **Research focus**: real `calendarView` response shapes vs the Phase 1 fixtures; `Retry-After` behaviour on Outlook 429s; pointer handling in `useSlotSelection.ts` / `useEventDrag.ts` so ghost blocks stay non-interactive
 **UI hint**: yes
 
+### Phase 03.1: Calendar UX Polish (INSERTED)
+
+**Goal**: As a team member, I want a calendar that is easier to read and move around (view options, readable meeting blocks, hover details, smooth zoom and scroll), so that working with time entries and Outlook meetings feels as fluid as in Clockify.
+**Depends on**: Phase 3
+**Requirements**: UX-01, UX-02, UX-03, UX-04, UX-05, UX-06 (added by the owner after the Phase 3 UAT, 2026-11-10)
+**Success Criteria** (what must be TRUE):
+  1. A user can choose calendar view options that persist: show or hide weekends, and the visible start and end hour of the day.
+  2. Meeting blocks have enough contrast and show more of the subject and time, so a week can be read at a glance (reference: Clockify calendar).
+  3. On desktop, hovering a meeting shows its details in a tooltip; click still opens the panel, and touch keeps click-only.
+  4. The right-click context menu never ends up hidden behind an open tooltip or panel: opening it closes them or it renders above them.
+  5. The mouse wheel / trackpad navigates the calendar predictably (scroll through hours, and a zoom gesture to change the hour height).
+  6. After pressing Sync Outlook the user can see when it can be pressed again (visible short cooldown), and automatic syncs from week navigation do not keep the manual button disabled.
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 03.2: Appearance & Untangle Branding (INSERTED)
+
+**Goal**: As Untangle, I want solidtime to look like our own tool by default and let each user tune it, so that the app feels branded and comfortable to use.
+**Depends on**: Phase 3 (independent of Phase 3.1; can run in parallel)
+**Requirements**: BRAND-01, BRAND-02, BRAND-03, BRAND-04 (added by the owner, 2026-11-10)
+**Success Criteria** (what must be TRUE):
+  1. Untangle brand colours are the default theme for everyone.
+  2. A user can switch between light and dark theme and pick a highlight (accent) colour, and the choice persists.
+  3. An organization admin can upload or change the organization icon in the workspace settings, and it shows wherever the organization is displayed.
+  4. Theme and colour changes keep text and calendar blocks readable (contrast checked in light and dark).
+
+**Plans**: TBD
+**UI hint**: yes
+
 ### Phase 4: Assign Meetings to Projects
 
 **Goal**: As a team member tracking time, I want to turn one or several meeting suggestions into time entries on a project in a single action, so that logging meeting time takes one click instead of re-typing it from Outlook.
 **Mode:** mvp
-**Depends on**: Phase 3
+**Depends on**: Phase 3, Phase 3.1 (the hover tooltip and panel host the action)
 **Requirements**: ASGN-01, ASGN-02, ASGN-03, ASGN-04, ASGN-05
 **Success Criteria** (what must be TRUE):
   1. User selects a meeting suggestion, picks a project (optionally task, tags and billable, with the description prefilled from the meeting subject) and gets a real time entry with the meeting's start and end; the suggestion no longer shows.
@@ -180,6 +212,7 @@ Plans:
   3. Entries created from meetings obey the same permissions, billable rates, rounding, overlap checks and project-total recalculation as entries created manually.
   4. Double clicks or concurrent requests on the same meeting occurrence never create more than one time entry.
   5. Entries created from meetings stay normal time entries the user can edit or delete; deleting one brings the meeting back as a suggestion.
+  6. The "create time entry" / assign action is available directly from the meeting hover tooltip and detail panel (owner request after the Phase 3 UAT, 2026-11-10).
 
 **Plans**: TBD
 **UI hint**: yes
@@ -246,13 +279,15 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 and 6 (parallel, both depend only on Phase 4) → 7 → 8
+Phases execute in numeric order: 1 → 2 → 3 → 3.1 and 3.2 (parallel, both depend only on Phase 3) → 4 → 5 and 6 (parallel, both depend only on Phase 4) → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Tenant Setup & Outlook Spike | 8/8 | Complete    | 2026-11-05 |
 | 2. Sign in with Microsoft | 11/11 | Complete    | 2026-11-05 |
-| 3. Outlook Meetings in the Calendar | 12/12 | In Progress | - |
+| 3. Outlook Meetings in the Calendar | 12/12 | Complete    | 2026-11-10 |
+| 3.1 Calendar UX Polish | 0/TBD | Not started | - |
+| 3.2 Appearance & Untangle Branding | 0/TBD | Not started | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |

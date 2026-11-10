@@ -1,7 +1,7 @@
 ---
 phase: 03-outlook-meetings-in-the-calendar
 verified: 2026-11-10T14:10:00Z
-status: human_needed
+status: passed
 score: 5/5 must-haves verified
 covered_files:
   - ".planning/phases/03-outlook-meetings-in-the-calendar/03-01-PLAN.md"
@@ -178,3 +178,18 @@ No gaps. Every must-have is backed by code read and by green CI on the release s
 
 _Verified: 2026-11-10T14:10:00Z_
 _Verifier: Claude (gsd-verifier)_
+
+## Owner UAT (production, 2026-11-10)
+
+Status moved from human_needed to passed after the owner UAT below.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1 | Real week vs Outlook (times, eligibility, totals) | PASS. Owner compared side by side with Clockify's Outlook view: same meetings at the same local times |
+| 2 | Sync twice + week navigation | PASS with UX note. Navigation updates meetings; after one press the button stays greyed out (designed 10 s cooldown, extended by each automatic navigation sync, with no visible countdown). Moved to Phase 3.1 as UX-06 |
+| 3 | Dismiss / Show dismissed / Restore | PASS |
+| 4 | Entra revocation -> Reconnect | PASS |
+| 5 | Connect from a user without Microsoft | PASS |
+| 6 | Second account + impersonation | WAIVED by the owner (impersonation is admin-only and will not be used). Covered by automated tests: OutlookMeetingPrivacyTest role matrix, impersonation guard and owner-only scoping, green x3 Postgres on the release sha |
+
+Owner feedback captured as new scope (not Phase 3 gaps): calendar view options, meeting block contrast, hover tooltip, context-menu layering, wheel zoom/scroll, visible Sync cooldown (Phase 3.1, UX-01..06); themes, accent colour, Untangle default branding, organization icon (Phase 3.2, BRAND-01..04); create time entry from the tooltip (Phase 4, ASGN-01).

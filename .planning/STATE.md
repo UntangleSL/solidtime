@@ -1,20 +1,22 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 3
-current_phase_name: Outlook Meetings in the Calendar
-status: verifying
-stopped_at: Phase 3 deployed (sha-22fbbab); owner UAT pending
-last_updated: "2026-11-10T11:53:45.257Z"
-last_activity: 2026-11-05
-last_activity_desc: Phase 3 execution started
-state_head: 83c39330591a9df5c1ab73409961e1abdf203595
+current_phase: "03.1"
+current_phase_name: Calendar UX Polish
+status: planning
+stopped_at: Phase 3 complete, ready to plan Phase 03.1
+last_updated: "2026-11-10T14:41:43.731Z"
+last_activity: 2026-11-10
+last_activity_desc: Phase 3 complete, transitioned to Phase 03.1
+state_head: dee90695a663f8f6246ca922d34e02d931210eb9
 progress:
-  total_phases: 8
-  completed_phases: 2
+  total_phases: 10
+  completed_phases: 3
   total_plans: 31
   completed_plans: 31
-  percent: 25
+  percent: 30
 ---
+
+Total Phases: 5
 
 # Project State
 
@@ -27,17 +29,17 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 
 ## Current Position
 
-Phase: 3 (Outlook Meetings in the Calendar) — EXECUTING
-Plan: 12 of 12
-Status: Phase complete — ready for verification
-Last activity: 2026-11-05 — Phase 3 execution started
+Phase: 03.1 — Calendar UX Polish
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-11-10 — Phase 3 complete, transitioned to Phase 03.1
 
-Progress: [███░░░░░░░] 25%
+Progress: [███░░░░░░░] 30%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 19
+- Total plans completed: 31
 - Average duration: -
 - Total execution time: 0.0 hours
 
@@ -47,6 +49,7 @@ Progress: [███░░░░░░░] 25%
 |-------|-------|-------|----------|
 | 2 | 11 | - | - |
 | 1 | 8 | - | - |
+| 3 | 12 | - | - |
 
 **Recent Trend:**
 - Last 5 plans: -
@@ -147,6 +150,9 @@ Recent decisions affecting current work:
 ### Roadmap Evolution
 
 - Phase 8 added (2026-11-05): Project Hour Budgets & Profitability — scheduled renewing hour budgets on projects/contracts, time counts against them, profitability per month and contract
+- Phase 3.1 inserted (2026-11-10): Calendar UX Polish (UX-01..06) from the Phase 3 UAT feedback
+- Phase 3.2 inserted (2026-11-10): Appearance & Untangle Branding (BRAND-01..04); 3.1 and 3.2 can run in parallel
+- Phase 4 now depends on 3.1 (create time entry from the hover tooltip, ASGN-01)
 
 ### Pending Todos
 
@@ -169,5 +175,5 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-11-10T11:53:44.856Z
-Stopped at: Phase 3 deployed (sha-22fbbab); owner UAT pending
+Stopped at: Phase 3 complete, ready to plan Phase 03.1
 Resume file: .planning/phases/03-outlook-meetings-in-the-calendar/03-12-SUMMARY.md

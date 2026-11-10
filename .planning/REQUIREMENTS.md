@@ -24,7 +24,7 @@
 ### Token Security (SEC)
 
 - [x] **SEC-01**: Microsoft access and refresh tokens are stored encrypted at rest in a dedicated table, never in `users`, the session, cache, logs, audits, API responses or Inertia props
-- [ ] **SEC-02**: Tokens are refreshed automatically before expiry; if refresh fails (revoked, expired, conditional access), the user sees a "reconnect Microsoft" prompt instead of an error
+- [x] **SEC-02**: Tokens are refreshed automatically before expiry; if refresh fails (revoked, expired, conditional access), the user sees a "reconnect Microsoft" prompt instead of an error
 - [ ] **SEC-03**: Deleting a user (or organization) removes their Microsoft identity, tokens, cached meetings, links and rules
 - [ ] **SEC-04**: An admin impersonating a user cannot trigger Graph calls with that user's Microsoft token
 
@@ -33,19 +33,19 @@
 - [x] **SYNC-01**: When the user opens the calendar, their Outlook meetings for the visible range are fetched from Microsoft Graph (read-only) without blocking the display of existing time entries
 - [x] **SYNC-02**: User can press a "Sync" button to refresh meetings for the visible range; repeated presses/navigation are debounced and do not trigger Graph throttling
 - [x] **SYNC-03**: Every timed meeting in the user's calendar is shown as a suggestion regardless of response status (organized, accepted, tentative, not responded); excluded: declined (Graph removes them), cancelled (`isCancelled`), all-day, and meetings marked private/confidential in Outlook. (Revised 2026-10-19: owner wants all meetings, not only accepted.)
-- [ ] **SYNC-04**: Meeting times are correct in the user's timezone, including across DST changes
+- [x] **SYNC-04**: Meeting times are correct in the user's timezone, including across DST changes
 - [x] **SYNC-05**: If Graph is unavailable, slow or throttled, the calendar still works and shows a non-blocking status message (last synced time / retry later)
 
 ### Meeting Suggestions in Calendar (CAL)
 
 - [x] **CAL-01**: Eligible meetings render in the calendar week/day views as visually distinct "ghost" suggestion blocks that are not counted in tracked time, totals, reports or exports
 - [x] **CAL-02**: Ghost blocks cannot be dragged/resized and do not interfere with creating or editing normal time entries in the calendar
-- [ ] **CAL-03**: Meetings are visible only to their owner (never to other members or managers) until converted to a time entry
+- [x] **CAL-03**: Meetings are visible only to their owner (never to other members or managers) until converted to a time entry
 - [x] **CAL-04**: User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it
 
 ### Assign Meetings to Projects (ASGN)
 
-- [ ] **ASGN-01**: User can select a meeting suggestion and assign it to a project (optionally task, tags, billable, description prefilled from the meeting subject), which creates a real time entry with the meeting's start/end
+- [ ] **ASGN-01**: User can select a meeting suggestion and assign it to a project (from the hover tooltip or detail panel) (optionally task, tags, billable, description prefilled from the meeting subject), which creates a real time entry with the meeting's start/end
 - [ ] **ASGN-02**: Time entries created from meetings follow the same rules as manual entries (permissions, billable rates, rounding, overlap checks, project totals recalculation)
 - [ ] **ASGN-03**: A meeting occurrence can only be converted once; after conversion it no longer shows as a suggestion, and double clicks/concurrent requests never create duplicate entries
 - [ ] **ASGN-04**: User can multi-select several meeting suggestions and assign them all to a project in one action, seeing which succeeded and which failed
@@ -70,6 +70,26 @@
 - [x] **OPS-01**: The M365 integration is configured entirely via environment variables (tenant, client id/secret, redirect URI, allowed domains list, target organization) and documented for the Dokploy deployment (HTTPS redirect URI behind proxy, trusted proxies)
 - [ ] **OPS-02**: The integration is disabled cleanly (no login button, no calendar overlay) when M365 env vars are not set
 - [ ] **OPS-03**: Fork code is isolated in its own module with a documented list of touched core files, and an upstream solidtime merge can be performed without conflicts beyond that list
+
+### Calendar UX (UX)
+
+Added by the owner after the Phase 3 UAT (2026-11-10); refined in Phase 3.1 discuss-phase.
+
+- [ ] **UX-01**: User can set persistent calendar view options: show/hide weekends and the visible start/end hour
+- [ ] **UX-02**: Meeting blocks are high-contrast and show more of the subject and time (reference: Clockify)
+- [ ] **UX-03**: On desktop, hovering a meeting shows its details in a tooltip (click still opens the panel; touch stays click-only)
+- [ ] **UX-04**: The right-click context menu is never hidden behind a tooltip/panel (it closes them or renders above)
+- [ ] **UX-05**: Mouse wheel / trackpad scroll and zoom navigate the calendar predictably
+- [ ] **UX-06**: After a manual Sync the remaining cooldown is visible, and automatic navigation syncs do not keep the Sync button disabled
+
+### Appearance & Branding (BRAND)
+
+Added by the owner 2026-11-10; refined in Phase 3.2 discuss-phase.
+
+- [ ] **BRAND-01**: Untangle brand colours are the default theme
+- [ ] **BRAND-02**: User can switch light/dark theme and choose a highlight (accent) colour, persisted per user
+- [ ] **BRAND-03**: Organization admin can upload/change the organization icon in workspace settings
+- [ ] **BRAND-04**: Theme/colour choices keep text and calendar blocks readable (contrast in light and dark)
 
 ### Project Hour Budgets (BUDG)
 
@@ -125,17 +145,17 @@ High level, added by the owner 2026-11-05; details to be refined in Phase 8 disc
 | AUTH-06 | Phase 2 | Complete |
 | AUTH-07 | Phase 2 | Complete |
 | SEC-01 | Phase 2 | Complete |
-| SEC-02 | Phase 3 | Pending |
+| SEC-02 | Phase 3 | Complete |
 | SEC-03 | Phase 7 | Pending |
 | SEC-04 | Phase 7 | Pending |
 | SYNC-01 | Phase 3 | Complete |
 | SYNC-02 | Phase 3 | Complete |
 | SYNC-03 | Phase 3 | Complete |
-| SYNC-04 | Phase 3 | Pending (UAT) |
+| SYNC-04 | Phase 3 | Complete |
 | SYNC-05 | Phase 3 | Complete |
 | CAL-01 | Phase 3 | Complete |
 | CAL-02 | Phase 3 | Complete |
-| CAL-03 | Phase 3 | Pending |
+| CAL-03 | Phase 3 | Complete |
 | CAL-04 | Phase 3 | Complete |
 | ASGN-01 | Phase 4 | Pending |
 | ASGN-02 | Phase 4 | Pending |
@@ -153,6 +173,16 @@ High level, added by the owner 2026-11-05; details to be refined in Phase 8 disc
 | OPS-01 | Phase 2 | Complete |
 | OPS-02 | Phase 7 | Pending |
 | OPS-03 | Phase 7 | Pending |
+| UX-01 | Phase 3.1 | Pending |
+| UX-02 | Phase 3.1 | Pending |
+| UX-03 | Phase 3.1 | Pending |
+| UX-04 | Phase 3.1 | Pending |
+| UX-05 | Phase 3.1 | Pending |
+| UX-06 | Phase 3.1 | Pending |
+| BRAND-01 | Phase 3.2 | Pending |
+| BRAND-02 | Phase 3.2 | Pending |
+| BRAND-03 | Phase 3.2 | Pending |
+| BRAND-04 | Phase 3.2 | Pending |
 | BUDG-01 | Phase 8 | Pending |
 | BUDG-02 | Phase 8 | Pending |
 | BUDG-03 | Phase 8 | Pending |
