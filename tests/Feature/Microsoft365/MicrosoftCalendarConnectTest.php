@@ -132,12 +132,16 @@ class MicrosoftCalendarConnectTest extends TestCaseWithDatabase
         foreach (['profile', 'https://evil.example.test', '//evil.example.test', 'CALENDAR', '/calendar'] as $value) {
             // Act
             $redirect = $this->get(route('microsoft.redirect', ['intent' => 'connect', 'return' => $value], false));
-            $response = $this->get($this->callbackUrl());
 
-            // Assert
+            // Assert: the session is read before the callback pulls (and forgets) its keys
             $redirect->assertRedirect();
             $redirect->assertSessionMissing('microsoft.return');
             $redirect->assertSessionHas('microsoft.intent', 'connect');
+
+            // Act
+            $response = $this->get($this->callbackUrl());
+
+            // Assert
             $response->assertRedirect(route('profile.show', [], false));
             $this->assertStringNotContainsString('evil.example.test', (string) $response->headers->get('Location'));
             $response->assertSessionHas('microsoft365.notice', __('microsoft365.ui.connected_notice'));
@@ -155,10 +159,10 @@ class MicrosoftCalendarConnectTest extends TestCaseWithDatabase
 
         // Act
         $redirect = $this->get('/auth/microsoft/redirect?intent=connect&return[]=calendar');
+        $redirect->assertSessionMissing('microsoft.return');
         $response = $this->get($this->callbackUrl());
 
         // Assert
-        $redirect->assertSessionMissing('microsoft.return');
         $response->assertRedirect(route('profile.show', [], false));
     }
 
@@ -173,10 +177,10 @@ class MicrosoftCalendarConnectTest extends TestCaseWithDatabase
 
         // Act: the user never came back from Microsoft and starts a Connect from the profile instead
         $redirect = $this->get(route('microsoft.redirect', ['intent' => 'connect'], false));
+        $redirect->assertSessionMissing('microsoft.return');
         $response = $this->get($this->callbackUrl());
 
         // Assert
-        $redirect->assertSessionMissing('microsoft.return');
         $response->assertRedirect(route('profile.show', [], false));
     }
 
@@ -190,12 +194,12 @@ class MicrosoftCalendarConnectTest extends TestCaseWithDatabase
 
         // Act: no connect intent, so the return value means nothing to a sign-in
         $redirect = $this->get(route('microsoft.redirect', ['return' => 'calendar'], false));
-        $response = $this->get($this->callbackUrl());
-
-        // Assert
         $redirect->assertRedirect();
         $redirect->assertSessionMissing('microsoft.return');
         $redirect->assertSessionMissing('microsoft.intent');
+        $response = $this->get($this->callbackUrl());
+
+        // Assert
         $response->assertRedirect(url('/time'));
         $this->assertAuthenticated();
         $response->assertSessionMissing('microsoft.return');
