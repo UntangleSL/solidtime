@@ -497,18 +497,18 @@ class MicrosoftTokenRefreshTest extends TestCaseWithDatabase
         $created = $this->connectedAccount($user, expired: true);
         $stale = MicrosoftAccount::query()->findOrFail($created->getKey());
         $winner = MicrosoftAccount::query()->findOrFail($created->getKey());
-        $winner->access_token = 'at-concurrent-1111';
+        $winner->access_token = 'at-won-1111';
         $winner->access_token_expires_at = Carbon::now()->addHour();
         $winner->save();
-        $this->assertNotSame('at-concurrent-1111', $stale->access_token);
+        $this->assertNotSame('at-won-1111', $stale->access_token);
         $this->fakeTokenEndpoint($this->refreshSuccess());
 
         // Act
         $token = app(MicrosoftTokenService::class)->accessToken($stale);
 
         // Assert
-        $this->assertSame('at-concurrent-1111', $token);
-        $this->assertSame('at-concurrent-1111', $stale->access_token);
+        $this->assertSame('at-won-1111', $token);
+        $this->assertSame('at-won-1111', $stale->access_token);
         Http::assertNothingSent();
     }
 
