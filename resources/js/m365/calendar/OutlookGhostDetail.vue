@@ -1,16 +1,3 @@
-<script lang="ts">
-// Outlook links are untrusted values: only a well-formed https URL may become an href (T-03-23).
-export function safeHttpsUrl(value: string | null): string | null {
-    if (!value) return null;
-    try {
-        const url = new URL(value);
-        return url.protocol === 'https:' ? url.href : null;
-    } catch {
-        return null;
-    }
-}
-</script>
-
 <script setup lang="ts">
 import { computed, inject, useId, type ComputedRef } from 'vue';
 import { CalendarDays, Clock, ExternalLink, User, Video } from '@lucide/vue';
@@ -25,6 +12,7 @@ import {
 } from '@/packages/ui/src/utils/time';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 import { fillLabel } from './labels';
+import { safeHttpsUrl } from './safeUrl';
 
 // Detail panel of one ghost (non-modal popover). The default slot is the trigger (the ghost). It
 // owns no network code: Dismiss and Restore are emitted and the caller acts. Meeting values are only

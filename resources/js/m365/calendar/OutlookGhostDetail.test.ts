@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
-import OutlookGhostDetail, { safeHttpsUrl } from './OutlookGhostDetail.vue';
+import OutlookGhostDetail from './OutlookGhostDetail.vue';
+import { safeHttpsUrl } from './safeUrl';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 
 const labels = {
