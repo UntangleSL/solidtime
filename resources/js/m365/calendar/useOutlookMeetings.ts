@@ -27,7 +27,7 @@ import type {
     OutlookMeetingsResponse,
     OutlookSyncResponse,
 } from '@/m365/types';
-import { fetchMeetings, postSync } from './meetingsApi';
+import { dismissMeeting, fetchMeetings, postSync } from './meetingsApi';
 import { ghostLaneWidth } from './ghostLayout';
 
 export interface WeekBucket {
@@ -63,6 +63,10 @@ export interface OutlookMeetingsContext {
     canSync: Readonly<Ref<boolean>>;
     cooldownUntil: Readonly<Ref<number>>;
     requestSync: (force?: boolean) => void;
+    // False in test-hook mode (injected meetings are not server rows): the panel then offers no action.
+    canAct: Readonly<Ref<boolean>>;
+    // Optimistic: the meeting leaves the cache at once, the request follows.
+    dismiss: (id: string) => Promise<void>;
     dayOverlayLane: (dayStr: string, isDayView: boolean) => string | null;
 }
 
@@ -367,6 +371,20 @@ export function useOutlookMeetings(
         { immediate: true }
     );
 
+    const canAct = computed(() => calendar.value !== null && testMeetings.value === null);
+
+    async function dismiss(id: string): Promise<void> {
+        const url = calendar.value?.urls.meetings;
+        if (!url || !bucket.value) return;
+        const key = [...MEETINGS_QUERY_KEY, bucket.value.start];
+        await queryClient.cancelQueries({ queryKey: key });
+        queryClient.setQueryData<OutlookMeetingsResponse>(key, (old) =>
+            old ? { ...old, data: old.data.filter((meeting) => meeting.id !== id) } : old
+        );
+        await dismissMeeting(url, id);
+        await queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
+    }
+
     // Local days that hold at least one meeting get the reserved Outlook lane (D-23). The overlap is
     // half-open like the ghost layout: a zero-length meeting belongs to the day containing it.
     function dayOverlayLane(dayStr: string, isDayView: boolean): string | null {
@@ -430,6 +448,8 @@ export function useOutlookMeetings(
         canSync,
         cooldownUntil,
         requestSync,
+        canAct,
+        dismiss,
         dayOverlayLane,
     };
 

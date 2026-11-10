@@ -13,6 +13,7 @@ use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Models\User;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Routing\Controller;
 
@@ -74,6 +75,34 @@ class OutlookMeetingController extends Controller
         );
 
         return response()->json($outcome->toArray());
+    }
+
+    /**
+     * Hides one occurrence from the calendar. Idempotent: a second call keeps the first dismissed_at.
+     * Nothing is deleted and no time entry is touched; restoring is the inverse call.
+     */
+    public function dismiss(Request $request, string $meeting): OutlookMeetingResource
+    {
+        $row = $this->ownMeeting($request->user(), $meeting);
+        if ($row->dismissed_at === null) {
+            $row->dismissed_at = now();
+            $row->save();
+        }
+
+        return new OutlookMeetingResource($row);
+    }
+
+    /**
+     * The meeting of the session user with this id. The route value is a plain string (no implicit
+     * model binding): another user's id, an unknown id and a gone meeting are all the same 404.
+     */
+    private function ownMeeting(?Authenticatable $user, string $id): OutlookMeeting
+    {
+        return OutlookMeeting::query()
+            ->where('user_id', '=', $this->sessionUser($user)->getKey())
+            ->whereKey($id)
+            ->whereNull('gone_at')
+            ->firstOrFail();
     }
 
     private function sessionUser(?Authenticatable $user): User

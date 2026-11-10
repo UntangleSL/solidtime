@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, inject, type ComputedRef } from 'vue';
+import { computed, inject, ref, type ComputedRef } from 'vue';
 import { CalendarDays, Video } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
 import { formatTime, getLocalizedDayJsFromMinutes } from '@/packages/ui/src/utils/time';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 import { fillLabel } from './labels';
+import OutlookGhostDetail from './OutlookGhostDetail.vue';
+import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 import {
     ghostLaneWidth,
     layoutGhostsForDay,
@@ -33,6 +35,23 @@ const organization = inject<ComputedRef<Organization | undefined> | undefined>(
     undefined
 );
 const timeFormat = computed(() => organization?.value?.time_format ?? '24-hours');
+
+// The injected context carries the actions; without it (tests, test-hook mode) the panel is read-only.
+const context = inject(OUTLOOK_MEETINGS_KEY, null);
+const canAct = computed(() => context?.canAct.value === true);
+
+// One detail panel open at a time (the id of the meeting whose panel is open).
+const openId = ref<string | null>(null);
+
+function setOpen(id: string, value: boolean): void {
+    if (value) openId.value = id;
+    else if (openId.value === id) openId.value = null;
+}
+
+function onDismiss(meeting: OutlookMeeting): void {
+    openId.value = null;
+    void context?.dismiss(meeting.id);
+}
 
 const boxes = computed(() =>
     layoutGhostsForDay(props.meetings, props.dayStr, props.settings, props.minutesToPixels)
@@ -90,53 +109,64 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
         :aria-label="layerLabel"
         class="absolute inset-y-0 right-0.5 pointer-events-none"
         :style="{ width: laneWidth }">
-        <div
+        <OutlookGhostDetail
             v-for="box in boxes"
             :key="box.meeting.id"
-            class="m365-ghost absolute pointer-events-auto select-none cursor-pointer rounded-sm border border-dashed border-text-tertiary overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-            :class="{
-                'rounded-t-none': box.isClippedStart,
-                'rounded-b-none': box.isClippedEnd,
-            }"
-            data-calendar-overlay
-            role="button"
-            tabindex="0"
-            :aria-label="ariaLabelOf(box.meeting)"
-            :style="{
-                top: box.top + 'px',
-                height: box.height + 'px',
-                left: (box.lane * 100) / box.lanes + '%',
-                width: 100 / box.lanes + '%',
-            }">
-            <div class="flex h-full items-start gap-1 px-1 py-px text-2xs leading-tight">
-                <CalendarDays
-                    class="mt-px h-3 w-3 shrink-0 text-text-tertiary"
-                    aria-hidden="true" />
-                <div class="min-w-0 flex-1">
-                    <div class="flex items-baseline gap-1">
-                        <span class="truncate font-semibold text-text-secondary">
-                            {{ subjectOf(box.meeting) }}
-                        </span>
-                        <span
-                            v-if="showsInlineTime(box)"
-                            class="truncate text-text-tertiary"
-                            data-ghost-time-inline>
+            :meeting="box.meeting"
+            :labels="labels"
+            :can-act="canAct"
+            :open="openId === box.meeting.id"
+            @update:open="(value: boolean) => setOpen(box.meeting.id, value)"
+            @dismiss="onDismiss(box.meeting)">
+            <div
+                class="m365-ghost absolute pointer-events-auto select-none cursor-pointer rounded-sm border border-dashed border-text-tertiary overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[state=open]:ring-2 data-[state=open]:ring-accent-500"
+                :class="{
+                    'rounded-t-none': box.isClippedStart,
+                    'rounded-b-none': box.isClippedEnd,
+                }"
+                data-calendar-overlay
+                :data-ghost-id="box.meeting.id"
+                role="button"
+                tabindex="0"
+                :aria-label="ariaLabelOf(box.meeting)"
+                :style="{
+                    top: box.top + 'px',
+                    height: box.height + 'px',
+                    left: (box.lane * 100) / box.lanes + '%',
+                    width: 100 / box.lanes + '%',
+                }"
+                @keydown.enter.prevent="($event.currentTarget as HTMLElement).click()"
+                @keydown.space.prevent="($event.currentTarget as HTMLElement).click()">
+                <div class="flex h-full items-start gap-1 px-1 py-px text-2xs leading-tight">
+                    <CalendarDays
+                        class="mt-px h-3 w-3 shrink-0 text-text-tertiary"
+                        aria-hidden="true" />
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-baseline gap-1">
+                            <span class="truncate font-semibold text-text-secondary">
+                                {{ subjectOf(box.meeting) }}
+                            </span>
+                            <span
+                                v-if="showsInlineTime(box)"
+                                class="truncate text-text-tertiary"
+                                data-ghost-time-inline>
+                                {{ timeRangeOf(box.meeting) }}
+                            </span>
+                        </div>
+                        <div v-if="showsTimeLine(box)" class="truncate text-text-tertiary">
                             {{ timeRangeOf(box.meeting) }}
-                        </span>
+                        </div>
+                        <div v-if="showsOrganizer(box)" class="truncate text-text-tertiary">
+                            {{ box.meeting.organizer_name }}
+                        </div>
                     </div>
-                    <div v-if="showsTimeLine(box)" class="truncate text-text-tertiary">
-                        {{ timeRangeOf(box.meeting) }}
-                    </div>
-                    <div v-if="showsOrganizer(box)" class="truncate text-text-tertiary">
-                        {{ box.meeting.organizer_name }}
-                    </div>
+                    <Video
+                        v-if="box.meeting.is_online_meeting"
+                        class="mt-px h-3 w-3 shrink-0 text-text-tertiary"
+                        aria-hidden="true" />
                 </div>
-                <Video
-                    v-if="box.meeting.is_online_meeting"
-                    class="mt-px h-3 w-3 shrink-0 text-text-tertiary"
-                    aria-hidden="true" />
             </div>
-        </div>
+        </OutlookGhostDetail>
     </div>
 </template>
 

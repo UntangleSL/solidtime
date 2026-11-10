@@ -30,4 +30,10 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
         Route::post('/meetings/sync', [OutlookMeetingController::class, 'sync'])
             ->middleware('throttle:12,1,m365-sync:')
             ->name('microsoft.meetings.sync');
+        // One occurrence of the session user's own meeting. The id is validated as a uuid and looked up
+        // inside the user's rows, so a foreign or unknown id is a plain 404 (never a 403 oracle).
+        Route::post('/meetings/{meeting}/dismiss', [OutlookMeetingController::class, 'dismiss'])
+            ->whereUuid('meeting')
+            ->middleware('throttle:60,1,m365-dismiss:')
+            ->name('microsoft.meetings.dismiss');
     });

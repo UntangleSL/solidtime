@@ -49,3 +49,9 @@ export async function postSync(
         truncated: data.truncated === true,
     };
 }
+
+// Dismisses one occurrence for the session user (idempotent; the server answers 404 for any id that
+// is not the user's own). The restore call is added with the show-dismissed toggle.
+export async function dismissMeeting(meetingsUrl: string, id: string): Promise<void> {
+    await axios.post(`${meetingsUrl}/${encodeURIComponent(id)}/dismiss`);
+}
