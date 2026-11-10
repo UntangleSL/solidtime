@@ -13,12 +13,22 @@ function numberOrNull(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+export interface MeetingsReadOptions {
+    // Also returns the meetings the user dismissed (flagged dismissed: true)
+    include_dismissed?: boolean;
+}
+
 export async function fetchMeetings(
     url: string,
-    range: MeetingsRange
+    range: MeetingsRange,
+    options: MeetingsReadOptions = {}
 ): Promise<OutlookMeetingsResponse> {
     const response = await axios.get<OutlookMeetingsResponse>(url, {
-        params: { start: range.start, end: range.end },
+        params: {
+            start: range.start,
+            end: range.end,
+            ...(options.include_dismissed === true ? { include_dismissed: 1 } : {}),
+        },
     });
     const body = response.data;
 
@@ -51,7 +61,12 @@ export async function postSync(
 }
 
 // Dismisses one occurrence for the session user (idempotent; the server answers 404 for any id that
-// is not the user's own). The restore call is added with the show-dismissed toggle.
+// is not the user's own).
 export async function dismissMeeting(meetingsUrl: string, id: string): Promise<void> {
     await axios.post(`${meetingsUrl}/${encodeURIComponent(id)}/dismiss`);
+}
+
+// Restores a dismissed occurrence (idempotent, same ownership rule).
+export async function restoreMeeting(meetingsUrl: string, id: string): Promise<void> {
+    await axios.delete(`${meetingsUrl}/${encodeURIComponent(id)}/dismiss`);
 }

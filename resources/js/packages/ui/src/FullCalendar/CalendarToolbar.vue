@@ -43,7 +43,11 @@ const emit = defineEmits<{
             </Tabs>
             <CalendarSettingsPopover
                 :settings="settings"
-                @update:settings="(v) => emit('update:settings', v)" />
+                @update:settings="(v) => emit('update:settings', v)">
+                <template v-if="$slots['settings-extra']" #settings-extra>
+                    <slot name="settings-extra" />
+                </template>
+            </CalendarSettingsPopover>
         </div>
     </div>
 </template>

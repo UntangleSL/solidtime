@@ -27,6 +27,7 @@ import { useCurrentTimeEntryStore } from '@/utils/useCurrentTimeEntry';
 import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
 import OutlookCalendarControls from '@/m365/calendar/OutlookCalendarControls.vue';
+import OutlookDismissedSetting from '@/m365/calendar/OutlookDismissedSetting.vue';
 import OutlookGhostLayer from '@/m365/calendar/OutlookGhostLayer.vue';
 import { useOutlookMeetings } from '@/m365/calendar/useOutlookMeetings';
 
@@ -159,6 +160,11 @@ function onRefresh() {
             </template>
             <template v-if="outlook.calendar.value" #toolbar-extra>
                 <OutlookCalendarControls />
+            </template>
+            <template
+                v-if="outlook.calendar.value && outlook.connectionState.value !== 'not_connected'"
+                #settings-extra>
+                <OutlookDismissedSetting />
             </template>
         </TimeEntryCalendar>
     </AppLayout>

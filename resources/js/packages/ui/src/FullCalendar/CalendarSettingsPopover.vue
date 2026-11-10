@@ -2,6 +2,7 @@
 import { Popover, PopoverContent, PopoverTrigger, Button } from '..';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '..';
 import { Field, FieldLabel } from '../field';
+import { Separator } from '../separator';
 import { Settings } from '@lucide/vue';
 import { ref, watch } from 'vue';
 import type { CalendarSettings } from './calendarSettings';
@@ -187,6 +188,10 @@ const hourOptions = Array.from({ length: 25 }, (_, i) => ({
                     </Select>
                 </Field>
             </div>
+            <template v-if="$slots['settings-extra']">
+                <Separator class="my-4" />
+                <slot name="settings-extra" />
+            </template>
         </PopoverContent>
     </Popover>
 </template>

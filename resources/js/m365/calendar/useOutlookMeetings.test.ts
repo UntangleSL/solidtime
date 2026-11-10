@@ -27,11 +27,12 @@ vi.mock('@inertiajs/vue3', () => ({
 }));
 
 vi.mock('axios', () => ({
-    default: { get: vi.fn(), post: vi.fn() },
+    default: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
 }));
 
 const axiosGet = vi.mocked(axios.get);
 const axiosPost = vi.mocked(axios.post);
+const axiosDelete = vi.mocked(axios.delete);
 
 const MEETINGS_URL = 'https://app.example.test/m365/meetings';
 const SYNC_URL = 'https://app.example.test/m365/meetings/sync';
@@ -68,6 +69,8 @@ function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
             dismiss_failed: 'Could not dismiss this meeting',
             retry_body: 'Try again in a moment.',
             dismissed_announcement: 'Meeting dismissed',
+            restore_failed: 'Could not restore this meeting',
+            restored_announcement: 'Meeting restored',
         } as never,
     };
 }
@@ -167,7 +170,9 @@ beforeEach(() => {
     vi.setSystemTime(new Date('2026-11-05T10:00:00Z'));
     axiosGet.mockReset();
     axiosPost.mockReset();
+    axiosDelete.mockReset();
     addNotification.mockReset();
+    localStorage.clear();
     axiosGet.mockResolvedValue(readResponse());
     axiosPost.mockResolvedValue(syncResponse());
     setPage('connected');
@@ -751,6 +756,158 @@ describe('useOutlookMeetings dismiss', () => {
         await nextTick();
 
         expect(mounted.api.canAct.value).toBe(false);
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings show dismissed and restore', () => {
+    const live = meeting('m-1', '2026-11-03T09:00:00Z', '2026-11-03T10:00:00Z');
+    const gone = {
+        ...meeting('m-2', '2026-11-03T11:00:00Z', '2026-11-03T12:00:00Z'),
+        dismissed: true,
+    };
+
+    function dismissalUrl(id: string): string {
+        return MEETINGS_URL + '/' + id + '/dismiss';
+    }
+
+    // Fresh read so the automatic sync is skipped and the sync POST never mixes into the assertions
+    function freshRead(meetings: OutlookMeeting[]): { data: OutlookMeetingsResponse } {
+        return {
+            data: {
+                data: meetings,
+                sync: {
+                    last_synced_at: new Date(Date.now() - 5_000).toISOString(),
+                    retry_after: null,
+                },
+            },
+        };
+    }
+
+    async function mountShowing(): Promise<Mounted> {
+        localStorage.setItem('solidtime:m365-show-dismissed', 'true');
+        axiosGet.mockResolvedValue(freshRead([live, gone]));
+        const mounted = mountComposable();
+        await advance(500);
+        expect(mounted.api.includeDismissed.value).toBe(true);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        axiosPost.mockClear();
+        return mounted;
+    }
+
+    it('is off by default and the read is sent without include_dismissed', async () => {
+        axiosGet.mockResolvedValue(freshRead([live]));
+        const mounted = mountComposable();
+        await advance(500);
+
+        expect(mounted.api.includeDismissed.value).toBe(false);
+        const config = axiosGet.mock.calls[0]![1] as { params: Record<string, unknown> };
+        expect(config.params).toEqual({ start: WEEK_A, end: WEEK_B });
+        mounted.wrapper.unmount();
+    });
+
+    it('toggling refetches with include_dismissed=1, remembers the choice and never syncs', async () => {
+        axiosGet.mockResolvedValue(freshRead([live]));
+        const mounted = mountComposable();
+        await advance(500);
+        expect(axiosGet).toHaveBeenCalledTimes(1);
+        axiosGet.mockResolvedValue(freshRead([live, gone]));
+
+        mounted.api.includeDismissed.value = true;
+        await nextTick();
+        await advance(500);
+
+        expect(axiosGet).toHaveBeenCalledTimes(2);
+        const config = axiosGet.mock.calls[1]![1] as { params: Record<string, unknown> };
+        expect(config.params).toEqual({ start: WEEK_A, end: WEEK_B, include_dismissed: 1 });
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        expect(localStorage.getItem('solidtime:m365-show-dismissed')).toBe('true');
+        expect(axiosPost).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('counts dismissed meetings as visible only while they are shown', async () => {
+        const mounted = await mountShowing();
+        expect(mounted.api.visibleCount.value).toBe(2);
+
+        axiosGet.mockResolvedValue(freshRead([live]));
+        mounted.api.includeDismissed.value = false;
+        await nextTick();
+        await advance(500);
+
+        expect(mounted.api.visibleCount.value).toBe(1);
+        mounted.wrapper.unmount();
+    });
+
+    it('a dismiss with the switch on keeps the meeting and flags it dismissed', async () => {
+        const mounted = await mountShowing();
+        axiosPost.mockResolvedValue({ data: {} });
+        axiosGet.mockResolvedValue(freshRead([{ ...live, dismissed: true }, gone]));
+
+        const done = mounted.api.dismiss('m-1');
+
+        expect(mounted.api.meetings.value.map((m) => [m.id, m.dismissed])).toEqual([
+            ['m-1', true],
+            ['m-2', true],
+        ]);
+        await done;
+        await advance(0);
+        expect(axiosPost).toHaveBeenCalledWith(dismissalUrl('m-1'));
+        mounted.wrapper.unmount();
+    });
+
+    it('restore flags the meeting at once, deletes the dismissal and announces "Meeting restored"', async () => {
+        const mounted = await mountShowing();
+        const request = deferred<{ data: Record<string, never> }>();
+        axiosDelete.mockReturnValue(request.promise);
+        axiosGet.mockResolvedValue(freshRead([live, { ...gone, dismissed: false }]));
+
+        const done = mounted.api.restore('m-2');
+
+        // Optimistic: already a regular ghost before the request has answered
+        expect(mounted.api.meetings.value.find((m) => m.id === 'm-2')?.dismissed).toBe(false);
+        expect(axiosDelete).toHaveBeenCalledWith(dismissalUrl('m-2'));
+        request.resolve({ data: {} });
+        await done;
+        await advance(0);
+
+        expect(mounted.api.announcement.value).toBe('Meeting restored');
+        // No success toast
+        expect(addNotification).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('a failed restore puts the ghost back in the dismissed state', async () => {
+        const mounted = await mountShowing();
+        axiosDelete.mockRejectedValue(httpError(500));
+
+        await mounted.api.restore('m-2');
+        await advance(0);
+
+        expect(mounted.api.meetings.value.find((m) => m.id === 'm-2')?.dismissed).toBe(true);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not restore this meeting',
+            'Try again in a moment.'
+        );
+        expect(mounted.api.announcement.value).toBe('');
+        mounted.wrapper.unmount();
+    });
+
+    it('a failed dismiss with the switch on puts the ghost back in the regular state', async () => {
+        const mounted = await mountShowing();
+        axiosPost.mockRejectedValue(httpError(500));
+
+        await mounted.api.dismiss('m-1');
+        await advance(0);
+
+        expect(mounted.api.meetings.value.find((m) => m.id === 'm-1')?.dismissed).toBe(false);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not dismiss this meeting',
+            'Try again in a moment.'
+        );
         mounted.wrapper.unmount();
     });
 });

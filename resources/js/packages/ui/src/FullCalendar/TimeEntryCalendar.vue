@@ -528,6 +528,9 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                 <template v-if="$slots['toolbar-extra']" #extra>
                     <slot name="toolbar-extra" />
                 </template>
+                <template v-if="$slots['settings-extra']" #settings-extra>
+                    <slot name="settings-extra" />
+                </template>
             </CalendarToolbar>
 
             <ContextMenu v-model:open="contextMenuOpen">

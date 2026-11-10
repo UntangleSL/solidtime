@@ -10,6 +10,7 @@ import {
     type Ref,
 } from 'vue';
 import { usePage } from '@inertiajs/vue3';
+import { useLocalStorage } from '@vueuse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import type { Dayjs } from 'dayjs';
 import {
@@ -28,7 +29,7 @@ import type {
     OutlookMeetingsResponse,
     OutlookSyncResponse,
 } from '@/m365/types';
-import { dismissMeeting, fetchMeetings, postSync } from './meetingsApi';
+import { dismissMeeting, fetchMeetings, postSync, restoreMeeting } from './meetingsApi';
 import { ghostLaneWidth } from './ghostLayout';
 
 export interface WeekBucket {
@@ -42,6 +43,8 @@ export interface WeekBucket {
 const SYNC_DEBOUNCE_MS = 400;
 const AUTO_SYNC_FRESH_MS = 60_000;
 const MEETINGS_QUERY_KEY = ['m365', 'meetings'] as const;
+// View preference (per browser, not a server setting): show dismissed meetings and restore them.
+const SHOW_DISMISSED_STORAGE_KEY = 'solidtime:m365-show-dismissed';
 // The Sync button stays disabled this long after every settled sync (a throttled or unavailable
 // answer with a larger retry_after wins).
 const SYNC_COOLDOWN_MS = 10_000;
@@ -58,7 +61,10 @@ export interface OutlookMeetingsContext {
     readFailed: Readonly<Ref<boolean>>;
     // Last known last_synced_at of the visible week (read response or latest sync answer).
     syncedAt: Readonly<Ref<string | null>>;
-    // Meetings overlapping the visible range, dismissed ones excluded.
+    // "Show dismissed meetings" (remembered in localStorage). Toggling refetches the read with
+    // include_dismissed and never triggers a sync.
+    includeDismissed: Ref<boolean>;
+    // Meetings overlapping the visible range, dismissed ones excluded unless they are shown.
     visibleCount: Readonly<Ref<number>>;
     // False while syncing, during the cooldown / retry_after window, or without a connection.
     canSync: Readonly<Ref<boolean>>;
@@ -66,8 +72,11 @@ export interface OutlookMeetingsContext {
     requestSync: (force?: boolean) => void;
     // False in test-hook mode (injected meetings are not server rows): the panel then offers no action.
     canAct: Readonly<Ref<boolean>>;
-    // Optimistic: the meeting leaves the cache at once, the request follows.
+    // Optimistic: the meeting leaves the cache at once (or turns into the dismissed variant while
+    // dismissed meetings are shown), the request follows.
     dismiss: (id: string) => Promise<void>;
+    // Optimistic: the dismissed meeting becomes a regular ghost again at once.
+    restore: (id: string) => Promise<void>;
     // Polite live region text of the toolbar controls ("Meeting dismissed").
     announcement: Readonly<Ref<string>>;
     dayOverlayLane: (dayStr: string, isDayView: boolean) => string | null;
@@ -127,6 +136,13 @@ export function useOutlookMeetings(
         return microsoft.calendar ?? null;
     });
 
+    const includeDismissed = useLocalStorage(SHOW_DISMISSED_STORAGE_KEY, false);
+
+    // The flag is part of the key, so a toggle reads the other variant without touching the sync.
+    function meetingsKey(start: string | null, include: boolean) {
+        return [...MEETINGS_QUERY_KEY, start, include] as const;
+    }
+
     const testMeetings = ref<OutlookMeeting[] | null>(null);
     const testLabels = ref<Partial<OutlookCalendarLabels> | null>(null);
 
@@ -177,7 +193,7 @@ export function useOutlookMeetings(
     });
 
     const meetingsQuery = useQuery<OutlookMeetingsResponse>({
-        queryKey: computed(() => [...MEETINGS_QUERY_KEY, bucket.value?.start ?? null]),
+        queryKey: computed(() => meetingsKey(bucket.value?.start ?? null, includeDismissed.value)),
         enabled: computed(
             () =>
                 calendar.value !== null &&
@@ -185,10 +201,11 @@ export function useOutlookMeetings(
                 bucket.value !== null
         ),
         queryFn: () =>
-            fetchMeetings(calendar.value!.urls.meetings, {
-                start: bucket.value!.start,
-                end: bucket.value!.end,
-            }),
+            fetchMeetings(
+                calendar.value!.urls.meetings,
+                { start: bucket.value!.start, end: bucket.value!.end },
+                { include_dismissed: includeDismissed.value }
+            ),
         retry: false,
         refetchOnWindowFocus: false,
         placeholderData: (previousData) => previousData,
@@ -236,13 +253,13 @@ export function useOutlookMeetings(
     });
 
     // Overlap with the visible range [start, end) of the calendar (the week or the day), dismissed
-    // meetings excluded; the status line shows "no meetings" from this count.
+    // meetings excluded unless they are shown; the status line shows "no meetings" from this count.
     const visibleCount = computed(() => {
         const start = calendarStart.value;
         const end = calendarEnd.value;
         if (!start || !end) return 0;
         return meetings.value.filter((meeting) => {
-            if (meeting.dismissed) return false;
+            if (meeting.dismissed && !includeDismissed.value) return false;
             const from = getLocalizedDayJs(meeting.start);
             const to = getLocalizedDayJs(meeting.end);
             return to.isAfter(from)
@@ -287,11 +304,15 @@ export function useOutlookMeetings(
     }
 
     function isBucketFresh(target: WeekBucket): boolean {
-        const cached = queryClient.getQueryData<OutlookMeetingsResponse>([
-            ...MEETINGS_QUERY_KEY,
-            target.start,
-        ]);
-        const syncedAt = cached?.sync?.last_synced_at;
+        // Both variants of the read (with and without dismissed meetings) carry the same sync time
+        const syncedAt = queryClient
+            .getQueriesData<OutlookMeetingsResponse>({
+                queryKey: [...MEETINGS_QUERY_KEY, target.start],
+            })
+            .map(([, data]) => data?.sync?.last_synced_at ?? null)
+            .filter((at): at is string => at !== null)
+            .sort()
+            .pop();
         if (!syncedAt) return false;
         const age = Date.now() - new Date(syncedAt).getTime();
         return age >= 0 && age < AUTO_SYNC_FRESH_MS;
@@ -387,43 +408,68 @@ export function useOutlookMeetings(
         });
     }
 
-    // Optimistic: the meeting leaves the cache before the request is sent (the removal is
-    // synchronous, so the caller can move focus right after a tick). A failure puts it back and says
-    // so through the notification store; a success is silent apart from the screen reader line.
-    async function dismiss(id: string): Promise<void> {
+    // Optimistic: the cache changes before the request is sent (synchronously, so the caller can
+    // move focus right after a tick). A dismiss removes the meeting, or flags it while dismissed
+    // meetings are shown; a restore clears the flag. A failure puts the previous state of that one
+    // meeting back and says so through the notification store; a success is silent apart from the
+    // screen reader line.
+    async function changeDismissal(id: string, dismissed: boolean): Promise<void> {
         const url = calendar.value?.urls.meetings;
         const current = labels.value;
         if (!url || !bucket.value || !current) return;
 
-        const key = [...MEETINGS_QUERY_KEY, bucket.value.start];
-        // Stops an in-flight read of this week from overwriting the optimistic removal
+        const key = meetingsKey(bucket.value.start, includeDismissed.value);
+        // Stops an in-flight read of this week from overwriting the optimistic change
         void queryClient.cancelQueries({ queryKey: key });
-        const removed = queryClient
+        const before = queryClient
             .getQueryData<OutlookMeetingsResponse>(key)
             ?.data.find((meeting) => meeting.id === id);
-        queryClient.setQueryData<OutlookMeetingsResponse>(key, (old) =>
-            old ? { ...old, data: old.data.filter((meeting) => meeting.id !== id) } : old
-        );
+        const keep = !dismissed || includeDismissed.value;
+        queryClient.setQueryData<OutlookMeetingsResponse>(key, (old) => {
+            if (!old) return old;
+            return {
+                ...old,
+                data: keep
+                    ? old.data.map((meeting) =>
+                          meeting.id === id ? { ...meeting, dismissed } : meeting
+                      )
+                    : old.data.filter((meeting) => meeting.id !== id),
+            };
+        });
 
         try {
-            await dismissMeeting(url, id);
-            announce(current.dismissed_announcement);
+            if (dismissed) {
+                await dismissMeeting(url, id);
+                announce(current.dismissed_announcement);
+            } else {
+                await restoreMeeting(url, id);
+                announce(current.restored_announcement);
+            }
         } catch {
-            if (removed) {
-                queryClient.setQueryData<OutlookMeetingsResponse>(key, (old) =>
-                    old && !old.data.some((meeting) => meeting.id === id)
-                        ? { ...old, data: [...old.data, removed] }
-                        : old
-                );
+            if (before) {
+                queryClient.setQueryData<OutlookMeetingsResponse>(key, (old) => {
+                    if (!old) return old;
+                    return old.data.some((meeting) => meeting.id === id)
+                        ? {
+                              ...old,
+                              data: old.data.map((meeting) =>
+                                  meeting.id === id ? before : meeting
+                              ),
+                          }
+                        : { ...old, data: [...old.data, before] };
+                });
             }
             useNotificationsStore().addNotification(
                 'error',
-                current.dismiss_failed,
+                dismissed ? current.dismiss_failed : current.restore_failed,
                 current.retry_body
             );
         }
         await queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
     }
+
+    const dismiss = (id: string): Promise<void> => changeDismissal(id, true);
+    const restore = (id: string): Promise<void> => changeDismissal(id, false);
 
     // Local days that hold at least one meeting get the reserved Outlook lane (D-23). The overlap is
     // half-open like the ghost layout: a zero-length meeting belongs to the day containing it.
@@ -484,12 +530,14 @@ export function useOutlookMeetings(
         lastSync,
         readFailed,
         syncedAt,
+        includeDismissed,
         visibleCount,
         canSync,
         cooldownUntil,
         requestSync,
         canAct,
         dismiss,
+        restore,
         announcement,
         dayOverlayLane,
     };
