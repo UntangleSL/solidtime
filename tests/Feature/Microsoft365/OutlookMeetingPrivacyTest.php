@@ -532,7 +532,8 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
         $listBefore = $this->getJson($listUrl)->assertOk()->json();
 
         // Act
-        $this->actingAs($data->user);
+        // Passport::actingAs switched the default guard to api; the sync route is session-only.
+        $this->actingAs($data->user, 'web');
         $this->postSync()->assertJsonPath('status', 'ok');
         Passport::actingAs($data->user);
         $aggregateAfter = $this->getJson($aggregateUrl)->assertOk()->json();
