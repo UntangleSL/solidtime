@@ -143,3 +143,7 @@ None. No new endpoint or trust boundary beyond the plan's register (DELETE dismi
 - FOUND: resources/js/m365/calendar/OutlookDismissedSetting.vue
 - FOUND: resources/js/m365/calendar/OutlookDismissedSetting.test.ts
 - FOUND commit 098d3d36 and 34896c23 (ancestors of HEAD)
+
+## CI result (orchestrator combined gate, wave 9)
+
+Nine workflows green at 7cab2150 (after test-only fix 7cab2150 for OutlookMeetingPrivacyTest guard switch); all 24 Microsoft365 feature classes PASS x3 Postgres.

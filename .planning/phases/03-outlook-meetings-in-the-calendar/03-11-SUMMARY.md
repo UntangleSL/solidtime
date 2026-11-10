@@ -123,3 +123,7 @@ CAL-03 (meetings visible only to their owner, every role and during impersonatio
 
 - Files exist: `app/Microsoft365/Graph/GraphAccessGuard.php`, `tests/Feature/Microsoft365/OutlookMeetingPrivacyTest.php`
 - Commits exist on the branch: `09ad10f6`, `8198fbf3`
+
+## CI result (orchestrator combined gate, wave 9)
+
+Nine workflows green at 7cab2150 (after test-only fix 7cab2150 for OutlookMeetingPrivacyTest guard switch); all 24 Microsoft365 feature classes PASS x3 Postgres.

@@ -41,7 +41,7 @@
 - [x] **CAL-01**: Eligible meetings render in the calendar week/day views as visually distinct "ghost" suggestion blocks that are not counted in tracked time, totals, reports or exports
 - [x] **CAL-02**: Ghost blocks cannot be dragged/resized and do not interfere with creating or editing normal time entries in the calendar
 - [ ] **CAL-03**: Meetings are visible only to their owner (never to other members or managers) until converted to a time entry
-- [ ] **CAL-04**: User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it
+- [x] **CAL-04**: User can dismiss a meeting suggestion so it stops appearing, and can show dismissed suggestions again to undo it
 
 ### Assign Meetings to Projects (ASGN)
 
@@ -136,7 +136,7 @@ High level, added by the owner 2026-11-05; details to be refined in Phase 8 disc
 | CAL-01 | Phase 3 | Complete |
 | CAL-02 | Phase 3 | Complete |
 | CAL-03 | Phase 3 | Pending |
-| CAL-04 | Phase 3 | Pending |
+| CAL-04 | Phase 3 | Complete |
 | ASGN-01 | Phase 4 | Pending |
 | ASGN-02 | Phase 4 | Pending |
 | ASGN-03 | Phase 4 | Pending |
