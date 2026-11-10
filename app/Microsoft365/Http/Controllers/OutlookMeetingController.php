@@ -12,6 +12,7 @@ use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Models\User;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -37,7 +38,8 @@ class OutlookMeetingController extends Controller
             ->where('user_id', '=', $user->getKey())
             ->where('starts_at', '<', $end->format('Y-m-d H:i:s'))
             ->where('ends_at', '>', $start->format('Y-m-d H:i:s'))
-            ->whereNull('dismissed_at')
+            // Dismissed meetings only come back when asked for (include_dismissed); gone ones never do
+            ->when(! $request->includeDismissed(), fn (Builder $query): Builder => $query->whereNull('dismissed_at'))
             ->whereNull('gone_at')
             ->orderBy('starts_at')
             ->orderBy('ends_at')
@@ -86,6 +88,20 @@ class OutlookMeetingController extends Controller
         $row = $this->ownMeeting($request->user(), $meeting);
         if ($row->dismissed_at === null) {
             $row->dismissed_at = now();
+            $row->save();
+        }
+
+        return new OutlookMeetingResource($row);
+    }
+
+    /**
+     * Brings a dismissed occurrence back. Idempotent: restoring a visible meeting is a no-op 200.
+     */
+    public function restore(Request $request, string $meeting): OutlookMeetingResource
+    {
+        $row = $this->ownMeeting($request->user(), $meeting);
+        if ($row->dismissed_at !== null) {
+            $row->dismissed_at = null;
             $row->save();
         }
 

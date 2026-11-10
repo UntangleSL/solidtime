@@ -34,6 +34,8 @@ class MeetingRangeRequest extends FormRequest
             'end' => ['required', 'string', 'date_format:'.self::FORMAT, 'after:start'],
             // The Sync button: skips the 60 s reuse window, never the 10 s minimum interval
             'force' => ['sometimes', 'boolean'],
+            // Read only: also return the user's dismissed meetings (flagged dismissed: true)
+            'include_dismissed' => ['sometimes', 'boolean'],
         ];
     }
 
@@ -57,6 +59,11 @@ class MeetingRangeRequest extends FormRequest
     public function force(): bool
     {
         return $this->boolean('force');
+    }
+
+    public function includeDismissed(): bool
+    {
+        return $this->boolean('include_dismissed');
     }
 
     public function rangeStart(): CarbonImmutable

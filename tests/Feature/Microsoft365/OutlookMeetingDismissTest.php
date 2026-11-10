@@ -186,4 +186,99 @@ class OutlookMeetingDismissTest extends TestCaseWithDatabase
         $this->assertSame(2, OutlookMeeting::query()->count());
         Http::assertNothingSent();
     }
+
+    private function restore(string $id): TestResponse
+    {
+        return $this->deleteJson(route('microsoft.meetings.restore', ['meeting' => $id], false));
+    }
+
+    public function test_restore_brings_the_meeting_back_and_is_idempotent(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $row = $this->meeting($user, 'back', ['dismissed_at' => '2026-10-19 08:00:00']);
+        $this->actingAs($user);
+
+        // Act
+        $first = $this->restore($row->id);
+        $second = $this->restore($row->id);
+        $read = $this->getMeetings();
+
+        // Assert
+        $first->assertOk();
+        $first->assertJsonPath('data.dismissed', false);
+        $second->assertOk();
+        $second->assertJsonPath('data.dismissed', false);
+        $this->assertNull($row->refresh()->dismissed_at);
+        $read->assertJsonCount(1, 'data');
+        $read->assertJsonPath('data.0.id', $row->id);
+    }
+
+    public function test_restore_of_a_foreign_unknown_or_invalid_id_is_404(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $other = $this->createUser();
+        $foreign = $this->meeting($other, 'foreign', ['dismissed_at' => '2026-10-19 08:00:00']);
+        $this->actingAs($user);
+
+        // Act
+        $foreignResponse = $this->restore($foreign->id);
+        $unknownResponse = $this->restore('7b1b3a52-0d6f-4a53-9d0a-5c2f6a1e8f10');
+        $invalidResponse = $this->restore('not-a-uuid');
+
+        // Assert
+        $foreignResponse->assertNotFound();
+        $unknownResponse->assertNotFound();
+        $invalidResponse->assertNotFound();
+        $this->assertNotNull($foreign->refresh()->dismissed_at);
+    }
+
+    public function test_include_dismissed_returns_dismissed_meetings_flagged(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $this->meeting($user, 'visible');
+        $this->meeting($user, 'hidden', ['dismissed_at' => '2026-10-19 08:00:00', 'starts_at' => '2026-10-21 09:00:00', 'ends_at' => '2026-10-21 10:00:00']);
+        $this->actingAs($user);
+
+        // Act
+        $default = $this->getMeetings();
+        $included = $this->getMeetings(['include_dismissed' => '1']);
+        $invalid = $this->getMeetings(['include_dismissed' => 'maybe']);
+
+        // Assert
+        $default->assertJsonCount(1, 'data');
+        $default->assertJsonPath('data.0.subject', 'Subject visible');
+        $included->assertOk();
+        $included->assertJsonCount(2, 'data');
+        $included->assertJsonPath('data.0.dismissed', false);
+        $included->assertJsonPath('data.1.subject', 'Subject hidden');
+        $included->assertJsonPath('data.1.dismissed', true);
+        $invalid->assertStatus(422);
+    }
+
+    public function test_gone_meetings_are_never_returned(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $gone = $this->meeting($user, 'gone', ['gone_at' => '2026-10-19 08:00:00']);
+        $goneDismissed = $this->meeting($user, 'gone-dismissed', ['gone_at' => '2026-10-19 08:00:00', 'dismissed_at' => '2026-10-19 08:00:00']);
+        $this->actingAs($user);
+
+        // Act
+        $plain = $this->getMeetings();
+        $included = $this->getMeetings(['include_dismissed' => '1']);
+
+        // Assert
+        $plain->assertJsonCount(0, 'data');
+        $included->assertJsonCount(0, 'data');
+        $this->dismiss($gone->id)->assertNotFound();
+        $this->restore($goneDismissed->id)->assertNotFound();
+        $this->assertNull($gone->refresh()->dismissed_at);
+    }
 }

@@ -36,4 +36,8 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
             ->whereUuid('meeting')
             ->middleware('throttle:60,1,m365-dismiss:')
             ->name('microsoft.meetings.dismiss');
+        Route::delete('/meetings/{meeting}/dismiss', [OutlookMeetingController::class, 'restore'])
+            ->whereUuid('meeting')
+            ->middleware('throttle:60,1,m365-dismiss:')
+            ->name('microsoft.meetings.restore');
     });
