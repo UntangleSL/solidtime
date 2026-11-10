@@ -27,6 +27,7 @@ final class OutlookMeetingSyncService
         private readonly GraphCalendarClient $client,
         private readonly OutlookMeetingEligibility $eligibility,
         private readonly MicrosoftTokenService $tokens,
+        private readonly GraphAccessGuard $access,
     ) {}
 
     /**
@@ -36,6 +37,11 @@ final class OutlookMeetingSyncService
      */
     public function sync(User $user, CarbonImmutable $start, CarbonImmutable $end, bool $force = false): SyncOutcome
     {
+        // Defence in depth next to the token service: no query, no lock, no window write, no HTTP
+        if ($this->access->blocked()) {
+            return new SyncOutcome(SyncStatus::NotConnected);
+        }
+
         $account = MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->first();
         $early = $this->guard($account, $user, $start, $end, $force);
         if ($early !== null) {
