@@ -12,7 +12,7 @@ Doppler (`vps`, configuración `prd`) y en la pestaña Environment de Dokploy.
   la propietaria sin correo saliente (D-22), la comprobación con `php artisan m365:check`, el primer
   inicio de sesión real, la dependencia del MFA de Entra (D-06), los límites de los usuarios sin
   contraseña, cómo desvincular una identidad y cómo apagar la integración.
-- Qué no cubre: el calendario de Outlook (Fase 3 en adelante), el correo saliente (tarea aparte con el
+- Qué no cubre: el correo saliente (tarea aparte con el
   postfix del VPS) y Cloudflare Access (solo una nota, ver el último apartado).
 - El compose de referencia es `docs/deploy/dokploy-compose.fork.yml`. Este documento no lo aplica:
   pegarlo en Dokploy y redesplegar es un paso manual que se hace tras la aprobación de la propietaria.
@@ -206,6 +206,62 @@ cd /var/www/html && php artisan passport:client --public --name="Browser Extensi
   pierde si se crea una base de datos nueva; entonces hay que volver a crearlo y actualizar el ID en
   cada equipo. Las claves `PASSPORT_PRIVATE_KEY`/`PASSPORT_PUBLIC_KEY` del entorno deben mantenerse,
   o las sesiones ya conectadas tendrán que volver a iniciar sesión.
+
+## Reuniones de Outlook en el calendario (Fase 3)
+
+El calendario de solidtime muestra las reuniones de Outlook de cada persona como sugerencias de solo
+lectura («fantasmas») junto a sus entradas de tiempo. No crean ni modifican entradas: los totales no
+cambian.
+
+- **Qué se guarda.** solidtime copia las reuniones elegibles de cada persona en las tablas
+  `outlook_meetings` y `outlook_sync_windows` (el rango de fechas ya sincronizado). No se guardan las
+  reuniones privadas, las canceladas ni las de todo el día. Cada fila pertenece a una sola persona y
+  ninguna ruta acepta un identificador de usuario: solo se actúa sobre la sesión actual.
+- **Cuándo se sincroniza.** Al abrir el calendario, al navegar entre semanas y con el botón «Sync
+  Outlook». La lectura de `GET /m365/meetings` solo consulta la copia local y nunca llama a Graph; la
+  sincronización es `POST /m365/meetings/sync`.
+- **Ajustes de Graph.** Los parámetros `microsoft365.graph.*` (`max_pages`, `connect_timeout`,
+  `timeout`, `deadline_seconds`, `reuse_seconds`, `min_interval_seconds`, `lock_seconds`) viven en
+  `config/microsoft365.php` con valores fijos. **No hay variables de entorno nuevas** en esta fase, así
+  que el Environment de Dokploy no cambia.
+- **Límites de frecuencia.** Las rutas usan el limitador de Laravel con prefijos propios:
+  `m365-read:` (lectura, 60 por minuto), `m365-sync:` (sincronización, 12 por minuto) y
+  `m365-dismiss:` (descartar y restaurar, 60 por minuto). Si Outlook limita las peticiones (429/503) se
+  respeta con `graph_backoff_until` en la cuenta de Microsoft de la persona: hasta esa hora no se vuelve
+  a llamar a Graph y se muestran las reuniones ya guardadas.
+- **Reconectar.** El botón «Reconnect Microsoft» aparece solo cuando el fallo del token lo puede
+  arreglar la persona (por ejemplo, una sesión revocada en Entra). Si caduca el
+  **secreto de cliente** de la aplicación de Entra, todas las personas ven «Outlook unavailable» y no
+  tienen nada que reconectar: busca en el log líneas `Microsoft token refresh failed` con
+  `reason=client_error` y renueva el secreto según `docs/m365/RUNBOOK-entra-app.md`
+  (`## Renovación del secreto`).
+- **Carril de Outlook (D-23).** Las reuniones ocupan un carril reservado a la derecha de cada día, de
+  modo que siguen siendo alcanzables aunque haya entradas de tiempo en la misma franja.
+- **Desconectar borra la copia (D-21).** «Disconnect» en el perfil elimina las reuniones guardadas, los
+  descartes y las ventanas de sincronización de esa persona, además de los tokens. Volver a conectar
+  empieza de cero.
+- **Suplantación (D-22).** Mientras una persona administradora suplanta a otra desde Filament no se
+  muestran reuniones ni controles de Outlook y nunca se llama a Graph con la cuenta suplantada.
+- **Rutas y Cloudflare Access.** `/m365/*` son rutas de sesión del navegador (cookie y CSRF) y no
+  aceptan tokens de API, por eso **no necesitan ninguna excepción (bypass) de Cloudflare Access**. La
+  excepción de `/api/*`, `/oauth/token` y `/health-check/up` descrita más abajo no cambia.
+- **Comprobación pública tras desplegar.** `GET /m365/meetings` sin sesión y con
+  `Accept: application/json` responde 401 (ruta desplegada e integración activa); 404 significa que la
+  integración está apagada o que la ruta no está desplegada.
+- **Migraciones.** Con `AUTO_DB_MIGRATE` el contenedor `app` aplica al arrancar
+  `2026_11_05_000001_create_outlook_meetings_tables` (dos tablas nuevas) y
+  `2026_11_05_000002_add_graph_state_to_microsoft_accounts_table` (dos columnas anulables en
+  `microsoft_accounts`: `reconnect_required_at` y `graph_backoff_until`). Son aditivas y tienen
+  `down()`; no reescriben datos.
+
+Pendiente para la Fase 7 (SEC-04), conocido y aceptado por ahora:
+
+- Las URL de conectar y desconectar del perfil y `microsoft.redirect?intent=connect` no se bloquean
+  durante la suplantación: una persona administradora suplantando podría iniciar la conexión o
+  desconectar (y purgar) los datos de esa persona.
+- Una sincronización que corre a la vez que una desconexión puede volver a insertar filas que quedan
+  invisibles (la lectura responde vacío sin una cuenta conectada); se eliminan en la siguiente
+  desconexión.
 
 ## Apagar la integración
 
