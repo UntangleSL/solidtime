@@ -108,3 +108,7 @@ None. T-03-19 (open redirect) mitigated: a single allow-listed value, written se
 ## Self-Check: PASSED
 
 Created and modified files exist; commits 17d7eb92 and fd5862a5 are ancestors of HEAD.
+
+## CI result (from 03-09 combined gate)
+
+Green on HEAD cffb0d32: nine workflows success, Gate B 3 per class for MicrosoftCalendarConnectTest, OutlookCalendarPropTest, MicrosoftAccountTest and MicrosoftSessionTest. This was the first CI run of 03-08 code. It exposed one 03-08 test bug (MicrosoftCalendarConnectTest asserted the redirect session after the callback had consumed it; production code unaffected), fixed in 2cc96cb3 and described in 03-09-SUMMARY.md.
