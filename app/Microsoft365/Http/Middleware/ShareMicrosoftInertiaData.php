@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Microsoft365\Http\Middleware;
 
+use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Microsoft365\MicrosoftConfig;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Models\User;
@@ -25,7 +26,10 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class ShareMicrosoftInertiaData
 {
-    public function __construct(private readonly MicrosoftConfig $config) {}
+    public function __construct(
+        private readonly MicrosoftConfig $config,
+        private readonly GraphAccessGuard $access,
+    ) {}
 
     /**
      * @param  Closure(Request): Response  $next
@@ -54,8 +58,9 @@ class ShareMicrosoftInertiaData
                 }
             }
 
-            // Calendar page only: state and URLs, the copy, and nothing token-related.
-            if ($request->routeIs('calendar')) {
+            // Calendar page only: state and URLs, the copy, and nothing token-related. Never while an admin
+            // impersonates the user: no Sync, Connect or Reconnect (it would start OAuth for the user).
+            if ($request->routeIs('calendar') && ! $this->access->blocked()) {
                 $user = Auth::guard('web')->user();
                 if ($user instanceof User) {
                     $data['calendar'] = $this->calendar($request, $user);

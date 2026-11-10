@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Microsoft365\Http\Controllers;
 
 use App\Microsoft365\Models\MicrosoftAccount;
+use App\Microsoft365\Models\OutlookMeeting;
+use App\Microsoft365\Models\OutlookSyncWindow;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -16,7 +18,9 @@ class MicrosoftAccountController extends Controller
     /**
      * Disconnect Microsoft: the stored tokens are dropped, the identity link stays so the user can
      * still sign in with Microsoft (a passwordless user must never be locked out, D-10/D-19).
-     * Nothing else is touched: no time entries, no user fields, no row removal.
+     * The user's cached Outlook meetings, their dismissals and sync windows are deleted in the same
+     * transaction (D-21): reconnecting starts from a fresh fetch. Nothing else is touched: no time
+     * entries, no user fields, no removal of the identity row.
      */
     public function destroy(Request $request): RedirectResponse
     {
@@ -30,6 +34,10 @@ class MicrosoftAccountController extends Controller
                     ->where('user_id', '=', $user->getKey())
                     ->lockForUpdate()
                     ->first();
+
+                // Nothing may outlive the connection, also when there is no link row to keep
+                OutlookMeeting::query()->where('user_id', '=', $user->getKey())->delete();
+                OutlookSyncWindow::query()->where('user_id', '=', $user->getKey())->delete();
 
                 if ($account === null) {
                     return;

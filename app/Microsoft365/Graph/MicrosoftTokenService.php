@@ -20,7 +20,7 @@ use Illuminate\Support\Facades\Log;
  *
  * The refresh runs under a row lock with a post-lock expiry check, so two concurrent requests never
  * spend the same (possibly rotating) refresh token twice. Tokens, the client secret and response bodies
- * are never logged.
+ * are never logged. While an admin impersonates the user it refuses before touching anything.
  */
 final class MicrosoftTokenService
 {
@@ -52,7 +52,10 @@ final class MicrosoftTokenService
         'invalid_resource',
     ];
 
-    public function __construct(private readonly MicrosoftConfig $config) {}
+    public function __construct(
+        private readonly MicrosoftConfig $config,
+        private readonly GraphAccessGuard $access,
+    ) {}
 
     /**
      * Records that the user has to sign in again (Graph kept answering 401/403 with a fresh token):
@@ -78,6 +81,12 @@ final class MicrosoftTokenService
      */
     public function accessToken(MicrosoftAccount $account, ?string $rejectedToken = null): string
     {
+        // Single choke point for every Graph call (D-22): while an admin impersonates the user, the
+        // row is neither read, locked nor refreshed, so no request can carry the user's token.
+        if ($this->access->blocked()) {
+            throw new GraphException(SyncStatus::NotConnected);
+        }
+
         // The transaction only scopes the row lock. A failure is returned, not thrown, so that state
         // written on the way (a later plan's markers) is committed instead of rolled back.
         $result = DB::transaction(function () use ($account, $rejectedToken): string|GraphException {

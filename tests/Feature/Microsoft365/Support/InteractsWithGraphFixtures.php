@@ -121,12 +121,15 @@ trait InteractsWithGraphFixtures
         return $sequence;
     }
 
-    protected function connectedAccount(User $user, bool $expired = false): MicrosoftAccount
+    /**
+     * @param  string|null  $objectId  a distinct Microsoft object id, for tests that link several users
+     */
+    protected function connectedAccount(User $user, bool $expired = false, ?string $objectId = null): MicrosoftAccount
     {
         $account = new MicrosoftAccount;
         $account->user()->associate($user);
         $account->tenant_id = '00000000-0000-4000-8000-0000000000a1';
-        $account->microsoft_oid = '00000000-0000-4000-8000-0000000000b1';
+        $account->microsoft_oid = $objectId ?? '00000000-0000-4000-8000-0000000000b1';
         $account->microsoft_email = 'ada@example.test';
         $account->access_token = 'at-marker-7f3c';
         $account->refresh_token = 'rt-marker-9d1e';

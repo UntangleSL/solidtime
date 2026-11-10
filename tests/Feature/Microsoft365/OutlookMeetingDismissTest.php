@@ -98,6 +98,7 @@ class OutlookMeetingDismissTest extends TestCaseWithDatabase
         // Arrange
         $this->configureMicrosoft365();
         $user = $this->createUser();
+        $this->connectedAccount($user);
         $row = $this->meeting($user, 'one');
         $this->actingAs($user);
 
@@ -206,6 +207,7 @@ class OutlookMeetingDismissTest extends TestCaseWithDatabase
         // Arrange
         $this->configureMicrosoft365();
         $user = $this->createUser();
+        $this->connectedAccount($user);
         $row = $this->meeting($user, 'back', ['dismissed_at' => '2026-10-19 08:00:00']);
         $this->actingAs($user);
 
@@ -250,6 +252,7 @@ class OutlookMeetingDismissTest extends TestCaseWithDatabase
         // Arrange
         $this->configureMicrosoft365();
         $user = $this->createUser();
+        $this->connectedAccount($user);
         $this->meeting($user, 'visible');
         $this->meeting($user, 'hidden', ['dismissed_at' => '2026-10-19 08:00:00', 'starts_at' => '2026-10-21 09:00:00', 'ends_at' => '2026-10-21 10:00:00']);
         $this->actingAs($user);
@@ -275,6 +278,7 @@ class OutlookMeetingDismissTest extends TestCaseWithDatabase
         // Arrange
         $this->configureMicrosoft365();
         $user = $this->createUser();
+        $this->connectedAccount($user);
         $gone = $this->meeting($user, 'gone', ['gone_at' => '2026-10-19 08:00:00']);
         $goneDismissed = $this->meeting($user, 'gone-dismissed', ['gone_at' => '2026-10-19 08:00:00', 'dismissed_at' => '2026-10-19 08:00:00']);
         $this->actingAs($user);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Microsoft365\Http\Controllers;
 
+use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Microsoft365\Graph\OutlookMeetingSyncService;
 use App\Microsoft365\Http\Requests\MeetingRangeRequest;
 use App\Microsoft365\Http\Resources\OutlookMeetingResource;
@@ -13,6 +14,7 @@ use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Models\User;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -20,10 +22,13 @@ use Illuminate\Routing\Controller;
 
 /**
  * The calendar's two Outlook endpoints. Both answer only for the session user: there is no user id
- * input and every query is scoped by the authenticated user (CAL-03, D-16).
+ * input and every query is scoped by the authenticated user (CAL-03, D-16). While an admin impersonates
+ * the user nothing is served (D-22): an empty list, no sync, and a 404 for dismiss and restore.
  */
 class OutlookMeetingController extends Controller
 {
+    public function __construct(private readonly GraphAccessGuard $access) {}
+
     /**
      * Cache read: never calls Graph, so the calendar can always render what it has (SYNC-01).
      * The range is half-open [start, end): a meeting touching only a boundary is not part of it.
@@ -33,6 +38,15 @@ class OutlookMeetingController extends Controller
         $user = $this->sessionUser($request->user());
         $start = $request->rangeStart();
         $end = $request->rangeEnd();
+
+        // Impersonation, no link, or a disconnected link: nothing to show and nothing is queried. A
+        // reconnect-state account still serves its last known meetings (UI-SPEC).
+        $account = MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->first();
+        if ($this->access->blocked() || $account === null || $account->calendarAccessState() === 'not_connected') {
+            return OutlookMeetingResource::collection(collect())->additional([
+                'sync' => ['last_synced_at' => null, 'retry_after' => null],
+            ]);
+        }
 
         $meetings = OutlookMeeting::query()
             ->where('user_id', '=', $user->getKey())
@@ -52,13 +66,11 @@ class OutlookMeetingController extends Controller
             ->where('window_end', '=', $end->format('Y-m-d H:i:s'))
             ->first();
 
-        // Seconds Graph is still backed off for (D-12): a reload keeps the Sync control waiting
-        $account = MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->first();
-
         return OutlookMeetingResource::collection($meetings)->additional([
             'sync' => [
                 'last_synced_at' => $window?->synced_at->utc()->format('Y-m-d\TH:i:s\Z'),
-                'retry_after' => $account?->backoffRemainingSeconds(),
+                // Seconds Graph is still backed off for (D-12): a reload keeps the Sync control waiting
+                'retry_after' => $account->backoffRemainingSeconds(),
             ],
         ]);
     }
@@ -114,6 +126,11 @@ class OutlookMeetingController extends Controller
      */
     private function ownMeeting(?Authenticatable $user, string $id): OutlookMeeting
     {
+        // Impersonation answers like a foreign id: no oracle for what exists
+        if ($this->access->blocked()) {
+            throw (new ModelNotFoundException)->setModel(OutlookMeeting::class, [$id]);
+        }
+
         return OutlookMeeting::query()
             ->where('user_id', '=', $this->sessionUser($user)->getKey())
             ->whereKey($id)

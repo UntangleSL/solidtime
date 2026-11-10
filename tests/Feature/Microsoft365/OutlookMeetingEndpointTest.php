@@ -157,6 +157,7 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
         // Arrange
         $this->configureMicrosoft365();
         $user = $this->createUser();
+        $this->connectedAccount($user);
         $this->meeting($user, 'ends-at-start', '2026-10-18 23:00:00', '2026-10-19 00:00:00');
         $this->meeting($user, 'starts-at-end', '2026-10-26 00:00:00', '2026-10-26 01:00:00');
         $this->meeting($user, 'crosses-start', '2026-10-18 23:30:00', '2026-10-19 00:30:00');
@@ -177,6 +178,7 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
         // Arrange
         $this->configureMicrosoft365();
         $user = $this->createUser();
+        $this->connectedAccount($user);
         $this->meeting($user, 'c', '2026-10-20 09:00:00', '2026-10-20 10:00:00');
         $this->meeting($user, 'a', '2026-10-20 09:00:00', '2026-10-20 10:00:00');
         $this->meeting($user, 'b', '2026-10-20 09:00:00', '2026-10-20 09:30:00');
@@ -199,6 +201,7 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
         // Arrange
         $this->configureMicrosoft365();
         $user = $this->createUser();
+        $this->connectedAccount($user);
         $this->meeting($user, 'first', '2026-10-20 09:00:00', '2026-10-20 10:00:00');
         $this->meeting($user, 'second', '2026-10-20 10:00:00', '2026-10-20 11:00:00');
         $this->actingAs($user);
@@ -217,6 +220,7 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
         // Arrange
         $this->configureMicrosoft365();
         $user = $this->createUser();
+        $this->connectedAccount($user);
         $member = Member::query()->where('user_id', '=', $user->getKey())->firstOrFail();
         TimeEntry::factory()->forMember($member)->create([
             'start' => '2026-09-15 09:00:00',
@@ -264,7 +268,9 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
         Member::factory()->forUser($manager)->forOrganization($context->organization)->role(Role::Manager)->create();
         $other = $this->createUser();
         $users = ['employee' => $employee, 'manager' => $manager, 'owner' => $owner, 'other' => $other];
+        $index = 0;
         foreach ($users as $name => $user) {
+            $this->connectedAccount($user, objectId: sprintf('00000000-0000-4000-8000-0000000001%02d', $index++));
             $this->meeting($user, 'own-'.$name, '2026-10-20 09:00:00', '2026-10-20 10:00:00');
         }
         $range = ['start' => self::WINDOW_START, 'end' => self::WINDOW_END];
@@ -359,6 +365,7 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
         // Arrange
         $this->configureMicrosoft365();
         $user = $this->createUser();
+        $this->connectedAccount($user);
         $this->meeting($user, 'one', '2026-10-20 09:00:00', '2026-10-20 10:00:00');
         $this->actingAs($user);
 
