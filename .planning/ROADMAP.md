@@ -214,7 +214,25 @@ Plans:
   3. An organization admin can upload or change the organization icon in the workspace settings, and it shows wherever the organization is displayed.
   4. Theme and colour changes keep text and calendar blocks readable (contrast checked in light and dark).
 
-**Plans**: TBD
+**Plans**: 9 plans
+
+Plans:
+**Wave 1**
+- [ ] 03.2-01-PLAN.md — Untangle token stylesheet, six accent presets per mode, Syne page titles, contrast gate over every theme x accent (wave 1)
+- [ ] 03.2-02-PLAN.md — Fork module app/Appearance: user_appearance_settings, PUT /user/appearance, appearance prop, en/es copy, TS prop contract (wave 1)
+- [ ] 03.2-03-PLAN.md — Contrast fixes (timer button, pale accent link/check/progress), e2e timer assertions; wave-1 CI gate (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 03.2-04-PLAN.md — Pre-paint Blade partial (server > localStorage > default) in app and OAuth layouts, theme-color metas (wave 2)
+- [ ] 03.2-05-PLAN.md — Organization icon backend: organization_icons, POST/DELETE icon routes (organizations:update), validation, org_icons prop, deletion cleanup (wave 2)
+- [ ] 03.2-06-PLAN.md — Accent state and server sync, accent picker in Theme, helper copy, command-palette accents, preset parity (wave 2)
+- [ ] 03.2-07-PLAN.md — Organization icon UI: renderer with letter fallback, switcher trigger and rows, icon field in Organization Settings; wave-2 CI gate (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 03.2-08-PLAN.md — Browser proof (pre-paint with bundles blocked, chart recolour, picker, icon flow) and the Phase 3.2 ledger section (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 03.2-09-PLAN.md — Release: ten workflows green, operator doc, sha-pinned compose, owner-approved Dokploy deploy, public checks, owner UAT (wave 4, owner checkpoint)
 **UI hint**: yes
 
 ### Phase 4: Assign Meetings to Projects
