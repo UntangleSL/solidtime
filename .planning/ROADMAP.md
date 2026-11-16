@@ -183,7 +183,24 @@ Plans:
   5. The mouse wheel / trackpad navigates the calendar predictably (scroll through hours, and a zoom gesture to change the hour height).
   6. After pressing Sync Outlook the user can see when it can be pressed again (visible short cooldown), and automatic syncs from week navigation do not keep the manual button disabled.
 
-**Plans**: TBD
+**Plans**: 8 plans
+
+Plans:
+**Wave 1**
+- [ ] 03.1-01-PLAN.md — Show weekends option (package-local Switch), sanitised calendar settings, full-week range, hidden-weekend deep link, browser proof (wave 1)
+- [ ] 03.1-02-PLAN.md — Visible Sync cooldown (manual and back-off only, ring, "Sync in 8s", tooltip) and the phase's fork copy en/es (wave 1)
+- [ ] 03.1-03-PLAN.md — Solid, readable meeting blocks in a half-width Outlook lane (wash, divider, tiers, measured columns, cascade) with sky-blue and six-overlap browser fixtures (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 03.1-04-PLAN.md — Meeting context menu through a core overlay slot, contextMenuOpen/interacting slot props, "My time | Outlook" header captions (wave 2)
+- [ ] 03.1-05-PLAN.md — Hover card on a shared meeting summary, suppress/close rules, close-before-context-menu (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 03.1-06-PLAN.md — Wheel and pinch zoom on the Grid Scale ladder with anchoring, corner buttons, zoom pill, no refetch on zoom (wave 3)
+- [ ] 03.1-07-PLAN.md — Browser proof of hover card, touch and context-menu layering; Playwright gate (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 03.1-08-PLAN.md — Release: ten workflows green, ledger reconciliation, sha-pinned compose, owner-approved Dokploy deploy, public checks, owner UAT (wave 4, owner checkpoint)
 **UI hint**: yes
 
 ### Phase 03.2: Appearance & Untangle Branding (INSERTED)
