@@ -174,7 +174,7 @@ Plans:
 
 **Goal**: As a team member, I want a calendar that is easier to read and move around (view options, readable meeting blocks, hover details, smooth zoom and scroll), so that working with time entries and Outlook meetings feels as fluid as in Clockify.
 **Depends on**: Phase 3
-**Requirements**: UX-01, UX-02, UX-03, UX-04, UX-05, UX-06 (added by the owner after the Phase 3 UAT, 2026-11-10)
+**Requirements**: UX-01, UX-02, UX-03, UX-04, UX-05, UX-06
 **Success Criteria** (what must be TRUE):
   1. A user can choose calendar view options that persist: show or hide weekends, and the visible start and end hour of the day.
   2. Meeting blocks have enough contrast and show more of the subject and time, so a week can be read at a glance (reference: Clockify calendar).
@@ -190,7 +190,7 @@ Plans:
 
 **Goal**: As Untangle, I want solidtime to look like our own tool by default and let each user tune it, so that the app feels branded and comfortable to use.
 **Depends on**: Phase 3 (independent of Phase 3.1; can run in parallel)
-**Requirements**: BRAND-01, BRAND-02, BRAND-03, BRAND-04 (added by the owner, 2026-11-10)
+**Requirements**: BRAND-01, BRAND-02, BRAND-03, BRAND-04
 **Success Criteria** (what must be TRUE):
   1. Untangle brand colours are the default theme for everyone.
   2. A user can switch between light and dark theme and pick a highlight (accent) colour, and the choice persists.
