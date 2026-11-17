@@ -49,6 +49,59 @@ export interface OutlookMeeting {
     is_online_meeting: boolean;
     web_link: string | null;
     dismissed: boolean;
+    // Phase 5 fields. Optional so fixtures and cached reads written before Phase 5 stay valid;
+    // readers treat a missing value as null / false / [] (not recurring, not ignored, no
+    // assignment, no suggestions).
+    // Stable key of the recurring series (null for a one-off meeting).
+    series_key?: string | null;
+    // The user chose "Always ignore this series": shown faded like a dismissed meeting.
+    series_ignored?: boolean;
+    // The series pre-assignment learned from the last conversion of this series (D-02).
+    assignment?: OutlookAssignment | null;
+    // At most 3, server order; only the first may be confident; empty when an assignment exists.
+    suggestions?: OutlookSuggestion[];
+}
+
+// Series pre-assignment of a recurring meeting (the project, task, tags and billable used the last
+// time a meeting of the series was converted).
+export interface OutlookAssignment {
+    project_id: string;
+    project_name: string;
+    project_color: string;
+    client_name: string | null;
+    task_id: string | null;
+    task_name: string | null;
+    tags: string[];
+    billable: boolean;
+    converted_at: string;
+}
+
+// Why the server suggests a project (D-07, RULE-05). For 'domain' the value is the bare domain
+// (the '@' lives in the copy); for 'subject' it is null.
+export type OutlookReasonKind = 'domain' | 'person' | 'organizer' | 'subject';
+
+export interface OutlookSuggestionReason {
+    kind: OutlookReasonKind;
+    count: number;
+    value: string | null;
+}
+
+export interface OutlookSuggestion {
+    project_id: string;
+    project_name: string;
+    project_color: string;
+    client_name: string | null;
+    confident: boolean;
+    reason: OutlookSuggestionReason;
+}
+
+// Where the form's project prefill came from (D-16), sent with the conversion for measurement.
+export type OutlookPrefillSource = 'series' | 'suggestion' | 'last_used' | 'none';
+
+// Body fields to confirm pre-assigned meetings with their series assignment (sent alone with
+// meeting_ids: no project, task, tags, billable, description, start, end or prefill fields).
+export interface OutlookSeriesConfirmFields {
+    use_series_assignment: true;
 }
 
 // Calendar copy resolved on the server (microsoft365.calendar.*), served as microsoft.calendar.labels.
@@ -139,6 +192,53 @@ export interface OutlookCalendarLabels {
     billable: string;
     non_billable: string;
     created_success: string;
+    // Phase 5 (series pre-assignment and smart suggestions).
+    preassigned_suffix: string;
+    preassigned_eyebrow: string;
+    why_series: string;
+    confirm: string;
+    edit: string;
+    more_actions: string;
+    confirm_failed: string;
+    ignore_series: string;
+    unignore_series: string;
+    forget_series: string;
+    series_ignored: string;
+    series_ignored_help: string;
+    series_unignored: string;
+    series_forgotten: string;
+    series_forgotten_help: string;
+    series_action_failed: string;
+    eyebrow_series_ignored: string;
+    series_ignored_suffix: string;
+    reason_series: string;
+    reason_last_used: string;
+    reason_domain_one: string;
+    reason_domain_many: string;
+    reason_person_one: string;
+    reason_person_many: string;
+    reason_organizer_one: string;
+    reason_organizer_many: string;
+    reason_subject_one: string;
+    reason_subject_many: string;
+    reason_batch: string;
+    other_suggestions: string;
+    use_suggestion: string;
+    series_note_new: string;
+    series_note_change: string;
+    batch_series_note: string;
+    confirm_all_short: string;
+    confirm_all_long: string;
+    confirm_all_tooltip: string;
+    confirm_all_title_one: string;
+    confirm_all_title_many: string;
+    confirm_all_note: string;
+    confirm_submit_one: string;
+    confirm_submit_many: string;
+    confirm_none_selected: string;
+    include_meeting: string;
+    row_upcoming: string;
+    error_no_assignment: string;
 }
 
 // 'connected': Graph access works; 'reconnect': the Microsoft grant expired or lacks the calendar
@@ -213,4 +313,8 @@ export interface OutlookConversionFields {
     description?: string | null;
     start?: string;
     end?: string;
+    // Phase 5 (D-16): where the form's project prefill came from and which project it was, so the
+    // server can measure how often the prefill is kept.
+    prefill_source?: OutlookPrefillSource | null;
+    prefill_project_id?: string | null;
 }
