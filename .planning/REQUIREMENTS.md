@@ -75,21 +75,21 @@
 
 Added by the owner after the Phase 3 UAT (2026-11-10); refined in Phase 3.1 discuss-phase.
 
-- [ ] **UX-01**: User can set persistent calendar view options: show/hide weekends and the visible start/end hour
-- [ ] **UX-02**: Meeting blocks are high-contrast and show more of the subject and time (reference: Clockify)
-- [ ] **UX-03**: On desktop, hovering a meeting shows its details in a tooltip (click still opens the panel; touch stays click-only)
-- [ ] **UX-04**: The right-click context menu is never hidden behind a tooltip/panel (it closes them or renders above)
-- [ ] **UX-05**: Mouse wheel / trackpad scroll and zoom navigate the calendar predictably
-- [ ] **UX-06**: After a manual Sync the remaining cooldown is visible, and automatic navigation syncs do not keep the Sync button disabled
+- [x] **UX-01**: User can set persistent calendar view options: show/hide weekends and the visible start/end hour
+- [x] **UX-02**: Meeting blocks are high-contrast and show more of the subject and time (reference: Clockify)
+- [x] **UX-03**: On desktop, hovering a meeting shows its details in a tooltip (click still opens the panel; touch stays click-only)
+- [x] **UX-04**: The right-click context menu is never hidden behind a tooltip/panel (it closes them or renders above)
+- [x] **UX-05**: Mouse wheel / trackpad scroll and zoom navigate the calendar predictably
+- [x] **UX-06**: After a manual Sync the remaining cooldown is visible, and automatic navigation syncs do not keep the Sync button disabled
 
 ### Appearance & Branding (BRAND)
 
 Added by the owner 2026-11-10; refined in Phase 3.2 discuss-phase.
 
-- [ ] **BRAND-01**: Untangle brand colours are the default theme
-- [ ] **BRAND-02**: User can switch light/dark theme and choose a highlight (accent) colour, persisted per user
-- [ ] **BRAND-03**: Organization admin can upload/change the organization icon in workspace settings
-- [ ] **BRAND-04**: Theme/colour choices keep text and calendar blocks readable (contrast in light and dark)
+- [x] **BRAND-01**: Untangle brand colours are the default theme
+- [x] **BRAND-02**: User can switch light/dark theme and choose a highlight (accent) colour, persisted per user
+- [x] **BRAND-03**: Organization admin can upload/change the organization icon in workspace settings
+- [x] **BRAND-04**: Theme/colour choices keep text and calendar blocks readable (contrast in light and dark)
 
 ### Project Hour Budgets (BUDG)
 
@@ -173,16 +173,16 @@ High level, added by the owner 2026-11-05; details to be refined in Phase 8 disc
 | OPS-01 | Phase 2 | Complete |
 | OPS-02 | Phase 7 | Pending |
 | OPS-03 | Phase 7 | Pending |
-| UX-01 | Phase 3.1 | Pending |
-| UX-02 | Phase 3.1 | Pending |
-| UX-03 | Phase 3.1 | Pending |
-| UX-04 | Phase 3.1 | Pending |
-| UX-05 | Phase 3.1 | Pending |
-| UX-06 | Phase 3.1 | Pending |
-| BRAND-01 | Phase 3.2 | Pending |
-| BRAND-02 | Phase 3.2 | Pending |
-| BRAND-03 | Phase 3.2 | Pending |
-| BRAND-04 | Phase 3.2 | Pending |
+| UX-01 | Phase 3.1 | Complete |
+| UX-02 | Phase 3.1 | Complete |
+| UX-03 | Phase 3.1 | Complete |
+| UX-04 | Phase 3.1 | Complete |
+| UX-05 | Phase 3.1 | Complete |
+| UX-06 | Phase 3.1 | Complete |
+| BRAND-01 | Phase 3.2 | Complete |
+| BRAND-02 | Phase 3.2 | Complete |
+| BRAND-03 | Phase 3.2 | Complete |
+| BRAND-04 | Phase 3.2 | Complete |
 | BUDG-01 | Phase 8 | Pending |
 | BUDG-02 | Phase 8 | Pending |
 | BUDG-03 | Phase 8 | Pending |

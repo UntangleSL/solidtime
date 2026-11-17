@@ -1,19 +1,19 @@
 ---
 gsd_state_version: "1.0"
-current_phase: "03.1"
-current_phase_name: Calendar UX Polish
+current_phase: "04"
+current_phase_name: Assign Meetings to Projects
 status: planning
-stopped_at: Phases 3.1 (8 plans) and 3.2 (9 plans) planned and plan-checked; ready to execute in parallel
-last_updated: "2026-11-16T18:40:18.384Z"
-last_activity: 2026-11-10
-last_activity_desc: Phase 3 complete, transitioned to Phase 03.1
+stopped_at: Phases 3.1 and 3.2 deployed (sha-293c055, weekends-hidden follow-up sha-9c86d06) and owner UAT passed 2026-11-17; Phase 4 context, research, UI-SPEC, patterns done, planning in progress
+last_updated: "2026-11-17T13:00:00.000Z"
+last_activity: 2026-11-17
+last_activity_desc: Phases 3.1 + 3.2 complete (owner UAT), Phase 4 planning
 state_head: fcb930a6224f3ff6920129dc50c603dea64371a8
 progress:
   total_phases: 10
-  completed_phases: 3
+  completed_phases: 5
   total_plans: 48
-  completed_plans: 31
-  percent: 30
+  completed_plans: 48
+  percent: 50
 ---
 
 Total Phases: 5
@@ -25,16 +25,16 @@ Total Phases: 5
 See: .planning/PROJECT.md (updated 2026-10-19)
 
 **Core value:** A user opens the solidtime calendar and their Outlook meetings are already there, so logging meeting time to the right project takes one click instead of re-typing it from Outlook.
-**Current focus:** Phase 3 — Outlook Meetings in the Calendar
+**Current focus:** Phase 4 — Assign Meetings to Projects
 
 ## Current Position
 
-Phase: 03.1 — Calendar UX Polish
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-11-10 — Phase 3 complete, transitioned to Phase 03.1
+Phase: 04 — Assign Meetings to Projects
+Plan: Planning
+Status: Planning
+Last activity: 2026-11-17 — Phases 3.1 + 3.2 deployed and accepted by the owner; weekends hidden by default deployed (sha-9c86d06)
 
-Progress: [███░░░░░░░] 30%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -174,6 +174,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-16T18:40:17.900Z
-Stopped at: Phases 3.1 (8 plans) and 3.2 (9 plans) planned and plan-checked; ready to execute in parallel
-Resume file: .planning/phases/03.1-calendar-ux-polish/03.1-01-PLAN.md
+Last session: 2026-11-17
+Stopped at: Phase 4 planning (context, research, UI-SPEC, patterns, validation done)
+Resume file: .planning/phases/04-assign-meetings-to-projects/04-CONTEXT.md

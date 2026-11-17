@@ -26,8 +26,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Tenant Setup & Outlook Spike** - Untangle M365 admin registers and consents the app; real Outlook responses recorded as fixtures; series and cancellation decisions written down (completed 2026-11-05)
 - [x] **Phase 2: Sign in with Microsoft** - "Sign in with Microsoft" next to password login, safe auto-provision and linking, encrypted tokens, connect/disconnect, env-only config for Dokploy (completed 2026-11-05)
 - [x] **Phase 3: Outlook Meetings in the Calendar** - Eligible meetings appear as ghost suggestions on calendar open and via Sync, with dismiss, privacy and graceful Graph failures (completed 2026-11-10)
-- [ ] **Phase 3.1: Calendar UX Polish** (INSERTED) - View options (weekends, hour range), readable high-contrast meeting blocks, hover tooltip, context-menu layering, wheel zoom/scroll, visible Sync cooldown
-- [ ] **Phase 3.2: Appearance & Untangle Branding** (INSERTED) - Untangle colours by default, light/dark theme and accent colour per user, organization icon in workspace settings
+- [x] **Phase 3.1: Calendar UX Polish** (INSERTED) - View options (weekends, hour range), readable high-contrast meeting blocks, hover tooltip, context-menu layering, wheel zoom/scroll, visible Sync cooldown
+- [x] **Phase 3.2: Appearance & Untangle Branding** (INSERTED) - Untangle colours by default, light/dark theme and accent colour per user, organization icon in workspace settings
 - [ ] **Phase 4: Assign Meetings to Projects** - Single and bulk conversion of meeting suggestions into real time entries using core rules, with no duplicates
 - [ ] **Phase 5: Recurring Meeting Rules** - "This series goes to project X" and "always ignore this series" rules with one-click confirmation and a rules manager
 - [ ] **Phase 6: Out-of-Sync Detection** - Logged meetings moved or cancelled in Outlook are flagged, never changed automatically; user chooses keep, adjust or delete
@@ -192,15 +192,15 @@ Plans:
 - [x] 03.1-03-PLAN.md — Solid, readable meeting blocks in a half-width Outlook lane (wash, divider, tiers, measured columns, cascade) with sky-blue and six-overlap browser fixtures (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 03.1-04-PLAN.md — Meeting context menu through a core overlay slot, contextMenuOpen/interacting slot props, "My time | Outlook" header captions (wave 2)
-- [ ] 03.1-05-PLAN.md — Hover card on a shared meeting summary, suppress/close rules, close-before-context-menu (wave 2)
+- [x] 03.1-04-PLAN.md — Meeting context menu through a core overlay slot, contextMenuOpen/interacting slot props, "My time | Outlook" header captions (wave 2)
+- [x] 03.1-05-PLAN.md — Hover card on a shared meeting summary, suppress/close rules, close-before-context-menu (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 03.1-06-PLAN.md — Wheel and pinch zoom on the Grid Scale ladder with anchoring, corner buttons, zoom pill, no refetch on zoom (wave 3)
-- [ ] 03.1-07-PLAN.md — Browser proof of hover card, touch and context-menu layering; Playwright gate (wave 3)
+- [x] 03.1-06-PLAN.md — Wheel and pinch zoom on the Grid Scale ladder with anchoring, corner buttons, zoom pill, no refetch on zoom (wave 3)
+- [x] 03.1-07-PLAN.md — Browser proof of hover card, touch and context-menu layering; Playwright gate (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 03.1-08-PLAN.md — Release: ten workflows green, ledger reconciliation, sha-pinned compose, owner-approved Dokploy deploy, public checks, owner UAT (wave 4, owner checkpoint)
+- [x] 03.1-08-PLAN.md — Release: ten workflows green, ledger reconciliation, sha-pinned compose, owner-approved Dokploy deploy, public checks, owner UAT (wave 4, owner checkpoint)
 
 **UI hint**: yes
 
@@ -224,16 +224,16 @@ Plans:
 - [x] 03.2-03-PLAN.md — Contrast fixes (timer button, pale accent link/check/progress), e2e timer assertions; wave-1 CI gate (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 03.2-04-PLAN.md — Pre-paint Blade partial (server > localStorage > default) in app and OAuth layouts, theme-color metas (wave 2)
-- [ ] 03.2-05-PLAN.md — Organization icon backend: organization_icons, POST/DELETE icon routes (organizations:update), validation, org_icons prop, deletion cleanup (wave 2)
-- [ ] 03.2-06-PLAN.md — Accent state and server sync, accent picker in Theme, helper copy, command-palette accents, preset parity (wave 2)
-- [ ] 03.2-07-PLAN.md — Organization icon UI: renderer with letter fallback, switcher trigger and rows, icon field in Organization Settings; wave-2 CI gate (wave 2)
+- [x] 03.2-04-PLAN.md — Pre-paint Blade partial (server > localStorage > default) in app and OAuth layouts, theme-color metas (wave 2)
+- [x] 03.2-05-PLAN.md — Organization icon backend: organization_icons, POST/DELETE icon routes (organizations:update), validation, org_icons prop, deletion cleanup (wave 2)
+- [x] 03.2-06-PLAN.md — Accent state and server sync, accent picker in Theme, helper copy, command-palette accents, preset parity (wave 2)
+- [x] 03.2-07-PLAN.md — Organization icon UI: renderer with letter fallback, switcher trigger and rows, icon field in Organization Settings; wave-2 CI gate (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 03.2-08-PLAN.md — Browser proof (pre-paint with bundles blocked, chart recolour, picker, icon flow) and the Phase 3.2 ledger section (wave 3)
+- [x] 03.2-08-PLAN.md — Browser proof (pre-paint with bundles blocked, chart recolour, picker, icon flow) and the Phase 3.2 ledger section (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 03.2-09-PLAN.md — Release: ten workflows green, operator doc, sha-pinned compose, owner-approved Dokploy deploy, public checks, owner UAT (wave 4, owner checkpoint)
+- [x] 03.2-09-PLAN.md — Release: ten workflows green, operator doc, sha-pinned compose, owner-approved Dokploy deploy, public checks, owner UAT (wave 4, owner checkpoint)
 
 **UI hint**: yes
 
@@ -323,8 +323,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 and 3.2 (parallel, both d
 | 1. Tenant Setup & Outlook Spike | 8/8 | Complete    | 2026-11-05 |
 | 2. Sign in with Microsoft | 11/11 | Complete    | 2026-11-05 |
 | 3. Outlook Meetings in the Calendar | 12/12 | Complete    | 2026-11-10 |
-| 3.1 Calendar UX Polish | 3/8 | In Progress | - |
-| 3.2 Appearance & Untangle Branding | 3/9 | In Progress | - |
+| 3.1 Calendar UX Polish | 8/8 | Complete | 2026-11-17 |
+| 3.2 Appearance & Untangle Branding | 9/9 | Complete | 2026-11-17 |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |
