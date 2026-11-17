@@ -50,6 +50,7 @@ import BillingBanner from '@/Components/Billing/BillingBanner.vue';
 import SidebarPlanStatus from '@/Components/Billing/SidebarPlanStatus.vue';
 import UserTimezoneMismatchModal from '@/Components/Common/User/UserTimezoneMismatchModal.vue';
 import { useTheme } from '@/utils/theme';
+import { useAppearance } from '@/branding/useAppearance';
 import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
@@ -108,6 +109,7 @@ provide(upgradeCtaKey, {
 
 onMounted(async () => {
     useTheme();
+    useAppearance();
     // make sure that the initial requests are only loaded once, this can be removed once we move away from inertia
     if (window.initialDataLoaded !== true) {
         window.initialDataLoaded = true;

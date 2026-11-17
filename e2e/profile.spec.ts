@@ -633,7 +633,7 @@ test('test that theme can be changed to dark and light', async ({ page }) => {
     // Reset to system
     await themeSelect.click();
     await page.getByRole('option', { name: 'System' }).click();
-    await expect(page.getByText('System default:')).toBeVisible();
+    await expect(page.getByText('Follows your device setting.')).toBeVisible();
 });
 
 // =============================================
