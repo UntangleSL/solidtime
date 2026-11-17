@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { computed } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
-import type { OutlookCalendarLabels, OutlookConversionResult, OutlookMeeting } from '@/m365/types';
+import type {
+    OutlookAssignment,
+    OutlookCalendarLabels,
+    OutlookConversionResult,
+    OutlookMeeting,
+} from '@/m365/types';
 import OutlookAssignResults from './OutlookAssignResults.vue';
 
 const labels = {
@@ -9,7 +14,21 @@ const labels = {
     row_created: 'Created',
     row_existing: 'Already had a time entry',
     error_generic: 'Could not create the time entry. Try again in a moment.',
+    include_meeting: 'Include :subject',
+    row_upcoming: 'Upcoming',
 } as OutlookCalendarLabels;
+
+const assignment: OutlookAssignment = {
+    project_id: 'p-1',
+    project_name: 'Internal',
+    project_color: '#ef5350',
+    client_name: null,
+    task_id: null,
+    task_name: null,
+    tags: [],
+    billable: false,
+    converted_at: '2026-10-20T09:00:00Z',
+};
 
 function meeting(id: string, overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
     return {
@@ -39,11 +58,12 @@ let wrapper: VueWrapper | null = null;
 
 function mountRows(
     meetings: OutlookMeeting[],
-    results: Record<string, OutlookConversionResult | 'pending'> = {}
+    results: Record<string, OutlookConversionResult | 'pending'> = {},
+    extra: Record<string, unknown> = {}
 ) {
     wrapper = mount(OutlookAssignResults, {
         attachTo: document.body,
-        props: { meetings, results, labels },
+        props: { meetings, results, labels, ...extra },
         global: {
             provide: {
                 organization: computed(() => ({ time_format: '24-hours' })),
@@ -53,10 +73,8 @@ function mountRows(
     return wrapper;
 }
 
-function rows(): HTMLElement[] {
-    return Array.from(
-        document.body.querySelectorAll<HTMLElement>('[data-testid="outlook-batch-row"]')
-    );
+function rows(testid = 'outlook-batch-row'): HTMLElement[] {
+    return Array.from(document.body.querySelectorAll<HTMLElement>(`[data-testid="${testid}"]`));
 }
 
 afterEach(() => {
@@ -145,5 +163,108 @@ describe('OutlookAssignResults', () => {
 
         expect(rows()).toHaveLength(20);
         expect(document.body.querySelector('[role="list"]')!.children).toHaveLength(20);
+    });
+
+    it('renders no checkbox and no project line without the selectable props', () => {
+        mountRows([meeting('m-1', { assignment })]);
+
+        const row = rows()[0]!;
+        expect(row.querySelector('input')).toBeNull();
+        expect(row.querySelector('[data-testid="outlook-project-dot"]')).toBeNull();
+        expect(row.textContent).not.toContain('Internal');
+    });
+});
+
+describe('OutlookAssignResults in selectable mode (bulk confirm)', () => {
+    const project = (item: OutlookMeeting) => item.assignment ?? null;
+    const selectable = (checked: Record<string, boolean>) => ({
+        checked,
+        project,
+        rowTestid: 'outlook-confirm-row',
+        listClass: 'max-h-60',
+    });
+
+    it('puts an include checkbox and the project line on rows without a result', () => {
+        mountRows(
+            [
+                meeting('m-1', { assignment }),
+                meeting('m-2', {
+                    assignment,
+                    subject: 'Weekly sync',
+                    start: '2099-01-06T09:00:00Z',
+                    end: '2099-01-06T10:00:00Z',
+                }),
+            ],
+            {},
+            selectable({ 'm-1': true, 'm-2': false })
+        );
+
+        expect(rows()).toHaveLength(0);
+        const [past, future] = rows('outlook-confirm-row');
+        const pastBox = past!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+        expect(pastBox.checked).toBe(true);
+        expect(pastBox.disabled).toBe(false);
+        expect(pastBox.getAttribute('aria-label')).toBe('Include Meeting m-1');
+        const futureBox = future!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+        expect(futureBox.checked).toBe(false);
+        expect(futureBox.getAttribute('aria-label')).toBe('Include Weekly sync');
+
+        const line = past!.querySelector('[data-testid="outlook-batch-row-project"]')!;
+        expect(line.querySelector('[data-testid="outlook-project-dot"]')).not.toBeNull();
+        expect(line.textContent).toContain('Internal');
+        expect(line.textContent).not.toContain('Upcoming');
+        expect(future!.textContent).toContain('· Upcoming');
+        expect(document.body.querySelector('[role="list"]')!.className).toContain('max-h-60');
+        expect(document.body.querySelector('[role="list"]')!.className).not.toContain('max-h-40');
+    });
+
+    it('emits toggle with the meeting id', async () => {
+        mountRows([meeting('m-1', { assignment })], {}, selectable({ 'm-1': true }));
+
+        const box = rows('outlook-confirm-row')[0]!.querySelector<HTMLInputElement>('input')!;
+        box.checked = false;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(wrapper!.emitted('toggle')).toEqual([['m-1']]);
+    });
+
+    it('disables the checkboxes while a row is pending and replaces the line by the result', () => {
+        mountRows(
+            [
+                meeting('m-1', { assignment }),
+                meeting('m-2', { assignment }),
+                meeting('m-3', { assignment }),
+            ],
+            {
+                'm-1': 'pending',
+                'm-3': failed('m-3', 'Nope'),
+            },
+            selectable({ 'm-1': true, 'm-2': false, 'm-3': true })
+        );
+
+        const [pending, unticked, fail] = rows('outlook-confirm-row');
+        expect(pending!.querySelector('input')).toBeNull();
+        expect(pending!.querySelector('.animate-spin')).not.toBeNull();
+        expect(pending!.textContent).not.toContain('Internal');
+        expect(unticked!.querySelector<HTMLInputElement>('input')!.disabled).toBe(true);
+        expect(fail!.querySelector('input')).toBeNull();
+        expect(fail!.getAttribute('data-status')).toBe('failed');
+        expect(fail!.textContent).toContain('Nope');
+        expect(fail!.textContent).not.toContain('Internal');
+    });
+
+    it('disables the checkboxes with checkDisabled', () => {
+        mountRows(
+            [meeting('m-1', { assignment })],
+            {},
+            {
+                ...selectable({ 'm-1': true }),
+                checkDisabled: true,
+            }
+        );
+
+        expect(
+            rows('outlook-confirm-row')[0]!.querySelector<HTMLInputElement>('input')!.disabled
+        ).toBe(true);
     });
 });
