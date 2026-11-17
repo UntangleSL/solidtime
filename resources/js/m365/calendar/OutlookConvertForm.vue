@@ -40,6 +40,8 @@ import type { OutlookCalendarLabels, OutlookConversionResult, OutlookMeeting } f
 import OutlookAssignResults from './OutlookAssignResults.vue';
 import { fillLabel } from './labels';
 import { readLastProject, rememberLastProject, resolvePrefillProject } from './lastProject';
+import { type PrefillReason, reasonIcon, reasonLabel } from './suggestionReason';
+import { type Prefill, resolveSinglePrefill } from './suggestions';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
 // Mini form that turns Outlook meetings into time entries (Phase 4). Single mode (UI-SPEC section
@@ -111,7 +113,9 @@ const projectError = ref(false);
 const timeError = ref(false);
 const serverError = ref<string | null>(null);
 
-// --- Prefill (D-02): last project used for a meeting conversion, else the latest entry's project.
+// --- Prefill. Phase 4 (D-02): last project used for a meeting conversion, else the latest entry's
+// project. Phase 5 puts the series pre-assignment and a confident learned suggestion before it
+// (resolveSinglePrefill); the meeting payload carries both, so the prefill never waits on a lookup.
 const storedProjectId = organizationId ? readLastProject(organizationId) : null;
 const recentProjectId = computed(() => {
     const entries = timeEntriesQuery.data.value?.pages.flatMap((page) => page.data) ?? [];
@@ -120,32 +124,82 @@ const recentProjectId = computed(() => {
 const prefillProjectId = computed(() =>
     resolvePrefillProject(storedProjectId, projects.value, recentProjectId.value)
 );
+const prefill = computed<Prefill>(() =>
+    resolveSinglePrefill(meeting.value, projects.value, prefillProjectId.value)
+);
+
+const NO_PREFILL: Prefill = {
+    source: 'none',
+    projectId: null,
+    taskId: null,
+    tags: [],
+    billable: null,
+    reason: null,
+};
+const PREFILL_RANK: Record<Prefill['source'], number> = {
+    none: 0,
+    last_used: 1,
+    suggestion: 2,
+    series: 3,
+};
+// The prefill the form applied, sent with the conversion (D-16) so the server can tell whether the
+// user kept it. It stays the same after the user picks another project.
+const appliedPrefill = ref<Prefill>(NO_PREFILL);
 // Once the user picked something, a late prefill (data still loading) never overrides it.
 let projectTouched = false;
 
-watch(
-    prefillProjectId,
-    (id) => {
-        if (projectTouched || projectId.value !== null || id === null) return;
-        projectId.value = id;
-        // The prefill arrived after the focus went to the picker: a repeat conversion is Enter.
-        if (rootEl.value && document.activeElement === pickerTrigger()) {
-            void nextTick(focusSubmit);
-        }
-    },
-    { immediate: true }
-);
+// A later prefill replaces an untouched one only when it is better (series > suggestion > last
+// used): the Phase 4 rule kept the first last-used project, and so does this.
+function applyPrefill(next: Prefill): void {
+    if (projectTouched || next.projectId === null) return;
+    const current = appliedPrefill.value;
+    if (current.source !== 'none' && PREFILL_RANK[next.source] <= PREFILL_RANK[current.source]) {
+        return;
+    }
+    appliedPrefill.value = next;
+    projectId.value = next.projectId;
+    taskId.value = next.taskId;
+    if (next.source === 'series') selectedTags.value = [...next.tags];
+    // The prefill arrived after the focus went to the picker: a repeat conversion is Enter.
+    if (rootEl.value && document.activeElement === pickerTrigger()) {
+        void nextTick(focusSubmit);
+    }
+}
+
+watch(prefill, applyPrefill, { immediate: true });
 
 // Billable follows the selected project's default (same rule as the core create modal), never
-// turned on while billable rates are locked.
+// turned on while billable rates are locked. A prefill that carries its own billable (the series
+// assignment) keeps it while its project is selected, even when the projects refetch (RESEARCH
+// Pitfall 4).
 watch(
-    [projectId, projects],
+    [projectId, projects, appliedPrefill],
     ([id]) => {
         if (!id) return;
+        const applied = appliedPrefill.value;
+        if (applied.billable !== null && applied.projectId === id) {
+            billable.value = applied.billable && !billableRatesLocked.value;
+            return;
+        }
         const project = projects.value.find((item) => item.id === id);
         if (project) billable.value = project.is_billable && !billableRatesLocked.value;
     },
     { immediate: true }
+);
+
+// Why the project in the picker is there (RULE-05): the reason of the prefill while its project is
+// selected. A project the user picked by hand has no reason line.
+const currentReason = computed<PrefillReason | null>(() => {
+    const id = projectId.value;
+    if (!id) return null;
+    const applied = appliedPrefill.value;
+    return applied.projectId === id ? applied.reason : null;
+});
+const currentReasonLabel = computed(() =>
+    currentReason.value ? reasonLabel(currentReason.value, props.labels) : ''
+);
+const currentReasonIcon = computed(() =>
+    currentReason.value ? reasonIcon(currentReason.value.kind) : null
 );
 
 watch(projectId, (id) => {
@@ -272,6 +326,8 @@ async function submitSingle(): Promise<void> {
             description: description.value,
             start,
             end,
+            prefill_source: appliedPrefill.value.source,
+            prefill_project_id: appliedPrefill.value.projectId,
         });
     } finally {
         saving.value = false;
@@ -503,24 +559,38 @@ onMounted(() => {
 
             <Field :data-invalid="projectError ? 'true' : undefined" class="gap-2">
                 <FieldLabel class="text-sm font-normal">{{ labels.field_project }}</FieldLabel>
-                <div class="min-w-0" data-testid="outlook-convert-project">
-                    <TimeTrackerProjectTaskDropdown
-                        v-model:project="projectId"
-                        v-model:task="taskId"
-                        variant="input"
-                        size="default"
-                        align="start"
-                        :no-project-value="null"
-                        :projects="projects"
-                        :tasks="tasks"
-                        :clients="clients"
-                        :create-project="noCreate"
-                        :create-client="noCreate"
-                        :can-create-project="false"
-                        :currency="currency"
-                        :enable-estimated-time="enableEstimatedTime"
-                        :organization-billable-rate="organization?.billable_rate ?? null"
-                        @changed="onProjectPicked" />
+                <div class="min-w-0">
+                    <div class="min-w-0" data-testid="outlook-convert-project">
+                        <TimeTrackerProjectTaskDropdown
+                            v-model:project="projectId"
+                            v-model:task="taskId"
+                            variant="input"
+                            size="default"
+                            align="start"
+                            :no-project-value="null"
+                            :projects="projects"
+                            :tasks="tasks"
+                            :clients="clients"
+                            :create-project="noCreate"
+                            :create-client="noCreate"
+                            :can-create-project="false"
+                            :currency="currency"
+                            :enable-estimated-time="enableEstimatedTime"
+                            :organization-billable-rate="organization?.billable_rate ?? null"
+                            @changed="onProjectPicked" />
+                    </div>
+                    <p
+                        v-if="currentReason"
+                        class="mt-1 flex min-w-0 items-center gap-1 text-xs text-text-tertiary"
+                        data-testid="outlook-suggestion-reason">
+                        <component
+                            :is="currentReasonIcon"
+                            class="size-3 shrink-0"
+                            aria-hidden="true" />
+                        <span class="min-w-0 truncate" :title="currentReasonLabel">
+                            {{ currentReasonLabel }}
+                        </span>
+                    </p>
                 </div>
                 <FieldError v-if="projectError" class="text-xs">
                     {{ labels.error_project_required }}

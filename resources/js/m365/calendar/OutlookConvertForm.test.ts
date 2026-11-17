@@ -3,7 +3,12 @@ import { computed, nextTick, ref } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import type { Project } from '@/packages/api/src';
 import { billableRatesLockKey } from '@/packages/ui/src/utils/useBillableRatesLock';
-import type { OutlookCalendarLabels, OutlookConversionResult, OutlookMeeting } from '@/m365/types';
+import type {
+    OutlookAssignment,
+    OutlookCalendarLabels,
+    OutlookConversionResult,
+    OutlookMeeting,
+} from '@/m365/types';
 import OutlookConvertForm from './OutlookConvertForm.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
 
@@ -72,6 +77,24 @@ const labels = {
     billable: 'Billable',
     non_billable: 'Non-Billable',
     created_success: 'Time entry created successfully',
+    reason_series: 'Same series',
+    reason_last_used: 'Last used',
+    reason_domain_one: 'Like 1 meeting with @:domain',
+    reason_domain_many: 'Like :count meetings with @:domain',
+    reason_person_one: 'Like 1 meeting with :name',
+    reason_person_many: 'Like :count meetings with :name',
+    reason_organizer_one: 'Like 1 meeting organized by :name',
+    reason_organizer_many: 'Like :count meetings organized by :name',
+    reason_subject_one: 'Like 1 meeting with a similar subject',
+    reason_subject_many: 'Like :count meetings with a similar subject',
+    reason_batch: 'Suggested for :count of :total meetings',
+    other_suggestions: 'Other suggestions',
+    use_suggestion: 'Use :project',
+    series_note_new: 'Other meetings in this series will come pre-assigned to this project.',
+    series_note_change:
+        'This series will use the new project from now on. Entries already created stay as they are.',
+    batch_series_note:
+        'Recurring meetings here will use this project for their series from now on.',
 } as OutlookCalendarLabels;
 
 const STORAGE_KEY = 'solidtime:m365-last-meeting-project:org-1';
@@ -105,6 +128,32 @@ function meeting(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
         dismissed: false,
         ...overrides,
     };
+}
+
+function assignment(overrides: Partial<OutlookAssignment> = {}): OutlookAssignment {
+    return {
+        project_id: 'p-1',
+        project_name: 'Project p-1',
+        project_color: '#ef5350',
+        client_name: null,
+        task_id: 'task-1',
+        task_name: 'Task 1',
+        tags: ['t-1'],
+        billable: false,
+        converted_at: '2026-10-20T10:00:00Z',
+        ...overrides,
+    };
+}
+
+function reasonText(): string | null {
+    const line = document.body.querySelector('[data-testid="outlook-suggestion-reason"]');
+    return line ? (line.textContent?.trim() ?? '') : null;
+}
+
+function pickProject(w: VueWrapper, id: string) {
+    const dropdown = w.findComponent({ name: 'TimeTrackerProjectTaskDropdown' });
+    dropdown.vm.$emit('update:project', id);
+    dropdown.vm.$emit('changed');
 }
 
 function deferred<T>() {
@@ -326,6 +375,8 @@ describe('OutlookConvertForm (single)', () => {
             description: 'Weekly sync',
             start: '2026-10-27T09:15:00Z',
             end: '2026-10-27T10:00:00Z',
+            prefill_source: 'last_used',
+            prefill_project_id: 'p-1',
         });
     });
 
@@ -519,12 +570,133 @@ describe('OutlookConvertForm (single)', () => {
         expect(billableOption!.hasAttribute('data-disabled')).toBe(true);
     });
 
+    it('shows "Last used" under a last-used prefill and no reason line without a prefill', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+        mountForm();
+        await settle();
+        expect(reasonText()).toBe('Last used');
+        wrapper!.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+
+        localStorage.clear();
+        mountForm();
+        await settle();
+        expect(reasonText()).toBeNull();
+    });
+
+    it('sends prefill_source none and no prefill project when nothing was prefilled', async () => {
+        const w = mountForm();
+        await settle();
+        pickProject(w, 'p-2');
+        await settle();
+
+        el('outlook-convert-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![1]).toMatchObject({
+            project_id: 'p-2',
+            prefill_source: 'none',
+            prefill_project_id: null,
+        });
+        expect(reasonText()).toBeNull();
+    });
+
     it('renders the subject as literal text', async () => {
         mountForm(meeting({ subject: '<img src=x onerror=alert(1)>' }));
         await settle();
 
         expect(el('outlook-convert-form').querySelector('img')).toBeNull();
         expect(input('outlook-convert-description').value).toBe('<img src=x onerror=alert(1)>');
+    });
+});
+
+describe('OutlookConvertForm (series pre-assignment)', () => {
+    it('opens with the series project, task, tags and billable and says "Same series"', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-2');
+        mountForm(meeting({ series_key: 's-1', assignment: assignment() }));
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-1');
+        // p-1 is billable by default, the series was logged non-billable: the series wins.
+        expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
+        expect(el('outlook-convert-tags').textContent?.trim()).toBe('1 Tag');
+        expect(reasonText()).toBe('Same series');
+        expect(document.activeElement).toBe(el('outlook-convert-submit'));
+
+        el('outlook-convert-submit').click();
+        await settle();
+
+        expect(convert).toHaveBeenCalledWith(['m-1'], {
+            project_id: 'p-1',
+            task_id: 'task-1',
+            tags: ['t-1'],
+            billable: false,
+            description: 'Weekly sync',
+            start: '2026-10-27T09:00:00Z',
+            end: '2026-10-27T10:00:00Z',
+            prefill_source: 'series',
+            prefill_project_id: 'p-1',
+        });
+    });
+
+    it('follows a project picked by hand: its billable default, no reason line, prefill still reported', async () => {
+        state.projects = [...state.projects, project('p-3', { is_billable: true })];
+        const w = mountForm(
+            meeting({
+                series_key: 's-1',
+                assignment: assignment({ project_id: 'p-2', billable: true }),
+            })
+        );
+        await settle();
+        expect(el('outlook-convert-billable').textContent).not.toContain('Non-Billable');
+        expect(reasonText()).toBe('Same series');
+
+        pickProject(w, 'p-3');
+        await settle();
+
+        expect(reasonText()).toBeNull();
+        expect(el('outlook-convert-billable').textContent).not.toContain('Non-Billable');
+
+        pickProject(w, 'p-1');
+        await settle();
+        pickProject(w, 'p-3');
+        await settle();
+        el('outlook-convert-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![1]).toMatchObject({
+            project_id: 'p-3',
+            billable: true,
+            prefill_source: 'series',
+            prefill_project_id: 'p-2',
+        });
+    });
+
+    it('lets billable follow the picked project after leaving the series project', async () => {
+        state.projects = [...state.projects, project('p-3', { is_billable: true })];
+        const w = mountForm(
+            meeting({
+                series_key: 's-1',
+                assignment: assignment({ project_id: 'p-1', billable: false }),
+            })
+        );
+        await settle();
+        expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
+
+        // p-1 is billable by default but the series said non-billable; p-3 is billable by default.
+        pickProject(w, 'p-3');
+        await settle();
+        expect(el('outlook-convert-billable').textContent).not.toContain('Non-Billable');
+        expect(reasonText()).toBeNull();
+    });
+
+    it('keeps the series billable off under the billable-rates lock', async () => {
+        locked.value = true;
+        mountForm(meeting({ series_key: 's-1', assignment: assignment({ billable: true }) }));
+        await settle();
+
+        expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
     });
 });
 
