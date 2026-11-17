@@ -35,11 +35,15 @@ import { dismissMeeting, fetchMeetings, postSync, restoreMeeting } from './meeti
 import {
     conversionErrorMessage,
     failedResults,
+    forgetSeries as deleteSeriesAssignment,
+    ignoreSeries as postSeriesIgnore,
     postConversion,
+    unignoreSeries as deleteSeriesIgnore,
     type OutlookConversionBody,
 } from './conversionApi';
 import { useOutlookSelection, type OutlookSelection } from './useOutlookSelection';
 import { ghostLaneWidth } from './ghostLayout';
+import { isFaded, isPreassigned, isRecurring } from './suggestions';
 
 export interface WeekBucket {
     start: string;
@@ -81,7 +85,8 @@ export interface OutlookMeetingsContext {
     // "Show dismissed meetings" (remembered in localStorage). Toggling refetches the read with
     // include_dismissed and never triggers a sync.
     includeDismissed: Ref<boolean>;
-    // Meetings overlapping the visible range, dismissed ones excluded unless they are shown.
+    // Meetings overlapping the visible range, dismissed ones and occurrences of an ignored series
+    // excluded unless they are shown.
     visibleCount: Readonly<Ref<number>>;
     // False while syncing, during the cooldown / retry_after window, or without a connection.
     canSync: Readonly<Ref<boolean>>;
@@ -122,6 +127,17 @@ export interface OutlookMeetingsContext {
     confirmOne: (id: string) => Promise<OutlookConversionResult | null>;
     // True while a confirm of meeting `id` runs (the block's pending state, the button spinner).
     isConfirmPending: (id: string) => boolean;
+    // Pre-assigned meetings overlapping the visible range, not faded (dismissed / series ignored)
+    // and not pending, in start order (the "Confirm N" toolbar count and its list, D-04).
+    preassignedInRange: Readonly<Ref<OutlookMeeting[]>>;
+    // Series actions keyed by any occurrence (D-10, D-11, RULE-04 / RULE-05). Optimistic over every
+    // cached occurrence with the same series_key: ignore hides them (or fades them while dismissed
+    // meetings are shown), stop ignoring un-fades them, forget drops their pre-assignment. A failure
+    // reverts the occurrences and says "Could not update this series". Nothing is sent for a
+    // meeting without a series or while the context cannot act.
+    ignoreSeries: (id: string) => Promise<void>;
+    unignoreSeries: (id: string) => Promise<void>;
+    forgetSeries: (id: string) => Promise<void>;
     // Asks the lane that renders meeting `id` to open its panel in form mode (hover card and context
     // menu actions). Each request gets a new seq so the same id can be asked for twice. Ignored while
     // the context cannot act; clears the selection (a panel and a selection never coexist).
@@ -156,10 +172,13 @@ interface SyncRequest {
 // Third argument of the test hook. Without it (or with actions false) the injected meetings are
 // display only, as before. With actions true they can be selected and converted: conversions post to
 // convertUrl (the hook itself never contacts the server, and the endpoint stays authenticated), a
-// converted meeting leaves the injected list and its entry id joins linkedTimeEntryIds.
+// converted meeting leaves the injected list and its entry id joins linkedTimeEntryIds. Series
+// actions (Phase 5) request `${seriesUrl}/{id}/series/...` and update the injected list; without
+// seriesUrl they send nothing.
 export interface OutlookTestHookOptions {
     actions?: boolean;
     convertUrl?: string;
+    seriesUrl?: string;
     linkedTimeEntryIds?: string[];
 }
 
@@ -212,6 +231,7 @@ export function useOutlookMeetings(
     const testLabels = ref<Partial<OutlookCalendarLabels> | null>(null);
     const testActions = ref(false);
     const testConvertUrl = ref<string | null>(null);
+    const testSeriesUrl = ref<string | null>(null);
     const testLinkedIds = ref<string[]>([]);
 
     const lastSync = ref<OutlookSyncResponse | null>(null);
@@ -304,9 +324,16 @@ export function useOutlookMeetings(
         onSettled: () => queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY }),
     });
 
-    const meetings = computed<OutlookMeeting[]>(
-        () => testMeetings.value ?? meetingsQuery.data.value?.data ?? []
-    );
+    // Occurrences of an ignored series are hidden like dismissed meetings unless those are shown (the
+    // server leaves them out of a read without include_dismissed; this covers the optimistic window
+    // and injected meetings).
+    const meetings = computed<OutlookMeeting[]>(() => {
+        const list = testMeetings.value ?? meetingsQuery.data.value?.data ?? [];
+        if (includeDismissed.value || !list.some((meeting) => meeting.series_ignored === true)) {
+            return list;
+        }
+        return list.filter((meeting) => meeting.series_ignored !== true);
+    });
 
     // Placeholder data of the previous week is kept like the meetings: the ids name entries, so a
     // stale id only matters for an entry that is not on screen.
@@ -341,21 +368,28 @@ export function useOutlookMeetings(
         return fromAnswer ?? fromRead;
     });
 
-    // Overlap with the visible range [start, end) of the calendar (the week or the day), dismissed
-    // meetings excluded unless they are shown; the status line shows "no meetings" from this count.
-    const visibleCount = computed(() => {
+    // Overlap with the visible range [start, end) of the calendar (the week or the day); a
+    // zero-length meeting counts when it starts inside the range.
+    function inVisibleRange(meeting: OutlookMeeting): boolean {
         const start = calendarStart.value;
         const end = calendarEnd.value;
-        if (!start || !end) return 0;
-        return meetings.value.filter((meeting) => {
-            if (meeting.dismissed && !includeDismissed.value) return false;
-            const from = getLocalizedDayJs(meeting.start);
-            const to = getLocalizedDayJs(meeting.end);
-            return to.isAfter(from)
-                ? from.isBefore(end) && to.isAfter(start)
-                : !from.isBefore(start) && from.isBefore(end);
-        }).length;
-    });
+        if (!start || !end) return false;
+        const from = getLocalizedDayJs(meeting.start);
+        const to = getLocalizedDayJs(meeting.end);
+        return to.isAfter(from)
+            ? from.isBefore(end) && to.isAfter(start)
+            : !from.isBefore(start) && from.isBefore(end);
+    }
+
+    // Dismissed meetings and occurrences of an ignored series are excluded unless they are shown;
+    // the status line shows "no meetings" from this count.
+    const visibleCount = computed(
+        () =>
+            meetings.value.filter(
+                (meeting) =>
+                    (includeDismissed.value || !isFaded(meeting)) && inVisibleRange(meeting)
+            ).length
+    );
 
     const canSync = computed(
         () =>
@@ -620,6 +654,154 @@ export function useOutlookMeetings(
         return pendingConfirmIds.value.includes(id);
     }
 
+    const preassignedInRange = computed<OutlookMeeting[]>(() =>
+        meetings.value
+            .filter(
+                (meeting) =>
+                    isPreassigned(meeting) &&
+                    !isConfirmPending(meeting.id) &&
+                    inVisibleRange(meeting)
+            )
+            .sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
+    );
+
+    // --- Series actions (Phase 5). The request is keyed by the meeting the user acted on; the
+    // optimistic change covers every occurrence with the same series_key in every cached read
+    // (each week, with and without dismissed meetings) or in the injected list.
+    type SeriesAction = 'ignore' | 'unignore' | 'forget';
+
+    function findMeeting(id: string): OutlookMeeting | null {
+        if (testMeetings.value !== null) {
+            return testMeetings.value.find((meeting) => meeting.id === id) ?? null;
+        }
+        for (const [, data] of queryClient.getQueriesData<OutlookMeetingsResponse>({
+            queryKey: MEETINGS_QUERY_KEY,
+        })) {
+            const found = data?.data?.find((meeting) => meeting.id === id);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    // `include` is whether the list is a read with dismissed meetings (an ignored occurrence stays
+    // there, flagged; a regular read drops it).
+    function applySeriesAction(
+        list: OutlookMeeting[],
+        seriesKey: string,
+        action: SeriesAction,
+        include: boolean
+    ): OutlookMeeting[] {
+        const inSeries = (meeting: OutlookMeeting) => meeting.series_key === seriesKey;
+        if (action === 'ignore' && !include) {
+            return list.filter((meeting) => !inSeries(meeting));
+        }
+        return list.map((meeting) => {
+            if (!inSeries(meeting)) return meeting;
+            if (action === 'forget') return { ...meeting, assignment: null };
+            return { ...meeting, series_ignored: action === 'ignore' };
+        });
+    }
+
+    // Puts the series' occurrences of `before` back into `current`, in their previous order; other
+    // meetings keep their current state (a conversion or dismiss meanwhile is not undone).
+    function revertSeries(
+        current: OutlookMeeting[],
+        before: OutlookMeeting[],
+        seriesKey: string
+    ): OutlookMeeting[] {
+        const currentById = new Map(current.map((meeting) => [meeting.id, meeting]));
+        const known = new Set(before.map((meeting) => meeting.id));
+        const restored = before.flatMap((meeting) => {
+            if (meeting.series_key === seriesKey) return [meeting];
+            const now = currentById.get(meeting.id);
+            return now ? [now] : [];
+        });
+        return [...restored, ...current.filter((meeting) => !known.has(meeting.id))];
+    }
+
+    function isIncludeKey(key: readonly unknown[]): boolean {
+        return key[3] === true;
+    }
+
+    async function changeSeries(id: string, action: SeriesAction): Promise<void> {
+        const current = labels.value;
+        if (!canAct.value || !current) return;
+        const injected = testMeetings.value !== null;
+        const url = injected ? testSeriesUrl.value : (calendar.value?.urls.meetings ?? null);
+        const target = findMeeting(id);
+        if (!url || !target || !isRecurring(target)) return;
+        const seriesKey = target.series_key as string;
+
+        let revert: () => void;
+        if (injected) {
+            const before = testMeetings.value ?? [];
+            testMeetings.value = applySeriesAction(before, seriesKey, action, true);
+            revert = () => {
+                if (testMeetings.value !== null) {
+                    testMeetings.value = revertSeries(testMeetings.value, before, seriesKey);
+                }
+            };
+        } else {
+            // Stops in-flight reads from overwriting the optimistic change
+            void queryClient.cancelQueries({ queryKey: MEETINGS_QUERY_KEY });
+            const snapshot = queryClient.getQueriesData<OutlookMeetingsResponse>({
+                queryKey: MEETINGS_QUERY_KEY,
+            });
+            for (const [key, data] of snapshot) {
+                if (!data || !Array.isArray(data.data)) continue;
+                queryClient.setQueryData<OutlookMeetingsResponse>(key, {
+                    ...data,
+                    data: applySeriesAction(data.data, seriesKey, action, isIncludeKey(key)),
+                });
+            }
+            revert = () => {
+                for (const [key, before] of snapshot) {
+                    if (!before || !Array.isArray(before.data)) continue;
+                    queryClient.setQueryData<OutlookMeetingsResponse>(key, (old) =>
+                        old && Array.isArray(old.data)
+                            ? { ...old, data: revertSeries(old.data, before.data, seriesKey) }
+                            : old
+                    );
+                }
+            };
+        }
+
+        try {
+            if (action === 'ignore') {
+                await postSeriesIgnore(url, id);
+                useNotificationsStore().addNotification(
+                    'success',
+                    current.series_ignored,
+                    current.series_ignored_help
+                );
+                announce(current.series_ignored);
+            } else if (action === 'unignore') {
+                await deleteSeriesIgnore(url, id);
+                announce(current.series_unignored);
+            } else {
+                await deleteSeriesAssignment(url, id);
+                useNotificationsStore().addNotification(
+                    'success',
+                    current.series_forgotten,
+                    current.series_forgotten_help
+                );
+                announce(current.series_forgotten);
+            }
+        } catch {
+            revert();
+            useNotificationsStore().addNotification(
+                'error',
+                current.series_action_failed,
+                current.retry_body
+            );
+        }
+        if (!injected) await queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
+    }
+
+    const ignoreSeries = (id: string): Promise<void> => changeSeries(id, 'ignore');
+    const unignoreSeries = (id: string): Promise<void> => changeSeries(id, 'unignore');
+    const forgetSeries = (id: string): Promise<void> => changeSeries(id, 'forget');
+
     function withLinked(list: string[], entryIds: string[]): string[] {
         const added = entryIds.filter((id) => !list.includes(id));
         return added.length > 0 ? [...list, ...added] : list;
@@ -843,6 +1025,7 @@ export function useOutlookMeetings(
             testLabels.value = injectedLabels ?? null;
             testActions.value = options?.actions === true;
             testConvertUrl.value = options?.convertUrl ?? null;
+            testSeriesUrl.value = options?.seriesUrl ?? null;
             testLinkedIds.value = [...(options?.linkedTimeEntryIds ?? [])];
         };
     });
@@ -887,6 +1070,10 @@ export function useOutlookMeetings(
         confirmPreassigned,
         confirmOne,
         isConfirmPending,
+        preassignedInRange,
+        ignoreSeries,
+        unignoreSeries,
+        forgetSeries,
         openForm,
         formRequest,
         selection,

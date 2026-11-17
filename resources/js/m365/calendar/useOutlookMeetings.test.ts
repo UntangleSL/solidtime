@@ -77,6 +77,14 @@ function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
             error_generic: 'Could not create the time entry. Try again in a moment.',
             created_success: 'Time entry created successfully',
             confirm_failed: 'Could not confirm this meeting',
+            series_ignored: 'Series ignored',
+            series_ignored_help:
+                'Its meetings are hidden. Turn on Show dismissed meetings to undo.',
+            series_unignored: 'Series no longer ignored',
+            series_forgotten: 'Series forgotten',
+            series_forgotten_help:
+                'Its meetings are no longer pre-assigned. Your time entries are unchanged.',
+            series_action_failed: 'Could not update this series',
         } as never,
     };
 }
@@ -1766,5 +1774,416 @@ describe('useOutlookMeetings refresh after time-entry changes', () => {
         await advance(1000);
 
         expect(invalidate).not.toHaveBeenCalled();
+    });
+});
+
+describe('useOutlookMeetings series actions', () => {
+    const assignment = {
+        project_id: 'p-1',
+        project_name: 'Acme Website',
+        project_color: '#ef5350',
+        client_name: 'Acme',
+        task_id: null,
+        task_name: null,
+        tags: [],
+        billable: true,
+        converted_at: '2026-10-27T09:00:00Z',
+    };
+    // Two occurrences of series S this week, one next week, and a one-off meeting
+    const occurrenceA: OutlookMeeting = {
+        ...meeting('m-a', '2026-11-03T09:00:00Z', '2026-11-03T10:00:00Z'),
+        series_key: 'S',
+        assignment,
+    };
+    const occurrenceB: OutlookMeeting = {
+        ...meeting('m-b', '2026-11-05T09:00:00Z', '2026-11-05T10:00:00Z'),
+        series_key: 'S',
+        assignment,
+    };
+    const nextWeek: OutlookMeeting = {
+        ...meeting('m-n', '2026-11-10T09:00:00Z', '2026-11-10T10:00:00Z'),
+        series_key: 'S',
+        assignment,
+    };
+    const oneOff = meeting('m-o', '2026-11-04T09:00:00Z', '2026-11-04T10:00:00Z');
+
+    const WEEK_B_KEY = ['m365', 'meetings', WEEK_B, false];
+    const INCLUDE_KEY = ['m365', 'meetings', WEEK_A, true];
+
+    function seriesUrl(id: string, kind: 'ignore' | 'assignment'): string {
+        return `${MEETINGS_URL}/${id}/series/${kind}`;
+    }
+
+    function cached(mounted: Mounted, key: unknown[]): OutlookMeeting[] {
+        return mounted.queryClient.getQueryData<OutlookMeetingsResponse>(key)?.data ?? [];
+    }
+
+    // The current read plus two inactive cached reads (next week, and this week with dismissed
+    // meetings) that the refetch does not touch, so a revert is observable there.
+    async function mountWithSeries(): Promise<Mounted> {
+        axiosGet.mockResolvedValue(readResponse([occurrenceA, oneOff, occurrenceB]));
+        const mounted = mountComposable();
+        await advance(500);
+        mounted.queryClient.setQueryData(WEEK_B_KEY, {
+            data: [nextWeek],
+            sync: { last_synced_at: null, retry_after: null },
+        });
+        mounted.queryClient.setQueryData(INCLUDE_KEY, {
+            data: [occurrenceA, oneOff, occurrenceB],
+            sync: { last_synced_at: null, retry_after: null },
+        });
+        axiosPost.mockClear();
+        axiosGet.mockClear();
+        return mounted;
+    }
+
+    it('ignore hides every occurrence at once, posts and reports success', async () => {
+        const mounted = await mountWithSeries();
+        const request = deferred<{ data: Record<string, never> }>();
+        axiosPost.mockReturnValue(request.promise);
+        axiosGet.mockResolvedValue(readResponse([oneOff]));
+
+        const done = mounted.api.ignoreSeries('m-b');
+
+        // Optimistic: gone from the regular reads, flagged in the read with dismissed meetings
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-o']);
+        expect(cached(mounted, WEEK_B_KEY)).toEqual([]);
+        expect(cached(mounted, INCLUDE_KEY).map((m) => [m.id, m.series_ignored])).toEqual([
+            ['m-a', true],
+            ['m-o', undefined],
+            ['m-b', true],
+        ]);
+        expect(axiosPost).toHaveBeenCalledWith(seriesUrl('m-b', 'ignore'));
+        expect(addNotification).not.toHaveBeenCalled();
+
+        request.resolve({ data: {} });
+        await done;
+        await advance(0);
+
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'success',
+            'Series ignored',
+            'Its meetings are hidden. Turn on Show dismissed meetings to undo.'
+        );
+        expect(mounted.api.announcement.value).toBe('Series ignored');
+        expect(axiosGet).toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('a failed ignore restores every occurrence and reports the series error', async () => {
+        const mounted = await mountWithSeries();
+        axiosPost.mockRejectedValue(httpError(500));
+        axiosGet.mockResolvedValue(readResponse([occurrenceA, oneOff, occurrenceB]));
+
+        await mounted.api.ignoreSeries('m-a');
+        await advance(0);
+
+        expect(cached(mounted, WEEK_B_KEY)).toEqual([nextWeek]);
+        expect(cached(mounted, INCLUDE_KEY)).toEqual([occurrenceA, oneOff, occurrenceB]);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-a', 'm-o', 'm-b']);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not update this series',
+            'Try again in a moment.'
+        );
+        expect(mounted.api.announcement.value).toBe('');
+        mounted.wrapper.unmount();
+    });
+
+    it('stop ignoring un-fades the occurrences at once and only announces', async () => {
+        localStorage.setItem('solidtime:m365-show-dismissed', 'true');
+        const ignoredA = { ...occurrenceA, series_ignored: true };
+        const ignoredB = { ...occurrenceB, series_ignored: true };
+        axiosGet.mockResolvedValue(readResponse([ignoredA, oneOff, ignoredB]));
+        const mounted = mountComposable();
+        await advance(500);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-a', 'm-o', 'm-b']);
+        const request = deferred<{ data: Record<string, never> }>();
+        axiosDelete.mockReturnValue(request.promise);
+        axiosGet.mockResolvedValue(readResponse([occurrenceA, oneOff, occurrenceB]));
+
+        const done = mounted.api.unignoreSeries('m-a');
+
+        expect(mounted.api.meetings.value.map((m) => [m.id, m.series_ignored])).toEqual([
+            ['m-a', false],
+            ['m-o', undefined],
+            ['m-b', false],
+        ]);
+        expect(axiosDelete).toHaveBeenCalledWith(seriesUrl('m-a', 'ignore'));
+        request.resolve({ data: {} });
+        await done;
+        await advance(0);
+
+        expect(mounted.api.announcement.value).toBe('Series no longer ignored');
+        expect(addNotification).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('forget clears the assignment of every occurrence at once and reports success', async () => {
+        const mounted = await mountWithSeries();
+        const request = deferred<{ data: Record<string, never> }>();
+        axiosDelete.mockReturnValue(request.promise);
+        axiosGet.mockResolvedValue(
+            readResponse([
+                { ...occurrenceA, assignment: null },
+                oneOff,
+                { ...occurrenceB, assignment: null },
+            ])
+        );
+
+        const done = mounted.api.forgetSeries('m-a');
+
+        expect(mounted.api.meetings.value.map((m) => [m.id, m.assignment ?? null])).toEqual([
+            ['m-a', null],
+            ['m-o', null],
+            ['m-b', null],
+        ]);
+        expect(cached(mounted, WEEK_B_KEY)[0]?.assignment).toBeNull();
+        expect(cached(mounted, INCLUDE_KEY).every((m) => (m.assignment ?? null) === null)).toBe(
+            true
+        );
+        expect(axiosDelete).toHaveBeenCalledWith(seriesUrl('m-a', 'assignment'));
+        request.resolve({ data: {} });
+        await done;
+        await advance(0);
+
+        expect(addNotification).toHaveBeenCalledWith(
+            'success',
+            'Series forgotten',
+            'Its meetings are no longer pre-assigned. Your time entries are unchanged.'
+        );
+        expect(mounted.api.announcement.value).toBe('Series forgotten');
+        mounted.wrapper.unmount();
+    });
+
+    it('a failed forget restores the assignments and reports the series error', async () => {
+        const mounted = await mountWithSeries();
+        axiosDelete.mockRejectedValue(httpError(500));
+        axiosGet.mockResolvedValue(readResponse([occurrenceA, oneOff, occurrenceB]));
+
+        await mounted.api.forgetSeries('m-b');
+        await advance(0);
+
+        expect(cached(mounted, WEEK_B_KEY)).toEqual([nextWeek]);
+        expect(cached(mounted, INCLUDE_KEY)).toEqual([occurrenceA, oneOff, occurrenceB]);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not update this series',
+            'Try again in a moment.'
+        );
+        mounted.wrapper.unmount();
+    });
+
+    it('sends nothing for a meeting without a series', async () => {
+        const mounted = await mountWithSeries();
+
+        await mounted.api.ignoreSeries('m-o');
+        await mounted.api.unignoreSeries('m-o');
+        await mounted.api.forgetSeries('m-o');
+
+        expect(axiosPost).not.toHaveBeenCalled();
+        expect(axiosDelete).not.toHaveBeenCalled();
+        expect(addNotification).not.toHaveBeenCalled();
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-a', 'm-o', 'm-b']);
+        expect(cached(mounted, WEEK_B_KEY)).toEqual([nextWeek]);
+        mounted.wrapper.unmount();
+    });
+
+    it('hides ignored occurrences and leaves them out of visibleCount unless dismissed meetings are shown', async () => {
+        const mounted = mountComposable();
+        await advance(500);
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (list: OutlookMeeting[]) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__([{ ...occurrenceA, series_ignored: true }, oneOff]);
+        await nextTick();
+
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-o']);
+        expect(mounted.api.visibleCount.value).toBe(1);
+
+        mounted.api.includeDismissed.value = true;
+        await nextTick();
+
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-a', 'm-o']);
+        expect(mounted.api.visibleCount.value).toBe(2);
+        mounted.wrapper.unmount();
+    });
+
+    it('preassignedInRange lists visible, not faded, not pending pre-assigned meetings in start order', async () => {
+        const TEST_CONVERT_URL = 'https://example.test/convert';
+        const mounted = mountComposable();
+        await advance(500);
+        const dismissedWithAssignment: OutlookMeeting = {
+            ...meeting('m-d', '2026-11-04T07:00:00Z', '2026-11-04T08:00:00Z'),
+            series_key: 'D',
+            assignment,
+            dismissed: true,
+        };
+        const later: OutlookMeeting = {
+            ...meeting('m-l', '2026-11-06T09:00:00Z', '2026-11-06T10:00:00Z'),
+            series_key: 'L',
+            assignment,
+        };
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (
+                    list: OutlookMeeting[],
+                    labels?: Partial<OutlookCalendarLabels>,
+                    options?: { actions?: boolean; convertUrl?: string }
+                ) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__(
+            [later, occurrenceB, oneOff, dismissedWithAssignment, occurrenceA, nextWeek],
+            undefined,
+            { actions: true, convertUrl: TEST_CONVERT_URL }
+        );
+        mounted.api.includeDismissed.value = true;
+        await nextTick();
+
+        expect(mounted.api.preassignedInRange.value.map((m) => m.id)).toEqual([
+            'm-a',
+            'm-b',
+            'm-l',
+        ]);
+
+        // A pending confirm leaves the list until it settles
+        const request = deferred<{ data: { results: unknown[] } }>();
+        axiosPost.mockReturnValue(request.promise);
+        const done = mounted.api.confirmPreassigned(['m-b']);
+        expect(mounted.api.preassignedInRange.value.map((m) => m.id)).toEqual(['m-a', 'm-l']);
+        request.resolve({
+            data: {
+                results: [
+                    { meeting_id: 'm-b', status: 'failed', time_entry_id: null, error: null },
+                ],
+            },
+        });
+        await done;
+        expect(mounted.api.preassignedInRange.value.map((m) => m.id)).toEqual([
+            'm-a',
+            'm-b',
+            'm-l',
+        ]);
+
+        // Day view of Tuesday Nov 3
+        mounted.start.value = weekStartOf(WEEK_A).add(1, 'day');
+        mounted.end.value = weekStartOf(WEEK_A).add(2, 'day');
+        await nextTick();
+        expect(mounted.api.preassignedInRange.value.map((m) => m.id)).toEqual(['m-a']);
+        mounted.wrapper.unmount();
+    });
+
+    describe('in test-hook mode', () => {
+        const TEST_SERIES_URL = 'https://example.test/series';
+
+        function hook(
+            meetings: OutlookMeeting[],
+            options?: { actions?: boolean; seriesUrl?: string }
+        ): void {
+            (
+                window as unknown as {
+                    __TEST_SET_OUTLOOK_MEETINGS__: (
+                        meetings: OutlookMeeting[],
+                        labels?: Partial<OutlookCalendarLabels>,
+                        options?: { actions?: boolean; seriesUrl?: string }
+                    ) => void;
+                }
+            ).__TEST_SET_OUTLOOK_MEETINGS__(meetings, undefined, options);
+        }
+
+        async function mountHooked(options?: {
+            actions?: boolean;
+            seriesUrl?: string;
+        }): Promise<Mounted> {
+            const mounted = mountComposable();
+            await advance(500);
+            hook([occurrenceA, oneOff, occurrenceB], options);
+            await nextTick();
+            axiosPost.mockClear();
+            axiosDelete.mockClear();
+            return mounted;
+        }
+
+        it('ignore flags the injected occurrences and requests the hook url', async () => {
+            const mounted = await mountHooked({ actions: true, seriesUrl: TEST_SERIES_URL });
+            const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+            axiosPost.mockResolvedValue({ data: {} });
+
+            await mounted.api.ignoreSeries('m-a');
+
+            expect(axiosPost).toHaveBeenCalledTimes(1);
+            expect(axiosPost).toHaveBeenCalledWith(`${TEST_SERIES_URL}/m-a/series/ignore`);
+            expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-o']);
+            mounted.api.includeDismissed.value = true;
+            await nextTick();
+            expect(mounted.api.meetings.value.map((m) => [m.id, m.series_ignored])).toEqual([
+                ['m-a', true],
+                ['m-o', undefined],
+                ['m-b', true],
+            ]);
+            // Injected meetings are not server rows: the real read is left alone
+            expect(invalidate).not.toHaveBeenCalled();
+            mounted.wrapper.unmount();
+        });
+
+        it('forget clears the injected assignments and a failure restores them', async () => {
+            const mounted = await mountHooked({ actions: true, seriesUrl: TEST_SERIES_URL });
+            axiosDelete.mockResolvedValueOnce({ data: {} });
+
+            await mounted.api.forgetSeries('m-b');
+
+            expect(axiosDelete).toHaveBeenCalledWith(`${TEST_SERIES_URL}/m-b/series/assignment`);
+            expect(mounted.api.meetings.value.map((m) => m.assignment ?? null)).toEqual([
+                null,
+                null,
+                null,
+            ]);
+
+            hook([occurrenceA, oneOff, occurrenceB], {
+                actions: true,
+                seriesUrl: TEST_SERIES_URL,
+            });
+            await nextTick();
+            axiosDelete.mockRejectedValueOnce(httpError(500));
+
+            await mounted.api.forgetSeries('m-b');
+
+            expect(mounted.api.meetings.value).toEqual([occurrenceA, oneOff, occurrenceB]);
+            expect(addNotification).toHaveBeenLastCalledWith(
+                'error',
+                'Could not update this series',
+                'Try again in a moment.'
+            );
+            mounted.wrapper.unmount();
+        });
+
+        it('without seriesUrl the actions send nothing and change nothing', async () => {
+            const mounted = await mountHooked({ actions: true });
+
+            await mounted.api.ignoreSeries('m-a');
+            await mounted.api.forgetSeries('m-a');
+
+            expect(axiosPost).not.toHaveBeenCalled();
+            expect(axiosDelete).not.toHaveBeenCalled();
+            expect(mounted.api.meetings.value).toEqual([occurrenceA, oneOff, occurrenceB]);
+            mounted.wrapper.unmount();
+        });
+
+        it('without actions it cannot act and sends nothing', async () => {
+            const mounted = await mountHooked({ seriesUrl: TEST_SERIES_URL });
+            expect(mounted.api.canAct.value).toBe(false);
+
+            await mounted.api.ignoreSeries('m-a');
+            await mounted.api.unignoreSeries('m-a');
+            await mounted.api.forgetSeries('m-a');
+
+            expect(axiosPost).not.toHaveBeenCalled();
+            expect(axiosDelete).not.toHaveBeenCalled();
+            expect(mounted.api.meetings.value).toEqual([occurrenceA, oneOff, occurrenceB]);
+            mounted.wrapper.unmount();
+        });
     });
 });
