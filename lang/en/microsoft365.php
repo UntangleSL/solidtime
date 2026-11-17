@@ -55,6 +55,12 @@ return [
         'settings_heading' => 'Outlook meetings',
         'show_dismissed' => 'Show dismissed meetings',
         'show_dismissed_help' => 'Dismissed meetings appear faded so you can restore them.',
+        'lane_caption_time' => 'My time',
+        'lane_caption_outlook' => 'Outlook',
+        'hover_hint' => 'Click for details',
+        'sync_in' => 'Sync in :seconds',
+        'sync_cooldown_hint' => 'Just synced. You can sync again in :seconds.',
+        'sync_backoff_hint' => 'Outlook asked us to wait. You can sync again in :seconds.',
     ],
     'error' => [
         'cancelled' => 'Microsoft sign-in was cancelled.',

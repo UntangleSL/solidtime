@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, type ComputedRef } from 'vue';
+import { computed, inject, ref, useId, watch, type ComputedRef } from 'vue';
+import { useIntervalFn } from '@vueuse/core';
 import { Link, RefreshCw, TriangleAlert } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
 import Button from '@/packages/ui/src/Buttons/Button.vue';
@@ -11,7 +12,17 @@ import {
 } from '@/packages/ui/src/tooltip';
 import { navigateTo } from '@/m365/navigation';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
-import { describeLastSynced, describeSyncStatus } from './syncStatus';
+import {
+    cooldownProgress,
+    describeLastSynced,
+    describeSyncStatus,
+    formatCooldownSeconds,
+    remainingCooldownSeconds,
+} from './syncStatus';
+import { fillLabel } from './labels';
+
+// Circumference of the cooldown ring (radius 6 in a 16 x 16 viewBox).
+const RING_CIRCUMFERENCE = 2 * Math.PI * 6;
 
 // Sync half of the Outlook cluster in the calendar toolbar (rendered through the core `extra`
 // slot). It reads everything from the injected composable context and never blocks the grid:
@@ -52,10 +63,77 @@ const reconnectStatus = computed(() => {
     return describeLastSynced(syncedAt, labels.value, timeFormat.value, new Date());
 });
 
-// The Sync tooltip carries the status (it is the only place a sighted user finds it below lg) and
-// the extra sentence of the state, or the button name while there is nothing to say.
+// Unavailable while syncing or cooling down. The button keeps focus (aria-disabled instead of the
+// disabled attribute, which would drop focus to <body> right after Enter) and ignores clicks.
+const canSync = computed(() => context?.canSync.value === true);
+const cooldownUntil = computed(() => context?.cooldownUntil.value ?? 0);
+const cooldownKind = computed(() => context?.cooldownKind.value ?? null);
+
+// Clock of the countdown: advanced by one 1 s interval that only runs while a cooldown does (it
+// pauses when the cooldown ends and is cleaned up with the component).
+const now = ref(Date.now());
+const ticker = useIntervalFn(
+    () => {
+        now.value = Date.now();
+        if (now.value >= cooldownUntil.value) ticker.pause();
+    },
+    1000,
+    { immediate: false }
+);
+
+watch(
+    [cooldownUntil, cooldownKind],
+    () => {
+        now.value = Date.now();
+        if (cooldownKind.value !== null && now.value < cooldownUntil.value) {
+            ticker.resume();
+        } else {
+            ticker.pause();
+        }
+    },
+    { immediate: true }
+);
+
+const remainingSeconds = computed(() => remainingCooldownSeconds(cooldownUntil.value, now.value));
+// A sync that runs during a cooldown (navigation) shows the spinner instead of the ring.
+const isCooling = computed(
+    () => cooldownKind.value !== null && remainingSeconds.value > 0 && !isSyncing.value
+);
+const ringOffset = computed(() => {
+    const progress = cooldownProgress(
+        context?.cooldownStartedAt.value ?? 0,
+        cooldownUntil.value,
+        now.value
+    );
+    return RING_CIRCUMFERENCE * (1 - progress);
+});
+
+// "8s" / "1m 20s", filled into the label and the hint (the copy itself comes from the server).
+const countdown = computed(() => formatCooldownSeconds(remainingSeconds.value));
+const syncLabel = computed(() => {
+    if (!labels.value) return '';
+    return isCooling.value
+        ? fillLabel(labels.value.sync_in, { seconds: countdown.value })
+        : labels.value.sync;
+});
+// Says why Sync is unavailable and when it is back. Read by the tooltip and, through
+// aria-describedby, by screen readers on focus; never by the live region (it changes every second).
+const cooldownHint = computed(() => {
+    if (!isCooling.value || !labels.value) return null;
+    const template =
+        cooldownKind.value === 'manual'
+            ? labels.value.sync_cooldown_hint
+            : labels.value.sync_backoff_hint;
+    return fillLabel(template, { seconds: countdown.value });
+});
+const cooldownHintId = useId();
+
+// The Sync tooltip carries the wait while cooling, the status (it is the only place a sighted user
+// finds it below lg) and the extra sentence of the state, or the button name while there is
+// nothing to say.
 const tooltipLines = computed(() => {
     const lines: string[] = [];
+    if (cooldownHint.value) lines.push(cooldownHint.value);
     if (status.value?.text) lines.push(status.value.text);
     if (status.value?.tooltip) lines.push(status.value.tooltip);
     if (lines.length === 0 && labels.value) lines.push(labels.value.sync_aria);
@@ -63,6 +141,7 @@ const tooltipLines = computed(() => {
 });
 
 function onSync() {
+    if (!canSync.value) return;
     context?.requestSync(true);
 }
 
@@ -106,27 +185,70 @@ function onConnect() {
                                 variant="outline"
                                 size="sm"
                                 data-testid="outlook-sync-button"
-                                class="w-8 p-0 md:w-auto md:px-3"
+                                class="w-8 p-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 md:w-auto md:min-w-[8rem] md:px-3"
                                 :aria-label="labels.sync_aria"
                                 :aria-busy="isSyncing ? 'true' : 'false'"
-                                :disabled="!context.canSync.value"
+                                :aria-disabled="canSync ? undefined : 'true'"
+                                :aria-describedby="cooldownHint ? cooldownHintId : undefined"
+                                :data-cooldown="isCooling ? (cooldownKind ?? undefined) : undefined"
                                 @click="onSync">
+                                <!-- Drains counter-clockwise from 12 o'clock as the cooldown runs -->
+                                <svg
+                                    v-if="isCooling"
+                                    data-testid="outlook-sync-cooldown-ring"
+                                    viewBox="0 0 16 16"
+                                    aria-hidden="true"
+                                    class="-rotate-90">
+                                    <circle
+                                        cx="8"
+                                        cy="8"
+                                        r="6"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        class="text-border" />
+                                    <circle
+                                        cx="8"
+                                        cy="8"
+                                        r="6"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        class="text-text-tertiary motion-safe:transition-[stroke-dashoffset] motion-safe:duration-1000 motion-safe:ease-linear"
+                                        :stroke-dasharray="RING_CIRCUMFERENCE"
+                                        :style="{ strokeDashoffset: ringOffset }" />
+                                </svg>
                                 <RefreshCw
+                                    v-else
+                                    data-testid="outlook-sync-icon"
                                     aria-hidden="true"
                                     :class="
                                         isSyncing
                                             ? 'motion-safe:animate-spin text-accent-500 dark:text-accent-400'
                                             : ''
                                     " />
-                                <span class="hidden md:inline">{{ labels.sync }}</span>
+                                <span
+                                    data-testid="outlook-sync-label"
+                                    class="hidden md:inline"
+                                    :class="isCooling ? 'tabular-nums' : ''">
+                                    {{ syncLabel }}
+                                </span>
                             </Button>
                         </span>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent data-testid="outlook-sync-tooltip">
                         <p v-for="line in tooltipLines" :key="line">{{ line }}</p>
                     </TooltipContent>
                 </Tooltip>
             </TooltipProvider>
+            <!-- Not a live region: read when the button is focused, never on every tick -->
+            <span
+                v-if="cooldownHint"
+                :id="cooldownHintId"
+                class="sr-only"
+                data-testid="outlook-sync-cooldown-hint">
+                {{ cooldownHint }}
+            </span>
         </template>
         <template v-else-if="(isReconnect || isNotConnected) && labels">
             <div

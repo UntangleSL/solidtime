@@ -56,6 +56,12 @@ return [
         'settings_heading' => 'Reuniones de Outlook',
         'show_dismissed' => 'Mostrar reuniones descartadas',
         'show_dismissed_help' => 'Las reuniones descartadas aparecen atenuadas para que puedas restaurarlas.',
+        'lane_caption_time' => 'Mi tiempo',
+        'lane_caption_outlook' => 'Outlook',
+        'hover_hint' => 'Haz clic para ver los detalles',
+        'sync_in' => 'Sincronizar en :seconds',
+        'sync_cooldown_hint' => 'Acabas de sincronizar. Podrás volver a sincronizar en :seconds.',
+        'sync_backoff_hint' => 'Outlook nos pidió esperar. Podrás volver a sincronizar en :seconds.',
     ],
     'error' => [
         'cancelled' => 'Se ha cancelado el inicio de sesión con Microsoft.',
