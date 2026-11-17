@@ -94,6 +94,51 @@ export interface OutlookCalendarLabels {
     sync_in: string;
     sync_cooldown_hint: string;
     sync_backoff_hint: string;
+    // Phase 4 (meeting conversion and multi-select); mirror microsoft365.calendar.* like the rest.
+    create_entry: string;
+    create_submit: string;
+    form_context: string;
+    field_description: string;
+    field_project: string;
+    field_start: string;
+    field_end: string;
+    error_project_required: string;
+    error_end_before_start: string;
+    hover_hint_select: string;
+    hover_hint_select_mac: string;
+    select: string;
+    deselect: string;
+    selected_suffix: string;
+    selection_label: string;
+    selected_one: string;
+    selected_many: string;
+    selection_cleared: string;
+    clear_selection: string;
+    assign_one: string;
+    assign_many: string;
+    batch_note: string;
+    batch_submit_one: string;
+    batch_submit_many: string;
+    batch_summary: string;
+    batch_none: string;
+    batch_success_many: string;
+    retry_failed: string;
+    close: string;
+    row_created: string;
+    row_existing: string;
+    created_announcement: string;
+    from_meeting: string;
+    error_forbidden_project: string;
+    error_meeting_gone: string;
+    error_generic: string;
+    cancel: string;
+    description_placeholder: string;
+    tags: string;
+    tags_one: string;
+    tags_many: string;
+    billable: string;
+    non_billable: string;
+    created_success: string;
 }
 
 // 'connected': Graph access works; 'reconnect': the Microsoft grant expired or lacks the calendar
@@ -132,10 +177,36 @@ export interface OutlookSyncResponse {
 // The `microsoft.calendar` shared prop, only present on the calendar route.
 export interface OutlookCalendarProps {
     state: OutlookConnectionState;
-    urls: { meetings: string; sync: string };
+    // `convert` is the conversion endpoint of the user's current organization (null without one);
+    // optional so fixtures written before Phase 4 keep compiling.
+    urls: { meetings: string; sync: string; convert?: string | null };
     // Phase 2 connect flow that returns to the calendar (Connect and Reconnect navigate here)
     connect_url: string;
     // One-time outcome of a connect that returned to the calendar, shown as a notification
     notice: { level: 'success' | 'error'; message: string } | null;
     labels: OutlookCalendarLabels;
+}
+
+// POST calendar.urls.convert (one result per requested meeting, in request order). 'existing' means
+// the occurrence already had a time entry (D-06): the server returns that entry instead of a new one.
+export type OutlookConversionStatus = 'created' | 'existing' | 'failed';
+
+export interface OutlookConversionResult {
+    meeting_id: string;
+    status: OutlookConversionStatus;
+    time_entry_id: string | null;
+    // Only for 'failed'; the message is already localized by the server.
+    error: { key: string; message: string } | null;
+}
+
+// The entry fields of a conversion. description, start and end apply to a single meeting only
+// (start and end both or neither, UTC 'YYYY-MM-DDTHH:mm:ssZ').
+export interface OutlookConversionFields {
+    project_id: string;
+    task_id: string | null;
+    tags: string[];
+    billable: boolean;
+    description?: string | null;
+    start?: string;
+    end?: string;
 }

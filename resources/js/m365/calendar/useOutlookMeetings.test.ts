@@ -37,6 +37,7 @@ const axiosDelete = vi.mocked(axios.delete);
 
 const MEETINGS_URL = 'https://app.example.test/m365/meetings';
 const SYNC_URL = 'https://app.example.test/m365/meetings/sync';
+const CONVERT_URL = 'https://app.example.test/m365/organizations/org-1/meetings/time-entries';
 
 // Mondays (the test setup uses week start monday and timezone UTC)
 const WEEK_A = '2026-11-02T00:00:00Z';
@@ -60,7 +61,7 @@ function meeting(id: string, start: string, end: string): OutlookMeeting {
 function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
     return {
         state,
-        urls: { meetings: MEETINGS_URL, sync: SYNC_URL },
+        urls: { meetings: MEETINGS_URL, sync: SYNC_URL, convert: CONVERT_URL },
         connect_url:
             'https://app.example.test/auth/microsoft/redirect?intent=connect&return=calendar',
         notice: null,
@@ -72,6 +73,8 @@ function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
             dismissed_announcement: 'Meeting dismissed',
             restore_failed: 'Could not restore this meeting',
             restored_announcement: 'Meeting restored',
+            created_announcement: 'Time entry created',
+            error_generic: 'Could not create the time entry. Try again in a moment.',
         } as never,
     };
 }
@@ -909,6 +912,311 @@ describe('useOutlookMeetings show dismissed and restore', () => {
             'Could not dismiss this meeting',
             'Try again in a moment.'
         );
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings convert', () => {
+    const first = meeting('m-1', '2026-11-03T09:00:00Z', '2026-11-03T10:00:00Z');
+    const second = meeting('m-2', '2026-11-03T11:00:00Z', '2026-11-03T12:00:00Z');
+    const fields = { project_id: 'p-1', task_id: null, tags: [], billable: true };
+
+    function result(id: string, status: 'created' | 'existing' | 'failed') {
+        return {
+            meeting_id: id,
+            status,
+            time_entry_id: status === 'failed' ? null : 'te-' + id,
+            error: status === 'failed' ? { key: 'forbidden', message: 'No access.' } : null,
+        };
+    }
+
+    function convertCalls() {
+        return axiosPost.mock.calls.filter((call) => call[0] === CONVERT_URL);
+    }
+
+    async function mountWithMeetings(): Promise<Mounted> {
+        axiosGet.mockResolvedValue(readResponse([first, second]));
+        const mounted = mountComposable();
+        await advance(500);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        axiosPost.mockClear();
+        return mounted;
+    }
+
+    it('posts the ids and fields to the convert url', async () => {
+        const mounted = await mountWithMeetings();
+        axiosPost.mockResolvedValue({ data: { results: [result('m-1', 'created')] } });
+
+        await mounted.api.convert(['m-1'], { ...fields, description: 'Weekly' });
+
+        expect(convertCalls()).toHaveLength(1);
+        expect(convertCalls()[0]![1]).toEqual({
+            meeting_ids: ['m-1'],
+            ...fields,
+            description: 'Weekly',
+        });
+        mounted.wrapper.unmount();
+    });
+
+    it('removes a created meeting from every cached read and invalidates entries, goals and meetings', async () => {
+        const mounted = await mountWithMeetings();
+        // Another cached variant (dismissed meetings shown) of the same week
+        const otherKey = ['m365', 'meetings', WEEK_A, true];
+        mounted.queryClient.setQueryData(otherKey, {
+            data: [first, second],
+            sync: { last_synced_at: null, retry_after: null },
+        });
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosPost.mockResolvedValue({ data: { results: [result('m-1', 'created')] } });
+        // The refetch after the invalidation must not bring the meeting back
+        axiosGet.mockResolvedValue(readResponse([second]));
+
+        const results = await mounted.api.convert(['m-1'], fields);
+
+        expect(results).toEqual([result('m-1', 'created')]);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-2']);
+        expect(
+            mounted.queryClient
+                .getQueryData<OutlookMeetingsResponse>(otherKey)
+                ?.data.map((m) => m.id)
+        ).toEqual(['m-2']);
+        const keys = invalidate.mock.calls.map(
+            (call) => (call[0] as { queryKey?: unknown } | undefined)?.queryKey
+        );
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        await advance(0);
+        expect(mounted.api.announcement.value).toBe('Time entry created');
+        mounted.wrapper.unmount();
+    });
+
+    it('treats an existing result like a created one', async () => {
+        const mounted = await mountWithMeetings();
+        axiosPost.mockResolvedValue({ data: { results: [result('m-2', 'existing')] } });
+        axiosGet.mockResolvedValue(readResponse([first]));
+
+        await mounted.api.convert(['m-2'], fields);
+
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1']);
+        mounted.wrapper.unmount();
+    });
+
+    it('keeps the meeting and invalidates nothing on a failed result', async () => {
+        const mounted = await mountWithMeetings();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosPost.mockResolvedValue({ data: { results: [result('m-1', 'failed')] } });
+
+        const results = await mounted.api.convert(['m-1'], fields);
+
+        expect(results[0]?.status).toBe('failed');
+        expect(results[0]?.error?.message).toBe('No access.');
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        expect(invalidate).not.toHaveBeenCalled();
+        await advance(0);
+        expect(mounted.api.announcement.value).toBe('');
+        mounted.wrapper.unmount();
+    });
+
+    it('returns failed results with error_generic for a rejected request and removes nothing', async () => {
+        const mounted = await mountWithMeetings();
+        axiosPost.mockRejectedValue(httpError(500));
+
+        const results = await mounted.api.convert(['m-1', 'm-2'], fields);
+
+        expect(results.map((r) => [r.meeting_id, r.status, r.error?.message])).toEqual([
+            ['m-1', 'failed', 'Could not create the time entry. Try again in a moment.'],
+            ['m-2', 'failed', 'Could not create the time entry. Try again in a moment.'],
+        ]);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        mounted.wrapper.unmount();
+    });
+
+    it('shows the message of a 422 answer', async () => {
+        const mounted = await mountWithMeetings();
+        axiosPost.mockRejectedValue(
+            Object.assign(new Error('HTTP 422'), {
+                response: { status: 422, headers: {}, data: { message: 'Bad task.' } },
+            })
+        );
+
+        const results = await mounted.api.convert(['m-1'], fields);
+
+        expect(results[0]?.error?.message).toBe('Bad task.');
+        mounted.wrapper.unmount();
+    });
+
+    it('sends nothing without a convert url', async () => {
+        const mounted = await mountWithMeetings();
+        (pageProps.microsoft as { calendar: OutlookCalendarProps }).calendar.urls.convert = null;
+        await nextTick();
+
+        const results = await mounted.api.convert(['m-1'], fields);
+
+        expect(convertCalls()).toHaveLength(0);
+        expect(results[0]?.status).toBe('failed');
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings selection and form channel', () => {
+    const first = meeting('m-1', '2026-11-03T09:00:00Z', '2026-11-03T10:00:00Z');
+    const second = meeting('m-2', '2026-11-03T11:00:00Z', '2026-11-03T12:00:00Z');
+    const third = meeting('m-3', '2026-11-04T11:00:00Z', '2026-11-04T12:00:00Z');
+    const fields = { project_id: 'p-1', task_id: null, tags: [], billable: false };
+
+    function freshRead(meetings: OutlookMeeting[]): { data: OutlookMeetingsResponse } {
+        return {
+            data: {
+                data: meetings,
+                sync: {
+                    last_synced_at: new Date(Date.now() - 5_000).toISOString(),
+                    retry_after: null,
+                },
+            },
+        };
+    }
+
+    async function mountWith(list: OutlookMeeting[] = [first, second, third]): Promise<Mounted> {
+        axiosGet.mockResolvedValue(freshRead(list));
+        const mounted = mountComposable();
+        await advance(500);
+        expect(mounted.api.meetings.value).toHaveLength(list.length);
+        axiosPost.mockClear();
+        return mounted;
+    }
+
+    function setTestMeetings(list: OutlookMeeting[]): void {
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (meetings: OutlookMeeting[]) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__(list);
+    }
+
+    it('drops selected ids that are no longer in the meetings list', async () => {
+        const mounted = await mountWith();
+        mounted.api.selection.toggle('m-1');
+        mounted.api.selection.toggle('m-2');
+        expect(mounted.api.selection.selectedIds.value).toEqual(['m-1', 'm-2']);
+
+        mounted.queryClient.setQueryData(['m365', 'meetings', WEEK_A, false], {
+            data: [second, third],
+            sync: { last_synced_at: null, retry_after: null },
+        });
+        await nextTick();
+
+        expect(mounted.api.selection.selectedIds.value).toEqual(['m-2']);
+        mounted.wrapper.unmount();
+    });
+
+    it('clears the selection when the calendar range changes', async () => {
+        const mounted = await mountWith();
+        mounted.api.selection.toggle('m-1');
+
+        // Day view inside the same week: same bucket, other range
+        mounted.end.value = weekStartOf(WEEK_A).add(1, 'day');
+        await nextTick();
+
+        expect(mounted.api.selection.selectedIds.value).toEqual([]);
+        expect(mounted.api.selection.anchorId.value).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('keeps the selection empty while it cannot act', async () => {
+        const mounted = await mountWith();
+        mounted.api.selection.toggle('m-1');
+
+        setTestMeetings([first, second]);
+        await nextTick();
+
+        expect(mounted.api.canAct.value).toBe(false);
+        expect(mounted.api.selection.selectedIds.value).toEqual([]);
+        mounted.api.selection.toggle('m-2');
+        mounted.api.selection.selectRange('m-2', [first, second]);
+        expect(mounted.api.selection.selectedIds.value).toEqual([]);
+        mounted.wrapper.unmount();
+    });
+
+    it('convert removes created and existing ids from the selection and keeps failed ones', async () => {
+        const mounted = await mountWith();
+        for (const id of ['m-1', 'm-2', 'm-3']) mounted.api.selection.toggle(id);
+        axiosPost.mockResolvedValue({
+            data: {
+                results: [
+                    { meeting_id: 'm-1', status: 'created', time_entry_id: 'te-1', error: null },
+                    { meeting_id: 'm-2', status: 'existing', time_entry_id: 'te-2', error: null },
+                    {
+                        meeting_id: 'm-3',
+                        status: 'failed',
+                        time_entry_id: null,
+                        error: { key: 'forbidden', message: 'No access.' },
+                    },
+                ],
+            },
+        });
+        axiosGet.mockResolvedValue(freshRead([third]));
+
+        await mounted.api.convert(['m-1', 'm-2', 'm-3'], fields);
+
+        expect(mounted.api.selection.selectedIds.value).toEqual(['m-3']);
+        // A multi conversion says nothing here (the batch form announces its own summary)
+        await advance(0);
+        expect(mounted.api.announcement.value).toBe('');
+        mounted.wrapper.unmount();
+    });
+
+    it('a second convert for an id still in flight returns [] without a request', async () => {
+        const mounted = await mountWith();
+        const request = deferred<{ data: unknown }>();
+        axiosPost.mockReturnValue(request.promise);
+
+        const firstCall = mounted.api.convert(['m-1'], fields);
+        const secondCall = await mounted.api.convert(['m-2', 'm-1'], fields);
+
+        expect(secondCall).toEqual([]);
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+        request.resolve({
+            data: {
+                results: [
+                    { meeting_id: 'm-1', status: 'created', time_entry_id: 'te-1', error: null },
+                ],
+            },
+        });
+        await firstCall;
+
+        // Settled: the next call is sent again
+        axiosPost.mockResolvedValue({ data: { results: [] } });
+        await mounted.api.convert(['m-1'], fields);
+        expect(axiosPost).toHaveBeenCalledTimes(2);
+        mounted.wrapper.unmount();
+    });
+
+    it('openForm sets formRequest with an increasing seq and clears the selection', async () => {
+        const mounted = await mountWith();
+        mounted.api.selection.toggle('m-2');
+        expect(mounted.api.formRequest.value).toBeNull();
+
+        mounted.api.openForm('m-1');
+        const firstRequest = mounted.api.formRequest.value;
+        mounted.api.openForm('m-1');
+        const secondRequest = mounted.api.formRequest.value;
+
+        expect(firstRequest?.id).toBe('m-1');
+        expect(secondRequest?.id).toBe('m-1');
+        expect(secondRequest!.seq).toBeGreaterThan(firstRequest!.seq);
+        expect(mounted.api.selection.selectedIds.value).toEqual([]);
+        mounted.wrapper.unmount();
+    });
+
+    it('openForm is ignored while it cannot act', async () => {
+        const mounted = await mountWith();
+        setTestMeetings([first]);
+        await nextTick();
+
+        mounted.api.openForm('m-1');
+
+        expect(mounted.api.formRequest.value).toBeNull();
         mounted.wrapper.unmount();
     });
 });

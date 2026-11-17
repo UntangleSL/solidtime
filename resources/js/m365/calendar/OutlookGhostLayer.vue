@@ -61,6 +61,13 @@ const canAct = computed(() => context?.canAct.value === true);
 
 // One detail panel open at a time (the id of the meeting whose panel is open).
 const openId = ref<string | null>(null);
+// The open panel shows the conversion form instead of the details (Phase 4). Only meaningful while
+// it equals openId; closing the panel resets it.
+const formId = ref<string | null>(null);
+
+watch(openId, (id) => {
+    if (id === null || formId.value !== id) formId.value = null;
+});
 
 function setOpen(id: string, value: boolean): void {
     if (value) {
@@ -70,6 +77,15 @@ function setOpen(id: string, value: boolean): void {
         closeHover();
         openId.value = id;
     } else if (openId.value === id) openId.value = null;
+}
+
+function modeOf(id: string): 'detail' | 'form' {
+    return openId.value === id && formId.value === id ? 'form' : 'detail';
+}
+
+function onCreate(meeting: OutlookMeeting): void {
+    if (!canAct.value || openId.value !== meeting.id) return;
+    formId.value = meeting.id;
 }
 
 // Hover card (UX-03, D-05): at most one per layer (the id of the meeting whose card is shown). Each
@@ -183,13 +199,25 @@ async function onRestore(meeting: OutlookMeeting): Promise<void> {
     await keepFocusOn(meeting.id);
 }
 
+// The ghost after `id` in this day (the previous one for the last), read before it leaves.
+function neighbourOf(id: string): string | null {
+    const list = boxes.value;
+    const index = list.findIndex((box) => box.meeting.id === id);
+    return (list[index + 1] ?? list[index - 1] ?? null)?.meeting.id ?? null;
+}
+
+// Focus after a ghost left the lane: its neighbour, or the Sync button when the day has none.
+async function focusAfterRemoval(neighbour: string | null): Promise<void> {
+    await nextTick();
+    const next = neighbour ? ghostElement(neighbour) : null;
+    (next ?? document.querySelector<HTMLElement>('[data-testid="outlook-sync-button"]'))?.focus();
+}
+
 // After a dismiss that removes the focused ghost, focus moves to the next ghost of this day (the
 // previous one for the last), or to the Sync button when the day has no ghost left.
 async function onDismiss(meeting: OutlookMeeting): Promise<void> {
     const stays = context?.includeDismissed.value === true;
-    const list = boxes.value;
-    const index = list.findIndex((box) => box.meeting.id === meeting.id);
-    const neighbour = list[index + 1] ?? list[index - 1] ?? null;
+    const neighbour = neighbourOf(meeting.id);
     openId.value = null;
     void context?.dismiss(meeting.id);
 
@@ -198,9 +226,20 @@ async function onDismiss(meeting: OutlookMeeting): Promise<void> {
         return;
     }
 
-    await nextTick();
-    const next = neighbour ? ghostElement(neighbour.meeting.id) : null;
-    (next ?? document.querySelector<HTMLElement>('[data-testid="outlook-sync-button"]'))?.focus();
+    await focusAfterRemoval(neighbour);
+}
+
+// The form created (or found) the entry: the panel closes and focus follows the Dismiss rule.
+async function onConverted(meeting: OutlookMeeting): Promise<void> {
+    if (openId.value !== meeting.id) return;
+    const neighbour = neighbourOf(meeting.id);
+    openId.value = null;
+    await focusAfterRemoval(neighbour);
+}
+
+async function onCancelForm(meeting: OutlookMeeting): Promise<void> {
+    openId.value = null;
+    await keepFocusOn(meeting.id);
 }
 
 // Measured lane width (border box for the column count, content box for block widths). Until the
@@ -263,6 +302,39 @@ function timeLineOf(box: GhostBox): string {
         ? formatTime(box.meeting.start, timeFormat.value)
         : timeRangeOf(box.meeting);
 }
+
+// The form channel of the context (hover card and meeting menu actions): a request for a meeting of
+// this day opens its panel straight in form mode, never while the context menu is open (that
+// surface waits for the menu to close before asking). Requests for other days are not ours.
+watch(
+    () => context?.formRequest?.value ?? null,
+    (request) => {
+        if (!request || !canAct.value || props.contextMenuOpen) return;
+        if (!boxes.value.some((box) => box.meeting.id === request.id)) return;
+        closeHover();
+        openId.value = request.id;
+        formId.value = request.id;
+    }
+);
+
+// The context removes a converted meeting from the cache as soon as the server answered, which can
+// unmount its panel (and the form) before the form reports `done`. So a meeting that leaves the
+// lane while its form is open closes the panel here, and focus moves to the ghost that followed it
+// (the previous one for the last), or to the Sync button.
+watch(boxes, (list, previous) => {
+    const id = formId.value;
+    if (id === null || openId.value !== id) return;
+    if (list.some((box) => box.meeting.id === id)) return;
+
+    const before = previous ?? [];
+    const index = before.findIndex((box) => box.meeting.id === id);
+    const stays = (box: GhostBox | undefined) =>
+        box !== undefined && list.some((item) => item.meeting.id === box.meeting.id);
+    const after = before.slice(index + 1).find(stays);
+    const neighbour = after ?? before.slice(0, Math.max(index, 0)).reverse().find(stays);
+    openId.value = null;
+    void focusAfterRemoval(neighbour?.meeting.id ?? null);
+});
 
 const laneWidth = computed(() => props.overlayLaneWidth ?? ghostLaneWidth(props.isDayView));
 
@@ -336,9 +408,13 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
                 :labels="labels"
                 :can-act="canAct"
                 :open="openId === box.meeting.id"
+                :mode="modeOf(box.meeting.id)"
                 @update:open="(value: boolean) => setOpen(box.meeting.id, value)"
                 @dismiss="onDismiss(box.meeting)"
-                @restore="onRestore(box.meeting)">
+                @restore="onRestore(box.meeting)"
+                @create="onCreate(box.meeting)"
+                @converted="onConverted(box.meeting)"
+                @cancel-form="onCancelForm(box.meeting)">
                 <HoverCardTrigger as-child>
                     <div
                         class="m365-ghost m365-meeting absolute pointer-events-auto select-none cursor-pointer rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"
