@@ -13,6 +13,9 @@ interface InjectedMeeting {
     subject: string;
     start: string;
     end: string;
+    web_link?: string | null;
+    is_online_meeting?: boolean;
+    organizer_name?: string | null;
 }
 
 // Subset of the English copy that the ghost layer and its detail panel read (microsoft365.calendar.*)
@@ -30,6 +33,7 @@ const LABELS = {
     opens_new_tab: '(opens in a new tab)',
     dismiss: 'Dismiss meeting',
     restore: 'Restore meeting',
+    hover_hint: 'Click for details',
 };
 
 async function goToCalendar(page: Page) {
@@ -69,12 +73,12 @@ async function injectMeetings(page: Page, meetings: InjectedMeeting[]) {
             if (!setter) throw new Error('__TEST_SET_OUTLOOK_MEETINGS__ is not installed');
             setter(
                 list.map((meeting) => ({
-                    ...meeting,
                     organizer_name: 'Test Organizer',
                     is_organizer: false,
                     is_online_meeting: false,
                     web_link: null,
                     dismissed: false,
+                    ...meeting,
                 })),
                 labels
             );
@@ -85,6 +89,26 @@ async function injectMeetings(page: Page, meetings: InjectedMeeting[]) {
 
 async function headerTexts(page: Page): Promise<string[]> {
     return page.locator('.fc-col-header-cell').allInnerTexts();
+}
+
+const MEETING_MENU = '[data-testid="outlook-meeting-menu"]';
+const HOVER_CARD = '[data-testid="outlook-hover-card"]';
+
+// UI-SPEC 3.1 section 4 layering acceptance: the element the browser hit-tests at the centre of the
+// meeting menu belongs to that menu, so no hover card, panel or other layer sits above it.
+async function menuCentreHitsMenu(page: Page): Promise<boolean> {
+    const box = await page.locator(MEETING_MENU).boundingBox();
+    if (!box) return false;
+    return page.evaluate(
+        ({ x, y, selector }) => {
+            const menu = document.querySelector(selector);
+            const hit = document.elementFromPoint(x, y);
+            if (!menu || !hit) return false;
+            const content = hit.closest('[role="menu"]');
+            return content !== null && content.contains(menu);
+        },
+        { x: box.x + box.width / 2, y: box.y + box.height / 2, selector: MEETING_MENU }
+    );
 }
 
 test.describe('Outlook ghosts', () => {
@@ -232,5 +256,52 @@ test.describe('Outlook ghosts', () => {
         await expect(page.locator('.m365-ghost')).toHaveCount(0);
         await expect(page.locator('[data-testid="outlook-calendar-controls"]')).toHaveCount(0);
         expect(outlookRequests).toEqual([]);
+    });
+});
+
+test.describe('Outlook meeting hover card and context menu', () => {
+    test('right-click over an open hover card closes it and opens the meeting menu on top', async ({
+        page,
+    }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        await injectMeetings(page, [
+            {
+                id: 'm-layer',
+                subject: 'Layering review',
+                start: todayAt('14:00:00'),
+                end: todayAt('15:00:00'),
+                web_link: 'https://outlook.example.test/meeting-1',
+            },
+        ]);
+        const ghost = page.locator('.m365-ghost');
+        await expect(ghost).toHaveCount(1);
+
+        await ghost.hover();
+        const card = page.locator(HOVER_CARD);
+        await expect(card).toBeVisible();
+        await expect(card).toContainText('Layering review');
+        await expect(card).toContainText(LABELS.hover_hint);
+
+        await ghost.click({ button: 'right' });
+
+        await expect(page.locator(HOVER_CARD)).toHaveCount(0);
+        const menu = page.locator(MEETING_MENU);
+        await expect(menu).toBeVisible();
+        await expect(menu.locator('[data-testid="outlook-menu-label"]')).toHaveText(
+            'Layering review'
+        );
+        await expect(menu.locator('[data-testid="outlook-menu-open"]')).toContainText(
+            LABELS.open_in_outlook
+        );
+        // A meeting never gets the empty-slot menu, and test-hook mode cannot dismiss
+        await expect(page.getByRole('menuitem', { name: 'Create Time Entry' })).toHaveCount(0);
+        await expect(page.locator('[data-testid="outlook-menu-dismiss"]')).toHaveCount(0);
+        await expect(page.getByText(LABELS.dismiss)).toHaveCount(0);
+
+        expect(await menuCentreHitsMenu(page)).toBe(true);
+
+        await page.keyboard.press('Escape');
+        await expect(page.locator(MEETING_MENU)).toHaveCount(0);
     });
 });
