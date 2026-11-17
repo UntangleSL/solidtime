@@ -1305,6 +1305,222 @@ class OutlookMeetingConversionTest extends TestCaseWithDatabase
     }
 
     /**
+     * Converts one meeting to a project in explicit mode (no task, no tags, not billable).
+     */
+    private function convertTo(Organization $organization, OutlookMeeting $meeting, Project $project): string
+    {
+        $response = $this->convert($organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        $entryId = $response->json('results.0.time_entry_id');
+        $this->assertIsString($entryId);
+
+        return $entryId;
+    }
+
+    public function test_confirm_rejects_explicit_fields(): void
+    {
+        // Arrange: a converted series, so an accepted body would create an entry
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $task = Task::factory()->forOrganization($data->organization)->forProject($project)->create();
+        $tag = Tag::factory()->forOrganization($data->organization)->create();
+        $a = $this->occurrence($data->user, 'series-a', 'series-1', '2026-10-20');
+        $b = $this->occurrence($data->user, 'series-b', 'series-1', '2026-10-27');
+        $this->convertTo($data->organization, $a, $project);
+        $extras = [
+            'project_id' => ['project_id' => $project->getKey()],
+            'billable' => ['billable' => true],
+            'task_id' => ['task_id' => $task->getKey()],
+            'tags' => ['tags' => [$tag->getKey()]],
+            'description' => ['description' => 'Typed by the client'],
+            'start and end' => ['start' => '2026-10-27T09:00:00Z', 'end' => '2026-10-27T09:30:00Z'],
+            'prefill_source' => ['prefill_source' => 'suggestion'],
+            'prefill_project_id' => ['prefill_project_id' => $project->getKey()],
+        ];
+
+        foreach ($extras as $case => $extra) {
+            // Act
+            $response = $this->confirm($data->organization, [$b->id], $extra);
+
+            // Assert: the server alone decides the entry fields (T-05-15)
+            $this->assertSame(422, $response->status(), $case);
+        }
+        $this->assertSame(1, TimeEntry::query()->count());
+        $this->assertSame(1, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_confirm_without_assignment_fails_per_meeting(): void
+    {
+        // Arrange: a single meeting and an occurrence of a series never converted
+        $data = $this->employee();
+        $single = $this->meeting($data->user, 'single');
+        $occurrence = $this->occurrence($data->user, 'never-a', 'never-converted', '2026-10-21');
+
+        // Act
+        $response = $this->confirm($data->organization, [$single->id, $occurrence->id]);
+
+        // Assert
+        $response->assertOk();
+        foreach ([0 => $single, 1 => $occurrence] as $index => $meeting) {
+            $response->assertJsonPath("results.$index.meeting_id", $meeting->id);
+            $response->assertJsonPath("results.$index.status", 'failed');
+            $response->assertJsonPath("results.$index.time_entry_id", null);
+            $response->assertJsonPath("results.$index.error.key", 'no_assignment');
+            $response->assertJsonPath("results.$index.error.message", 'This meeting has no series assignment any more.');
+        }
+        $this->assertSame(0, TimeEntry::query()->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_mixed_confirm_batch(): void
+    {
+        // Arrange: two series converted to different projects, plus a single meeting
+        $data = $this->employee();
+        $first = $this->publicProject($data->organization);
+        $second = $this->publicProject($data->organization);
+        $this->convertTo($data->organization, $this->occurrence($data->user, 'one-a', 'series-one', '2026-10-19'), $first);
+        $this->convertTo($data->organization, $this->occurrence($data->user, 'two-a', 'series-two', '2026-10-20'), $second);
+        $oneB = $this->occurrence($data->user, 'one-b', 'series-one', '2026-10-26');
+        $twoB = $this->occurrence($data->user, 'two-b', 'series-two', '2026-10-27');
+        $single = $this->meeting($data->user, 'lonely', ['starts_at' => '2026-10-28 09:00:00', 'ends_at' => '2026-10-28 10:00:00']);
+
+        // Act: one bulk request (D-04)
+        $response = $this->confirm($data->organization, [$oneB->id, $twoB->id, $single->id]);
+
+        // Assert: per-meeting results in request order
+        $response->assertOk();
+        $response->assertJsonCount(3, 'results');
+        $response->assertJsonPath('results.0.meeting_id', $oneB->id);
+        $response->assertJsonPath('results.0.status', 'created');
+        $response->assertJsonPath('results.1.meeting_id', $twoB->id);
+        $response->assertJsonPath('results.1.status', 'created');
+        $response->assertJsonPath('results.2.meeting_id', $single->id);
+        $response->assertJsonPath('results.2.status', 'failed');
+        $response->assertJsonPath('results.2.error.key', 'no_assignment');
+        $this->assertSame($first->getKey(), TimeEntry::query()->findOrFail($response->json('results.0.time_entry_id'))->project_id);
+        $this->assertSame($second->getKey(), TimeEntry::query()->findOrFail($response->json('results.1.time_entry_id'))->project_id);
+        $this->assertSame(4, TimeEntry::query()->count());
+        $this->assertSame(4, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_confirm_of_a_converted_occurrence_answers_existing(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'series-a', 'series-1', '2026-10-20');
+        $b = $this->occurrence($data->user, 'series-b', 'series-1', '2026-10-27');
+        $this->convertTo($data->organization, $a, $project);
+
+        // Act
+        $first = $this->confirm($data->organization, [$b->id]);
+        $second = $this->confirm($data->organization, [$b->id]);
+
+        // Assert: idempotent, the same entry and nothing new (Phase 4 D-06)
+        $first->assertJsonPath('results.0.status', 'created');
+        $second->assertOk();
+        $second->assertJsonPath('results.0.status', 'existing');
+        $second->assertJsonPath('results.0.time_entry_id', $first->json('results.0.time_entry_id'));
+        $second->assertJsonPath('results.0.error', null);
+        $this->assertSame(2, TimeEntry::query()->count());
+        $this->assertSame(2, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_confirm_is_404_while_impersonating(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'series-a', 'series-1', '2026-10-20');
+        $b = $this->occurrence($data->user, 'series-b', 'series-1', '2026-10-27');
+        $this->convertTo($data->organization, $a, $project);
+        session()->put(ImpersonateManager::SESSION_KEY, 1);
+
+        // Act
+        $response = $this->confirm($data->organization, [$b->id]);
+
+        // Assert: nothing converted while an admin impersonates (D-14)
+        $response->assertNotFound();
+        $this->assertSame(1, TimeEntry::query()->count());
+        $this->assertSame(1, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_confirm_follows_the_overlap_rule(): void
+    {
+        // Arrange: an entry 09:30-10:30 overlaps occurrence B (09:00-10:00) and the organization forbids overlaps
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'series-a', 'series-1', '2026-10-20');
+        $b = $this->occurrence($data->user, 'series-b', 'series-1', '2026-10-27');
+        $this->convertTo($data->organization, $a, $project);
+        TimeEntry::factory()->forOrganization($data->organization)->forMember($data->member)->create([
+            'start' => Carbon::parse('2026-10-27 09:30:00', 'UTC'),
+            'end' => Carbon::parse('2026-10-27 10:30:00', 'UTC'),
+        ]);
+        $data->organization->prevent_overlapping_time_entries = true;
+        $data->organization->save();
+
+        // Act
+        $response = $this->confirm($data->organization, [$b->id]);
+
+        // Assert: core's rule applies to the server-chosen fields too
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'failed');
+        $response->assertJsonPath('results.0.error.key', 'overlapping_time_entry');
+        $this->assertSame(2, TimeEntry::query()->count());
+        $this->assertSame(1, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_confirm_after_the_project_was_archived_fails(): void
+    {
+        // Arrange: the read showed an assignment, then the project was archived
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'series-a', 'series-1', '2026-10-20');
+        $b = $this->occurrence($data->user, 'series-b', 'series-1', '2026-10-27');
+        $this->convertTo($data->organization, $a, $project);
+        $project->archived_at = Carbon::now();
+        $project->save();
+
+        // Act
+        $response = $this->confirm($data->organization, [$b->id]);
+
+        // Assert: resolved at confirm time (RESEARCH Pitfall 7)
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'failed');
+        $response->assertJsonPath('results.0.error.key', 'no_assignment');
+        $this->assertSame(1, TimeEntry::query()->count());
+        $this->assertSame(1, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_confirm_in_another_organization_finds_no_assignment(): void
+    {
+        // Arrange: the user belongs to two organizations and converted the series in the first one
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $otherOrganization = Organization::factory()->create();
+        Member::factory()->forUser($data->user)->forOrganization($otherOrganization)->role(Role::Employee)->create();
+        $a = $this->occurrence($data->user, 'series-a', 'series-1', '2026-10-20');
+        $b = $this->occurrence($data->user, 'series-b', 'series-1', '2026-10-27');
+        $this->convertTo($data->organization, $a, $project);
+
+        // Act
+        $response = $this->confirm($otherOrganization, [$b->id]);
+
+        // Assert: assignments never cross organizations
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'failed');
+        $response->assertJsonPath('results.0.error.key', 'no_assignment');
+        $this->assertSame(1, TimeEntry::query()->count());
+        $this->assertSame(1, OutlookMeetingLink::query()->count());
+    }
+
+    /**
      * @param  array<string, mixed>  $extra
      */
     private function listMeetings(array $extra = []): TestResponse
