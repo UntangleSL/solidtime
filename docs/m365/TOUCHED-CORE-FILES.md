@@ -224,3 +224,67 @@ After the plans merged, four test-only fixes under `tests/Feature/Microsoft365/`
 exact assertions with the shipped behaviour: `linked_time_entry_ids` in the meetings response
 (`OutlookMeetingEndpointTest`, `OutlookMeetingPrivacyTest`) and the resolved `:attribute` in one
 validation message (`OutlookMeetingConversionTest`). No core file changed.
+
+## Phase 5 (Smart meeting suggestions)
+
+Built from the Phase 5 plan summaries and reconciled by 05-14 against the real phase diff. Phase 5
+was designed to edit no core file; one orchestrator follow-up to 05-11 widened an existing fork slot
+condition in `Calendar.vue`. Everything else lives in fork-owned paths.
+
+### Core files edited
+
+| File | Change | Plan | Merge note |
+| --- | --- | --- | --- |
+| `resources/js/Pages/Calendar.vue` | The existing `#toolbar-extra` fill condition (line 174) widened from `outlook.calendar.value` to `outlook.calendar.value \|\| outlook.canAct.value`, so `OutlookCalendarControls` (and its Confirm-all button) mounts whenever meetings can be acted on, test-hook mode included. One line, no new import or element. | 05-11 follow-up (`b0412651`, "fix(05-11)") | Re-apply the widened condition on the `#toolbar-extra` template when taking upstream's file. |
+
+### New files inside core directories
+
+None.
+
+`lang/en/microsoft365.php` and `lang/es/microsoft365.php` (fork files from earlier phases, inside the
+core `lang/` directory) gained 46 calendar keys each (pre-assignment, suggestion reasons, series
+actions, Confirm-all), and `show_dismissed_help` was reworded in both to mention ignored series. In
+the Spanish file `create_entry` was also shortened to "Crear registro" so the panel footer fits
+(`3077bdb3`, "fix(05-10)").
+
+### Fork-owned paths
+
+| Path | Content |
+| --- | --- |
+| `app/Microsoft365/Suggestions/` | New: `ProjectSuggestionEngine`, `MeetingSuggester`, `MeetingSignals`, `MeetingSignalInput`, `SeriesAssignmentResolver`, `SeriesKey`, `SubjectTokenizer`, `SuggestionHistory`, `BookableProjects`, `Assignment`, `Suggestion`, `Reason`, `MeetingHints`. |
+| `app/Microsoft365/database/migrations/2026_11_18_000001_add_series_and_signals_to_outlook_meeting_links.php`, `..._000002_add_attendees_to_outlook_meetings.php`, `..._000003_create_outlook_series_settings_table.php` | Additive migrations with `down()`: series, signal and prefill columns on `outlook_meeting_links` (with backfill), attendee columns on `outlook_meetings`, the `outlook_series_settings` table. |
+| `app/Microsoft365/Models/OutlookSeriesSetting.php`, `app/Microsoft365/Http/Controllers/OutlookSeriesController.php` | New: per-user series settings (ignore, forget) and their endpoints. |
+| `app/Microsoft365/Http/Controllers/OutlookMeetingController.php`, `MeetingConversionController.php`, `app/Microsoft365/Http/Requests/MeetingConversionRequest.php`, `app/Microsoft365/Http/Resources/OutlookMeetingResource.php`, `app/Microsoft365/Graph/OutlookMeetingSyncService.php`, `app/Microsoft365/Graph/GraphCalendarClient.php`, `app/Microsoft365/Models/OutlookMeeting.php`, `app/Microsoft365/Models/OutlookMeetingLink.php`, `app/Microsoft365/routes/microsoft365.php` | Edited fork files: suggestions and pre-assignment in the meetings read, series-aware conversion and Confirm-all, attendee sync (Graph `$select` gains `attendees`, same `Calendars.Read` scope), series routes (web group, `openapi.json` untouched). |
+| `resources/js/m365/calendar/` | New: `OutlookPreassignment`, `OutlookProjectDot`, `OutlookSuggestionPicks`, `OutlookConfirmAll`, `suggestions.ts`, `suggestionReason.ts` (with tests); edited: ghost layer, ghost detail, meeting summary, hover card, context items, convert form, calendar controls, assign results, selection bar test, `useOutlookMeetings`, `conversionApi` and `resources/js/m365/types.ts`. |
+| `resources/js/branding/contrast.test.ts` | Fork test file (Phase 3.2): new `projectDotRingCases` rows for the project dot ring against the meeting fill, hover fill and popover surface. |
+| `tests/Feature/Microsoft365/` | New `OutlookMeetingSuggestionTest`, `OutlookSeriesAssignmentTest`, `OutlookSeriesSettingsTest`; extended `OutlookCalendarPropTest`, `OutlookMeetingConversionTest`, `OutlookMeetingEndpointTest`, `OutlookMeetingPrivacyTest`, `OutlookMeetingSyncTest`. |
+| `tests/Unit/Microsoft365/` | New `MeetingSignalsTest`, `ProjectSuggestionEngineTest`, `SubjectTokenizerTest`; extended `GraphCalendarClientTest`. |
+| `docs/m365/DECISIONS-graph.md` | Phase 5 Graph decision D-09: `attendees` added to the production `$select` (same `Calendars.Read` scope) and its storage rules. |
+| `e2e/outlook-suggestions.spec.ts` | Browser proofs of one-click confirm, bulk confirm, the learned prefill and the series actions (05-13). |
+
+### Hot files deliberately not touched
+
+No Phase 5 commit edits these: `app/Http/Controllers/Api/V1/TimeEntryController.php`,
+`app/Http/Requests/V1/TimeEntry/TimeEntryStoreRequest.php`, `app/Models/TimeEntry.php`,
+`app/Models/Project.php`, `app/Service/DeletionService.php`, `app/Service/MemberService.php`,
+`routes/api.php`, `routes/web.php`, `openapi.json`, `resources/js/utils/useTimeEntriesMutations.ts`,
+`resources/js/packages/ui/src/TimeEntry/TimeEntryCreateModal.vue`,
+`resources/js/packages/ui/src/TimeTracker/TimeTrackerProjectTaskDropdown.vue`,
+`resources/js/packages/ui/src/Tag/TagDropdown.vue`. `Calendar.vue` appears only with the one-line
+05-11 follow-up above.
+
+### Reconciliation (05-14)
+
+Checked against the real phase diff before the release:
+`git diff --name-only d71c5311 HEAD -- . ':!resources/js/m365' ':!app/Microsoft365' ':!tests/Feature/Microsoft365' ':!tests/Unit/Microsoft365' ':!docs' ':!.planning' ':!lang/en/microsoft365.php' ':!lang/es/microsoft365.php'`
+(base `d71c5311`, the commit that added the Phase 5 plans) lists three paths, and each one has a row
+above: `resources/js/Pages/Calendar.vue`, `resources/js/branding/contrast.test.ts` and
+`e2e/outlook-suggestions.spec.ts`. None of the hot files listed above appears in the diff. No core
+path is left unexplained by a Phase 5 plan.
+
+After the plans merged, five follow-up fixes landed: `7bee5345` (distinct Microsoft object id for a colleague in
+`OutlookSeriesAssignmentTest`), `b0412651` (the `Calendar.vue` condition above), `3077bdb3` (shorter Spanish
+`create_entry` and the matching `e2e/outlook-suggestions.spec.ts` assertions),
+`e535b485` (Confirm-all popover anchored to its toolbar button through `:reference`, working around a
+reka-ui nested-trigger issue, fork file `OutlookConfirmAll.vue`) and `2bb51e9c` (More actions menu
+test hook rendered inside the menu, fork file `OutlookGhostDetail.vue`). Only `b0412651` touches a core file.
