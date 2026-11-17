@@ -25,7 +25,7 @@ const barClass = computed(() => {
     if (props.goal.progress.status === 'achieved') {
         return 'bg-green-500';
     }
-    return 'bg-accent-200';
+    return 'bg-accent-400 dark:bg-accent-200';
 });
 
 function format(seconds: number) {

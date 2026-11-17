@@ -10,7 +10,7 @@ const props = defineProps<{
 
 const iconClasses = computed(() => {
     if (props.selected) {
-        return 'text-accent-200';
+        return 'text-accent-500 dark:text-accent-200';
     } else {
         return 'text-card-border';
     }
