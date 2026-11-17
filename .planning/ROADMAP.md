@@ -286,7 +286,36 @@ Plans:
   4. User can mark a series "always ignore" (and undo it), see why a meeting is pre-assigned or suggested, change a series' assignment or make the system forget it; none of this changes existing time entries.
   5. Attendee data needed for suggestions is stored only for the meeting owner and purged with the other meeting data on disconnect/user deletion.
 
-**Plans**: TBD
+**Plans**: 15 plans
+
+Plans:
+**Wave 1**
+- [ ] 05-01-PLAN.md — Series pre-assignment on the server: series key captured on links (+ backfill, signals/prefill columns), resolver from the latest link's live entry with core booking rules, final read shape (series_key, series_ignored, assignment, suggestions) (wave 1, CI anchor)
+- [ ] 05-02-PLAN.md — Pure learned engine: ES/EN subject tokenizer, keyed-hash meeting signals, explainable scorer with confidence and reasons (local unit tests) (wave 1)
+- [ ] 05-03-PLAN.md — Attendees in the meeting cache: Graph $select + attendees, minimal owner-only storage, scrub/Disconnect purge, never served, DECISIONS-graph update (wave 1)
+- [ ] 05-04-PLAN.md — Client foundation: 46 en/es keys (130 labels), types, prefill/quick-pick/series-note helpers, reason labels, confirm and series API calls, project dot (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 05-05-PLAN.md — Confirm mode on the convert endpoint (use_series_assignment, no_assignment), hashed signals and D-16 prefill measurement on every link (wave 2, CI anchor)
+- [ ] 05-06-PLAN.md — Always ignore / stop ignoring / forget a series: outlook_series_settings, three routes, read filter, forget filter, privacy invariants (wave 2)
+- [ ] 05-07-PLAN.md — Composable confirm (one and bulk) and optimistic series actions; pre-assignment block; hover card Edit + Confirm (wave 2)
+- [ ] 05-08-PLAN.md — Mini form prefilled from the series or a confident suggestion, reason line, quick picks, series notes, batch prefill (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 05-09-PLAN.md — Learned suggestions in the read from the user's own history; scoping, privacy, cost; forget/ignore interplay end to end (wave 3, CI anchor)
+- [ ] 05-10-PLAN.md — Lane and panel: pre-assigned block, panel Confirm/Edit with why line, More actions series controls, ignored-series variant, dot contrast (wave 3)
+- [ ] 05-11-PLAN.md — "Confirm N pre-assigned" toolbar button and bulk-confirm popover over the rendered view (wave 3)
+- [ ] 05-12-PLAN.md — Context menu: Confirm, Edit, ignore / stop ignoring, forget (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 05-13-PLAN.md — Browser proof of confirm, bulk confirm, prefilled form, ignore + undo and forget; Playwright gate (wave 4, CI anchor)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 05-14-PLAN.md — Release candidate: ledger reconciled, release sha green in ten workflows, commits listed, compose pinned; then the orchestrator deploys without owner approval (D-15) (wave 5)
+
+**Wave 6** *(blocked on the orchestrator's deploy)*
+- [ ] 05-15-PLAN.md — Public checks on production, runbook history row, owner UAT queued (wave 6)
+
 **Research focus**: series identity in practice (series splits, edited occurrences) against docs/m365/DECISIONS-graph.md; adding attendees to the Graph $select within Calendars.Read; a simple, explainable ranking (no ML library) over the user's own links
 **UI hint**: yes
 
