@@ -83,6 +83,13 @@ function renderLane(ids: string[]): HTMLElement[] {
     return blocks;
 }
 
+function renderSyncButton(): HTMLElement {
+    const button = document.createElement('button');
+    button.setAttribute('data-testid', 'outlook-sync-button');
+    document.body.appendChild(button);
+    return button;
+}
+
 const Harness = defineComponent({
     props: {
         element: { type: Object as PropType<HTMLElement>, required: true },
@@ -248,5 +255,98 @@ describe('OutlookMeetingContextItems', () => {
         await openMenu(block!, null);
 
         expect(menu()).toBeNull();
+    });
+
+    it('renders only the label for a stale element', async () => {
+        const [block] = renderLane(['gone']);
+        const { context } = fakeContext([
+            meeting({ id: 'm-2', web_link: 'https://outlook.example.test/b' }),
+        ]);
+        await openMenu(block!, context);
+
+        expect(menu()).not.toBeNull();
+        expect(item('outlook-menu-label')?.textContent?.trim()).toBe('(No subject)');
+        expect(item('outlook-menu-open')).toBeNull();
+        expect(item('outlook-menu-dismiss')).toBeNull();
+        expect(item('outlook-menu-restore')).toBeNull();
+        expect(menu()?.querySelector('[role="separator"]')).toBeNull();
+    });
+});
+
+// Focus after a menu Dismiss / Restore mirrors the detail panel (Phase 3 03-09 / 03-10). Nothing is
+// focused before the menu opens, so the menu's own focus return cannot satisfy these assertions.
+describe('OutlookMeetingContextItems focus', () => {
+    const three = [
+        meeting({ id: 'a', subject: 'A' }),
+        meeting({ id: 'b', subject: 'B' }),
+        meeting({ id: 'c', subject: 'C' }),
+    ];
+
+    function block(id: string): HTMLElement | null {
+        return document.body.querySelector<HTMLElement>(`[data-ghost-id="${id}"]`);
+    }
+
+    it('after Dismiss focuses the next meeting of the day', async () => {
+        const [, middle] = renderLane(['a', 'b', 'c']);
+        renderSyncButton();
+        const { context, dismiss } = fakeContext(three);
+        await openMenu(middle!, context);
+
+        item('outlook-menu-dismiss')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(block('c')));
+        expect(dismiss).toHaveBeenCalledWith('b');
+        expect(block('b')).toBeNull();
+        expect(menu()).toBeNull();
+    });
+
+    it('dismissing the last meeting focuses the previous one', async () => {
+        const [, , last] = renderLane(['a', 'b', 'c']);
+        renderSyncButton();
+        const { context } = fakeContext(three);
+        await openMenu(last!, context);
+
+        item('outlook-menu-dismiss')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(block('b')));
+    });
+
+    it('without any meeting left focuses the Sync button', async () => {
+        const [only] = renderLane(['a']);
+        const sync = renderSyncButton();
+        const { context } = fakeContext([meeting({ id: 'a' })]);
+        await openMenu(only!, context);
+
+        item('outlook-menu-dismiss')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(sync));
+    });
+
+    it('with dismissed meetings shown keeps focus on the same meeting', async () => {
+        const [, middle] = renderLane(['a', 'b', 'c']);
+        renderSyncButton();
+        const { context, list } = fakeContext(three, { includeDismissed: true });
+        await openMenu(middle!, context);
+
+        item('outlook-menu-dismiss')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(middle));
+        expect(list.value.find((m) => m.id === 'b')?.dismissed).toBe(true);
+    });
+
+    it('after Restore keeps focus on the same meeting', async () => {
+        const [, middle] = renderLane(['a', 'b', 'c']);
+        renderSyncButton();
+        const { context, restore } = fakeContext([
+            meeting({ id: 'a' }),
+            meeting({ id: 'b', dismissed: true }),
+            meeting({ id: 'c' }),
+        ]);
+        await openMenu(middle!, context);
+
+        item('outlook-menu-restore')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(middle));
+        expect(restore).toHaveBeenCalledWith('b');
     });
 });
