@@ -8,10 +8,10 @@ const timeTrackerVariants = cva(
         variants: {
             variant: {
                 primary:
-                    'text-white ring-accent-200/10 focus-visible:ring-ring focus-visible:ring-2 ring-4 sm:ring-[6px]',
+                    'ring-accent-200/10 focus-visible:ring-ring focus-visible:ring-2 ring-4 sm:ring-[6px]',
                 secondary:
                     'bg-quaternary text-text-tertiary hover:text-text-primary focus:ring-2 focus:ring-border-tertiary',
-                break: 'text-white ring-amber-200/10 focus-visible:ring-ring focus-visible:ring-2 ring-4 sm:ring-[6px]',
+                break: 'ring-amber-200/10 focus-visible:ring-ring focus-visible:ring-2 ring-4 sm:ring-[6px]',
             },
             size: {
                 small: 'w-6 h-6',
@@ -27,22 +27,22 @@ const timeTrackerVariants = cva(
             {
                 variant: 'primary',
                 active: true,
-                class: 'bg-red-400/80 hover:bg-red-500/80 focus:bg-red-500/80',
+                class: 'bg-red-400/80 hover:bg-red-500/80 focus:bg-red-500/80 text-white',
             },
             {
                 variant: 'primary',
                 active: false,
-                class: 'bg-accent-300/70 hover:bg-accent-400/70 focus:bg-accent-700',
+                class: 'bg-[color:var(--theme-color-accent-solid)] hover:bg-[color:var(--theme-color-accent-solid-hover)] focus:bg-[color:var(--theme-color-accent-solid-hover)] text-[color:var(--color-on-accent)]',
             },
             {
                 variant: 'break',
                 active: true,
-                class: 'bg-amber-500/80 hover:bg-amber-600/80 focus:bg-amber-600/80',
+                class: 'bg-amber-500/80 hover:bg-amber-600/80 focus:bg-amber-600/80 text-[#1C1C1C]',
             },
             {
                 variant: 'break',
                 active: false,
-                class: 'bg-accent-300/70 hover:bg-accent-400/70 focus:bg-accent-700',
+                class: 'bg-[color:var(--theme-color-accent-solid)] hover:bg-[color:var(--theme-color-accent-solid-hover)] focus:bg-[color:var(--theme-color-accent-solid-hover)] text-[color:var(--color-on-accent)]',
             },
         ],
         defaultVariants: {

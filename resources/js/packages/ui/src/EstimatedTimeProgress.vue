@@ -20,7 +20,7 @@ const formattedProgressBarPercentage = computed(() => {
             <div
                 class="h-full"
                 :class="{
-                    'bg-accent-200': !isOverEstimate,
+                    'bg-accent-400 dark:bg-accent-200': !isOverEstimate,
                     'bg-red-500': isOverEstimate,
                 }"
                 :style="{ width: progressBarPercentage + '%' }"></div>

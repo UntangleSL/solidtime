@@ -52,7 +52,7 @@ async function exportData() {
             <div class="pb-6">
                 The download should start automatically. If it does not
                 <a
-                    class="font-semibold text-accent-200 hover:text-accent-300"
+                    class="font-semibold text-accent-500 hover:text-accent-600 dark:text-accent-200 dark:hover:text-accent-300"
                     target="_self"
                     :href="exportResponse?.download_url"
                     >click here</a

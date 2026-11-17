@@ -41,7 +41,7 @@ async function assertTimerIsRunning(page: Page) {
 
 async function assertTimerIsStopped(page: Page) {
     await expect(page.locator(TIMER_BUTTON_SELECTOR).and(page.locator(':visible'))).toHaveClass(
-        /bg-accent-300\/70/,
+        /bg-\[color:var\(--theme-color-accent-solid\)\]/,
         {
             timeout: 10000,
         }

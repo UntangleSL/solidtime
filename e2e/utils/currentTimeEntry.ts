@@ -56,7 +56,7 @@ export async function assertThatTimerIsStopped(page: Page) {
             .getByTestId('dashboard_timer')
             .getByTestId('timer_button')
             .and(page.locator(':visible'))
-    ).toHaveClass(/bg-accent-300\/70/);
+    ).toHaveClass(/bg-\[color:var\(--theme-color-accent-solid\)\]/);
 }
 
 export async function stoppedTimeEntryResponse(
