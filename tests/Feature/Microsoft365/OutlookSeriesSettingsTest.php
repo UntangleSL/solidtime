@@ -8,7 +8,13 @@ use App\Enums\Role;
 use App\Http\Controllers\Api\V1\TimeEntryController;
 use App\Http\Requests\V1\TimeEntry\TimeEntryStoreRequest;
 use App\Microsoft365\Graph\GraphAccessGuard;
+use App\Microsoft365\Graph\GraphCalendarClient;
+use App\Microsoft365\Graph\MicrosoftTokenService;
+use App\Microsoft365\Graph\OutlookMeetingEligibility;
+use App\Microsoft365\Graph\OutlookMeetingSyncService;
 use App\Microsoft365\Http\Controllers\MeetingConversionController;
+use App\Microsoft365\Http\Controllers\MicrosoftAccountController;
+use App\Microsoft365\Http\Controllers\MicrosoftAuthController;
 use App\Microsoft365\Http\Controllers\OutlookMeetingController;
 use App\Microsoft365\Http\Controllers\OutlookSeriesController;
 use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
@@ -32,6 +38,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\TimeEntry;
 use App\Models\User;
+use App\Service\DeletionService;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -70,6 +77,12 @@ use Tests\TestCaseWithDatabase;
 #[UsesClass(Microsoft365ServiceProvider::class)]
 #[UsesClass(TimeEntryController::class)]
 #[UsesClass(TimeEntryStoreRequest::class)]
+#[UsesClass(MicrosoftAccountController::class)]
+#[UsesClass(MicrosoftAuthController::class)]
+#[UsesClass(MicrosoftTokenService::class)]
+#[UsesClass(GraphCalendarClient::class)]
+#[UsesClass(OutlookMeetingEligibility::class)]
+#[UsesClass(OutlookMeetingSyncService::class)]
 class OutlookSeriesSettingsTest extends TestCaseWithDatabase
 {
     use InteractsWithGraphFixtures;
@@ -498,5 +511,79 @@ class OutlookSeriesSettingsTest extends TestCaseWithDatabase
             );
             $this->assertCount(1, $throttles, $name);
         }
+    }
+
+    public function test_series_settings_survive_disconnect(): void
+    {
+        // Arrange: the series is ignored
+        $data = $this->employee();
+        $week = $this->week($data->user);
+        $this->ignore($week['b']->id)->assertNoContent();
+
+        // Act: Disconnect Microsoft (purges the cached meetings), reconnect, the meetings come back
+        $this->delete(route('microsoft.account.destroy', [], false))->assertRedirect(route('profile.show', [], false));
+        $meetingsAfterDisconnect = OutlookMeeting::query()->where('user_id', '=', $data->user->getKey())->count();
+        $settingAfterDisconnect = $this->settingOf($data->user);
+        $this->fakeMicrosoftGateway()->willReturn($this->microsoftIdentity());
+        $this->get(route('microsoft.redirect', ['intent' => 'connect'], false))->assertRedirect();
+        $this->get(route('microsoft.callback', ['code' => 'fake-code', 'state' => 'fake-state'], false))->assertRedirect();
+        $recreated = $this->week($data->user);
+        $read = $this->read();
+
+        // Assert: the setting outlived Disconnect and still hides the re-created series (D-17)
+        $this->assertSame(0, $meetingsAfterDisconnect);
+        $this->assertNotNull($settingAfterDisconnect);
+        $this->assertNotNull($settingAfterDisconnect->ignored_at);
+        $read->assertOk();
+        $this->assertSame([$recreated['d']->id], $this->ids($read));
+    }
+
+    public function test_settings_are_deleted_with_the_user(): void
+    {
+        // Arrange: the user ignored and forgot a series; another user has a setting of the same series id
+        $data = $this->employee();
+        $week = $this->week($data->user);
+        $this->ignore($week['a']->id)->assertNoContent();
+        $this->forget($week['a']->id)->assertNoContent();
+        $other = User::factory()->create();
+        OutlookSeriesSetting::query()->create([
+            'user_id' => $other->getKey(),
+            'series_master_id' => self::SERIES,
+            'ignored_at' => '2026-10-19 08:00:00',
+        ]);
+
+        // Act
+        app(DeletionService::class)->deleteUser($data->user);
+
+        // Assert: the database cascade removed the user's rows only
+        $this->assertSame(0, OutlookSeriesSetting::query()->where('user_id', '=', $data->user->getKey())->count());
+        $this->assertSame(1, OutlookSeriesSetting::query()->where('user_id', '=', $other->getKey())->count());
+    }
+
+    public function test_converting_an_ignored_occurrence_keeps_the_series_ignored(): void
+    {
+        // Arrange: the series is ignored
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $week = $this->week($data->user);
+        $this->ignore($week['a']->id)->assertNoContent();
+        $ignoredAt = $this->settingOf($data->user)?->ignored_at;
+        $this->assertNotNull($ignoredAt);
+
+        // Act: one occurrence is converted explicitly a minute later (D-18)
+        $this->travel(1)->minutes();
+        $convert = $this->convert($data->organization, [
+            'meeting_ids' => [$week['b']->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+        $read = $this->read();
+
+        // Assert: created, the series is still ignored and its other occurrences stay hidden
+        $convert->assertOk();
+        $convert->assertJsonPath('results.0.status', 'created');
+        $this->assertTrue($ignoredAt->equalTo($this->settingOf($data->user)?->ignored_at), 'ignored_at is unchanged');
+        $read->assertOk();
+        $this->assertSame([$week['d']->id], $this->ids($read));
     }
 }

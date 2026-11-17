@@ -17,6 +17,7 @@ use App\Microsoft365\Http\Controllers\MeetingConversionController;
 use App\Microsoft365\Http\Controllers\MicrosoftAccountController;
 use App\Microsoft365\Http\Controllers\MicrosoftAuthController;
 use App\Microsoft365\Http\Controllers\OutlookMeetingController;
+use App\Microsoft365\Http\Controllers\OutlookSeriesController;
 use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
 use App\Microsoft365\Http\Middleware\ShareMicrosoftInertiaData;
 use App\Microsoft365\Http\Requests\MeetingConversionRequest;
@@ -27,6 +28,7 @@ use App\Microsoft365\MicrosoftConfig;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookMeetingLink;
+use App\Microsoft365\Models\OutlookSeriesSetting;
 use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Microsoft365\TimeEntries\CoreTimeEntryCreator;
 use App\Models\Member;
@@ -81,6 +83,8 @@ use TiMacDonald\Log\LogEntry;
 #[UsesClass(MeetingConversionRequest::class)]
 #[UsesClass(CoreTimeEntryCreator::class)]
 #[UsesClass(OutlookMeetingLink::class)]
+#[UsesClass(OutlookSeriesController::class)]
+#[UsesClass(OutlookSeriesSetting::class)]
 class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
 {
     use InteractsWithGraphFixtures;
@@ -676,6 +680,43 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
         $this->assertSame($before, $after);
     }
 
+    public function test_series_actions_never_touch_time_entries(): void
+    {
+        // Arrange: entries of the user and of the owner, a converted occurrence of the series (D-12)
+        $this->configureMicrosoft365();
+        $data = $this->createUserWithRole(Role::Employee);
+        $data->user->save();
+        $this->connectedAccount($data->user);
+        $project = Project::factory()->forOrganization($data->organization)->isPublic()->create();
+        TimeEntry::factory()->forOrganization($data->organization)->forMember($data->member)->count(2)->create();
+        TimeEntry::factory()->forOrganization($data->organization)->forMember($data->ownerMember)->count(2)->create();
+        $series = ['event_type' => 'occurrence', 'series_master_id' => 'series-privacy'];
+        $converted = $this->meeting($data->user, 'series-converted', $series);
+        $occurrence = $this->meeting($data->user, 'series-open', $series + ['starts_at' => '2026-10-21 09:00:00', 'ends_at' => '2026-10-21 10:00:00']);
+        $this->actingAs($data->user);
+        $this->postJson(route('microsoft.meetings.convert', ['organization' => $data->organization->getKey()], false), [
+            'meeting_ids' => [$converted->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ])->assertOk()->assertJsonPath('results.0.status', 'created');
+        $before = $this->timeEntrySnapshot();
+        $links = OutlookMeetingLink::query()->count();
+
+        // Act
+        $this->postJson(route('microsoft.meetings.series.ignore', ['meeting' => $occurrence->id], false))->assertNoContent();
+        $this->getJson(route('microsoft.meetings.index', ['start' => '2026-10-19T00:00:00Z', 'end' => '2026-10-26T00:00:00Z', 'include_dismissed' => '1'], false))->assertOk();
+        $this->deleteJson(route('microsoft.meetings.series.unignore', ['meeting' => $occurrence->id], false))->assertNoContent();
+        $this->deleteJson(route('microsoft.meetings.series.forget', ['meeting' => $occurrence->id], false))->assertNoContent();
+        $read = $this->getJson(route('microsoft.meetings.index', ['start' => '2026-10-19T00:00:00Z', 'end' => '2026-10-26T00:00:00Z'], false));
+
+        // Assert: every entry identical, no link created or removed, only the settings row was written
+        $read->assertOk();
+        $this->assertSame($before, $this->timeEntrySnapshot());
+        $this->assertSame(5, TimeEntry::query()->count());
+        $this->assertSame($links, OutlookMeetingLink::query()->count());
+        $this->assertSame(1, OutlookSeriesSetting::query()->count());
+    }
+
     public function test_models_are_not_audited_and_not_in_filament(): void
     {
         // Arrange
@@ -685,10 +726,11 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
         $this->assertNotContains(Auditable::class, class_implements(OutlookMeeting::class) ?: []);
         $this->assertNotContains(Auditable::class, class_implements(OutlookSyncWindow::class) ?: []);
         $this->assertNotContains(Auditable::class, class_implements(OutlookMeetingLink::class) ?: []);
+        $this->assertNotContains(Auditable::class, class_implements(OutlookSeriesSetting::class) ?: []);
         $this->assertNotEmpty($filamentFiles);
         foreach ($filamentFiles as $file) {
             $contents = $file->getContents();
-            foreach (['OutlookMeeting', 'OutlookMeetingLink', 'OutlookSyncWindow', 'outlook_meetings', 'outlook_sync_windows', 'outlook_meeting_links'] as $needle) {
+            foreach (['OutlookMeeting', 'OutlookMeetingLink', 'OutlookSyncWindow', 'OutlookSeriesSetting', 'outlook_meetings', 'outlook_sync_windows', 'outlook_meeting_links', 'outlook_series_settings'] as $needle) {
                 $this->assertStringNotContainsString($needle, $contents, $file->getPathname());
             }
         }
@@ -703,9 +745,10 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
         );
 
         // Assert
-        // index, sync, dismiss, restore and (Phase 4) convert: the convert route names the organization the
-        // entry goes to, never a user or a member
-        $this->assertCount(5, $routes);
+        // index, sync, dismiss, restore, (Phase 4) convert and (Phase 5) series.ignore, series.unignore and
+        // series.forget: the convert route names the organization the entry goes to, the others name one of
+        // the user's own meetings; never a user or a member
+        $this->assertCount(8, $routes);
         foreach ($routes as $route) {
             $this->assertEmpty(array_diff($route->parameterNames(), ['meeting', 'organization']), (string) $route->getName());
             $this->assertStringNotContainsString('user', $route->uri());
