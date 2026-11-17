@@ -208,7 +208,7 @@ final class OutlookMeetingSyncService
 
     /**
      * A cached meeting that came back cancelled, private or otherwise ineligible is hidden and scrubbed:
-     * it never keeps a title, organizer or link that Outlook no longer allows us to show (T-03-13).
+     * it never keeps a title, organizer, attendee or link that Outlook no longer allows us to show (T-03-13, D-09).
      *
      * @param  list<string>  $graphIds
      */
@@ -224,7 +224,15 @@ final class OutlookMeetingSyncService
             OutlookMeeting::query()
                 ->where('user_id', '=', $user->getKey())
                 ->whereIn('graph_id', $chunk)
-                ->update(['subject' => null, 'organizer_name' => null, 'web_link' => null]);
+                ->update([
+                    'subject' => null,
+                    'organizer_name' => null,
+                    'web_link' => null,
+                    // Attendee data (D-09) goes with the rest of what Outlook no longer lets us show
+                    'organizer_address' => null,
+                    'attendees' => null,
+                    'attendee_count' => null,
+                ]);
         }
     }
 
