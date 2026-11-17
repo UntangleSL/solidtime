@@ -6,57 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
     <title>{{ config('app.name') }} - Authorization</title>
+    @include('branding.early-theme')
     @vite('resources/css/app.css')
-    <script>
-        // Theme evaluation script - similar to theme.ts
-        (function() {
-            // Get theme setting from localStorage, default to 'system'
-            const themeSetting = localStorage.getItem('theme') || 'system';
-
-            // Get user's preferred color scheme
-            const preferredColorScheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-
-            // Determine current theme
-            let currentTheme;
-            if (themeSetting === 'system') {
-                // If user has no preference, default to dark (matching theme.ts logic)
-                currentTheme = preferredColorScheme === 'no-preference' ? 'dark' : preferredColorScheme;
-            } else {
-                currentTheme = themeSetting;
-            }
-
-            // Apply theme class to html element
-            document.documentElement.classList.remove('light', 'dark');
-            document.documentElement.classList.add(currentTheme);
-
-            // Listen for changes in color scheme preference
-            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
-                if (localStorage.getItem('theme') === 'system') {
-                    const newTheme = e.matches ? 'dark' : 'light';
-                    document.documentElement.classList.remove('light', 'dark');
-                    document.documentElement.classList.add(newTheme);
-                }
-            });
-
-            // Listen for localStorage changes (in case theme is changed in another tab)
-            window.addEventListener('storage', function(e) {
-                if (e.key === 'theme') {
-                    const newThemeSetting = e.newValue || 'system';
-                    let newTheme;
-
-                    if (newThemeSetting === 'system') {
-                        const preferredColorScheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-                        newTheme = preferredColorScheme === 'no-preference' ? 'dark' : preferredColorScheme;
-                    } else {
-                        newTheme = newThemeSetting;
-                    }
-
-                    document.documentElement.classList.remove('light', 'dark');
-                    document.documentElement.classList.add(newTheme);
-                }
-            });
-        })();
-    </script>
 </head>
 <body class="passport-authorize">
 <div
