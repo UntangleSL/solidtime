@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, ref, type ComputedRef } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch, type ComputedRef } from 'vue';
 import { CalendarDays, EyeOff, User, Video } from '@lucide/vue';
 import { HoverCardRoot, HoverCardTrigger } from 'reka-ui';
 import type { Organization } from '@/packages/api/src';
@@ -15,7 +15,7 @@ import {
     noteHoverCardOpened,
 } from './hoverCardDelay';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
-import { useResizeObserver } from '@vueuse/core';
+import { useEventListener, useResizeObserver } from '@vueuse/core';
 import {
     GHOST_MAX_COLUMNS_DAY,
     GHOST_MAX_COLUMNS_WEEK,
@@ -43,6 +43,10 @@ const props = defineProps<{
     minutesToPixels: (minutes: number) => number;
     settings: GhostVisibleSettings;
     overlayLaneWidth?: string | null;
+    // From the core day-overlay slot (03.1-04): the calendar context menu is open, or a drag, resize
+    // or slot selection is in progress. Undefined (older core) means neither.
+    contextMenuOpen?: boolean;
+    interacting?: boolean;
 }>();
 
 const organization = inject<ComputedRef<Organization | undefined> | undefined>(
@@ -60,6 +64,8 @@ const openId = ref<string | null>(null);
 
 function setOpen(id: string, value: boolean): void {
     if (value) {
+        // No panel may open while the context menu is open (D-06 layering rule)
+        if (props.contextMenuOpen) return;
         // The panel replaces the hover card of the same meeting
         closeHover();
         openId.value = id;
@@ -99,14 +105,62 @@ function onHoverOpenChange(id: string, value: boolean): void {
     // Already shown (e.g. the pointer moved from the block into the card itself)
     if (hoverId.value === id) return;
     if (pointerOverId !== id || openId.value === id) return;
+    if (props.contextMenuOpen || props.interacting) return;
     hoverAnchor.value = ghostElement(id);
     hoverId.value = id;
     noteHoverCardOpened();
 }
 
+// UI-SPEC 3.1 section 2 "Suppress while": this meeting's panel, the context menu, a drag, resize or
+// slot selection.
 function hoverCardOpen(id: string): boolean {
-    return hoverId.value === id && openId.value !== id;
+    return (
+        hoverId.value === id && openId.value !== id && !props.contextMenuOpen && !props.interacting
+    );
 }
+
+// Layering rule (D-06, UX-04): the context menu never opens under a card or panel. A right click
+// on this layer closes both in the capture phase, before the core menu mounts (reka opens it after
+// a nextTick). The watcher is the safety net for right clicks elsewhere (entries, empty slots, other
+// days) and for a right click on the block that owns the open panel.
+function closeAllForContextMenu(): void {
+    openId.value = null;
+    closeHover();
+}
+
+watch(
+    () => props.contextMenuOpen,
+    (open) => {
+        if (open) closeAllForContextMenu();
+    }
+);
+
+watch(
+    () => props.interacting,
+    (active) => {
+        if (active) closeHover();
+    }
+);
+
+// A zoom step changes the pixel height of an hour: the block moves under the card
+watch(
+    () => props.minutesToPixels(60),
+    () => closeHover()
+);
+
+// A wheel inside the calendar (scroll or zoom gesture) closes the card; reka already dismisses it on
+// Escape, a pointerdown elsewhere and a scroll of an ancestor of the block. Day and week changes
+// unmount the layer.
+useEventListener(
+    document,
+    'wheel',
+    (event: WheelEvent) => {
+        if (hoverId.value === null) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest('.fc')) closeHover();
+    },
+    { capture: true, passive: true }
+);
 
 onBeforeUnmount(closeHover);
 
@@ -268,7 +322,8 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
         :aria-label="layerLabel"
         data-testid="outlook-lane"
         class="m365-lane absolute inset-y-0 right-0.5 pointer-events-none"
-        :style="{ width: laneWidth }">
+        :style="{ width: laneWidth }"
+        @contextmenu.capture="closeAllForContextMenu">
         <HoverCardRoot
             v-for="box in boxes"
             :key="box.meeting.id"

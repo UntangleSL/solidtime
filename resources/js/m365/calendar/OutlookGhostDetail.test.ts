@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import OutlookGhostDetail from './OutlookGhostDetail.vue';
+import OutlookMeetingSummary from './OutlookMeetingSummary.vue';
 import { safeHttpsUrl } from './safeUrl';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 
@@ -240,6 +241,28 @@ describe('OutlookGhostDetail', () => {
         expect(panel().querySelector('b')).toBeNull();
         expect(panel().textContent).toContain('<img src=x onerror=alert(1)>');
         expect(panel().textContent).toContain('Organized by <b>Eve</b>');
+    });
+
+    it('renders its rows through OutlookMeetingSummary', async () => {
+        const w = mountOpen(meeting({ is_online_meeting: true }));
+        await nextTick();
+
+        const summary = w.findComponent(OutlookMeetingSummary);
+        expect(summary.exists()).toBe(true);
+        expect(summary.props('testidPrefix')).toBe('outlook-detail');
+        // The Phase 3 ids stay the panel's contract, the hover-card ids never appear here
+        for (const id of [
+            'outlook-detail-time',
+            'outlook-detail-organizer',
+            'outlook-detail-online',
+        ]) {
+            expect(panel().querySelector(`[data-testid="${id}"]`)).not.toBeNull();
+        }
+        expect(panel().querySelector('[data-testid^="outlook-hover-"]')).toBeNull();
+        // The dialog stays labelled by the summary's subject heading
+        const subject = panel().querySelector('[data-testid="outlook-detail-subject"]');
+        expect(subject?.id).toBeTruthy();
+        expect(panel().getAttribute('aria-labelledby')).toBe(subject?.id);
     });
 
     describe('extension slots', () => {
