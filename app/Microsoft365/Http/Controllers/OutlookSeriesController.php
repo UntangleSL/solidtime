@@ -42,6 +42,30 @@ class OutlookSeriesController extends Controller
     }
 
     /**
+     * "Stop ignoring": the series is listed again. Also a 204 when the series was never ignored.
+     */
+    public function unignore(Request $request, string $meeting): Response
+    {
+        $row = $this->ownSeries($request, $meeting);
+        $this->setting($row)->whereNotNull('ignored_at')->update(['ignored_at' => null]);
+
+        return response()->noContent();
+    }
+
+    /**
+     * "Forget this series": the conversions made up to now no longer pre-assign it; the next
+     * conversion of the series does again (D-11). Every call moves the moment forward.
+     */
+    public function forget(Request $request, string $meeting): Response
+    {
+        $row = $this->ownSeries($request, $meeting);
+        $this->ensureSetting($row);
+        $this->setting($row)->update(['forgotten_at' => now()]);
+
+        return response()->noContent();
+    }
+
+    /**
      * The session user's own, non-gone occurrence of a recurring series with this id. Impersonation,
      * another user's id, an unknown id, a gone meeting and a single meeting are all the same 404: no
      * oracle for what exists (D-14).

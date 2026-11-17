@@ -100,19 +100,29 @@ class OutlookMeetingController extends Controller
             ->where('window_end', '=', $end->format('Y-m-d H:i:s'))
             ->first();
 
+        // Ignored series are only part of the read with include_dismissed (above): their occurrences come
+        // back marked series_ignored, faded like dismissed ones (D-10). One query, whatever the size.
+        $ignoredSeries = $request->includeDismissed() ? $this->ignoredSeries($user) : [];
+
         // Series pre-assignment, resolved once for every visible series of the read (T-05-05). Only the
         // current organization counts, the same one the convert URL targets (RESEARCH Pitfall 5); without
-        // one there is nothing to pre-assign. Dismissed occurrences never carry an assignment (D-03).
+        // one there is nothing to pre-assign. Dismissed occurrences and occurrences of an ignored series
+        // never carry an assignment (D-03, D-10).
         $organization = $this->currentOrganization($user);
         $assignments = $organization === null ? [] : $resolver->forMeetings(
             $user,
             $organization,
-            $meetings->filter(fn (OutlookMeeting $meeting): bool => $meeting->series_master_id !== null && $meeting->dismissed_at === null),
+            $meetings->filter(fn (OutlookMeeting $meeting): bool => $meeting->series_master_id !== null
+                && $meeting->dismissed_at === null
+                && ! isset($ignoredSeries[$meeting->series_master_id])),
         );
 
         $resources = $meetings->map(fn (OutlookMeeting $meeting): OutlookMeetingResource => new OutlookMeetingResource(
             $meeting,
-            new MeetingHints(assignment: $assignments[$meeting->id] ?? null),
+            new MeetingHints(
+                assignment: $assignments[$meeting->id] ?? null,
+                seriesIgnored: $meeting->series_master_id !== null && isset($ignoredSeries[$meeting->series_master_id]),
+            ),
         ));
 
         return OutlookMeetingResource::collection($resources)->additional([
@@ -123,6 +133,24 @@ class OutlookMeetingController extends Controller
             ],
             'linked_time_entry_ids' => $this->linkedTimeEntryIds($user, $start, $end),
         ]);
+    }
+
+    /**
+     * The series the session user ignores, as a set keyed by Graph series id.
+     *
+     * @return array<string, true>
+     */
+    private function ignoredSeries(User $user): array
+    {
+        $ignored = [];
+        foreach (DB::table('outlook_series_settings')
+            ->where('user_id', '=', $user->getKey())
+            ->whereNotNull('ignored_at')
+            ->pluck('series_master_id') as $series) {
+            $ignored[(string) $series] = true;
+        }
+
+        return $ignored;
     }
 
     /**

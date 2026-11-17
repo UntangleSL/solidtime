@@ -30,10 +30,13 @@ use App\Microsoft365\TimeEntries\CoreTimeEntryCreator;
 use App\Models\Member;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\TimeEntry;
 use App\Models\User;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use STS\FilamentImpersonate\ImpersonateManager;
 use Tests\Feature\Microsoft365\Support\InteractsWithGraphFixtures;
 use Tests\Feature\Microsoft365\Support\InteractsWithMicrosoft365;
 use Tests\TestCaseWithDatabase;
@@ -166,6 +169,77 @@ class OutlookSeriesSettingsTest extends TestCaseWithDatabase
         return $this->postJson(route('microsoft.meetings.series.ignore', ['meeting' => $id], false));
     }
 
+    private function unignore(string $id): TestResponse
+    {
+        return $this->deleteJson(route('microsoft.meetings.series.unignore', ['meeting' => $id], false));
+    }
+
+    private function forget(string $id): TestResponse
+    {
+        return $this->deleteJson(route('microsoft.meetings.series.forget', ['meeting' => $id], false));
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     */
+    private function convert(Organization $organization, array $body): TestResponse
+    {
+        return $this->postJson(route('microsoft.meetings.convert', ['organization' => $organization->getKey()], false), $body);
+    }
+
+    /**
+     * Converts one meeting to a project (no task, no tags, not billable) and returns the entry id.
+     */
+    private function convertTo(Organization $organization, OutlookMeeting $meeting, Project $project): string
+    {
+        $response = $this->convert($organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        $entryId = $response->json('results.0.time_entry_id');
+        $this->assertIsString($entryId);
+
+        return $entryId;
+    }
+
+    private function startImpersonation(): void
+    {
+        // The session key of stechstudio/filament-impersonate: the id of the admin who impersonates
+        session()->put(ImpersonateManager::SESSION_KEY, 1);
+    }
+
+    /**
+     * The serialized meeting with this id in a read.
+     *
+     * @return array<string, mixed>
+     */
+    private function item(TestResponse $response, OutlookMeeting $meeting): array
+    {
+        $data = $response->json('data');
+        $this->assertIsArray($data);
+        foreach ($data as $item) {
+            if (is_array($item) && ($item['id'] ?? null) === $meeting->id) {
+                return $item;
+            }
+        }
+        $this->fail('Meeting '.$meeting->graph_id.' is not in the read');
+    }
+
+    private function assignedProjectOf(TestResponse $response, OutlookMeeting $meeting): ?string
+    {
+        $assignment = $this->item($response, $meeting)['assignment'];
+        if ($assignment === null) {
+            return null;
+        }
+        $this->assertIsArray($assignment);
+        $this->assertIsString($assignment['project_id']);
+
+        return $assignment['project_id'];
+    }
+
     /**
      * @return list<string>
      */
@@ -204,5 +278,225 @@ class OutlookSeriesSettingsTest extends TestCaseWithDatabase
         $this->assertNotNull($setting);
         $this->assertNotNull($setting->ignored_at);
         $this->assertNull($setting->forgotten_at);
+    }
+
+    public function test_stop_ignoring_brings_the_series_back(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $week = $this->week($data->user);
+        $this->ignore($week['b']->id)->assertNoContent();
+        $this->assertSame([$week['d']->id], $this->ids($this->read()));
+
+        // Act
+        $response = $this->unignore($week['b']->id);
+        $again = $this->unignore($week['b']->id);
+        $read = $this->read();
+
+        // Assert
+        $response->assertNoContent();
+        $again->assertNoContent();
+        $read->assertOk();
+        $this->assertEqualsCanonicalizing(
+            [$week['a']->id, $week['b']->id, $week['c']->id, $week['d']->id],
+            $this->ids($read),
+        );
+        foreach (['a', 'b', 'c', 'd'] as $key) {
+            $this->assertFalse($this->item($read, $week[$key])['series_ignored'], $key);
+        }
+        $setting = $this->settingOf($data->user);
+        $this->assertNotNull($setting);
+        $this->assertNull($setting->ignored_at);
+    }
+
+    public function test_stop_ignoring_a_series_that_was_never_ignored_is_a_no_op(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $week = $this->week($data->user);
+
+        // Act
+        $response = $this->unignore($week['a']->id);
+
+        // Assert
+        $response->assertNoContent();
+        $this->assertSame(0, OutlookSeriesSetting::query()->count());
+        $this->assertCount(4, $this->ids($this->read()));
+    }
+
+    public function test_ignored_occurrences_come_back_faded_with_include_dismissed(): void
+    {
+        // Arrange: the series was converted before (occurrence E), A is dismissed on its own
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $week = $this->week($data->user);
+        $e = $this->occurrence($data->user, 'occ-e', '2026-10-23');
+        $this->convertTo($data->organization, $e, $project);
+        $this->assertSame($project->getKey(), $this->assignedProjectOf($this->read(), $week['b']));
+        $this->postJson(route('microsoft.meetings.dismiss', ['meeting' => $week['a']->id], false))->assertOk();
+
+        // Act
+        $this->ignore($week['b']->id)->assertNoContent();
+        $hidden = $this->read();
+        $included = $this->read(['include_dismissed' => '1']);
+
+        // Assert
+        $this->assertSame([$week['d']->id], $this->ids($hidden));
+        $included->assertOk();
+        $this->assertEqualsCanonicalizing(
+            [$week['a']->id, $week['b']->id, $week['c']->id, $week['d']->id],
+            $this->ids($included),
+        );
+        foreach (['a', 'b', 'c'] as $key) {
+            $item = $this->item($included, $week[$key]);
+            $this->assertTrue($item['series_ignored'], $key);
+            $this->assertNull($item['assignment'], $key);
+        }
+        $this->assertTrue($this->item($included, $week['a'])['dismissed']);
+        $this->assertFalse($this->item($included, $week['b'])['dismissed']);
+        $this->assertFalse($this->item($included, $week['c'])['dismissed']);
+        $this->assertFalse($this->item($included, $week['d'])['series_ignored']);
+        $this->assertFalse($this->item($included, $week['d'])['dismissed']);
+    }
+
+    public function test_ignore_is_idempotent(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $week = $this->week($data->user);
+        $this->ignore($week['a']->id)->assertNoContent();
+        $first = $this->settingOf($data->user)?->ignored_at;
+        $this->assertNotNull($first);
+
+        // Act
+        $this->travel(5)->minutes();
+        $second = $this->ignore($week['c']->id);
+
+        // Assert
+        $second->assertNoContent();
+        $this->assertSame(1, OutlookSeriesSetting::query()->count());
+        $this->assertTrue($first->equalTo($this->settingOf($data->user)?->ignored_at), 'the first ignored_at is kept');
+        $this->assertSame([$week['d']->id], $this->ids($this->read()));
+    }
+
+    public function test_forget_drops_the_pre_assignment_until_the_next_conversion(): void
+    {
+        // Arrange: A converted to the first project, so B and C come pre-assigned
+        $data = $this->employee();
+        $first = $this->publicProject($data->organization);
+        $second = $this->publicProject($data->organization);
+        $week = $this->week($data->user);
+        $entryA = $this->convertTo($data->organization, $week['a'], $first);
+        $before = $this->read();
+        $this->assertSame($first->getKey(), $this->assignedProjectOf($before, $week['b']));
+        $this->assertSame($first->getKey(), $this->assignedProjectOf($before, $week['c']));
+
+        // Act: forget through B, then a minute later convert C to the second project
+        $forget = $this->forget($week['b']->id);
+        $forgotten = $this->read();
+        $this->travel(1)->minutes();
+        $this->convertTo($data->organization, $week['c'], $second);
+        $after = $this->read();
+
+        // Assert: the forget hides the history up to then; the next conversion pre-assigns again (D-11, D-05)
+        $forget->assertNoContent();
+        $this->assertNull($this->assignedProjectOf($forgotten, $week['b']));
+        $this->assertNull($this->assignedProjectOf($forgotten, $week['c']));
+        $this->assertFalse($this->item($forgotten, $week['b'])['series_ignored']);
+        $this->assertSame($second->getKey(), $this->assignedProjectOf($after, $week['b']));
+        $setting = $this->settingOf($data->user);
+        $this->assertNotNull($setting);
+        $this->assertNotNull($setting->forgotten_at);
+        $this->assertNull($setting->ignored_at);
+        // The entry behind the forgotten conversion is untouched (D-12)
+        $this->assertSame($first->getKey(), TimeEntry::query()->findOrFail($entryA)->project_id);
+    }
+
+    public function test_every_forget_moves_the_moment_forward(): void
+    {
+        // Arrange: forgotten once, then converted again a minute later (pre-assigned again)
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $week = $this->week($data->user);
+        $this->forget($week['b']->id)->assertNoContent();
+        $firstForget = $this->settingOf($data->user)?->forgotten_at;
+        $this->assertNotNull($firstForget);
+        $this->travel(1)->minutes();
+        $this->convertTo($data->organization, $week['a'], $project);
+        $this->assertSame($project->getKey(), $this->assignedProjectOf($this->read(), $week['b']));
+
+        // Act
+        $this->travel(1)->minutes();
+        $again = $this->forget($week['c']->id);
+
+        // Assert
+        $again->assertNoContent();
+        $secondForget = $this->settingOf($data->user)?->forgotten_at;
+        $this->assertNotNull($secondForget);
+        $this->assertTrue($secondForget->greaterThan($firstForget));
+        $this->assertSame(1, OutlookSeriesSetting::query()->count());
+        $this->assertNull($this->assignedProjectOf($this->read(), $week['b']));
+    }
+
+    public function test_series_routes_answer_404_without_an_oracle(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $own = $this->occurrence($data->user, 'own-occ', '2026-10-20');
+        $gone = $this->occurrence($data->user, 'gone-occ', '2026-10-21', 'series-gone', ['gone_at' => '2026-10-19 08:00:00']);
+        $single = $this->meeting($data->user, 'single', ['starts_at' => '2026-10-22 11:00:00', 'ends_at' => '2026-10-22 12:00:00']);
+        $other = User::factory()->create();
+        $this->connectedAccount($other, objectId: '00000000-0000-4000-8000-0000000006c2');
+        $foreign = $this->occurrence($other, 'foreign-occ', '2026-10-20');
+        $calls = [
+            'ignore' => fn (string $id): TestResponse => $this->ignore($id),
+            'unignore' => fn (string $id): TestResponse => $this->unignore($id),
+            'forget' => fn (string $id): TestResponse => $this->forget($id),
+        ];
+
+        // Act + Assert: the same 404 for every id that is not the user's own live occurrence
+        foreach ($calls as $name => $call) {
+            $call($foreign->id)->assertNotFound();
+            $call('7b1b3a52-0d6f-4a53-9d0a-5c2f6a1e8f10')->assertNotFound();
+            $call($gone->id)->assertNotFound();
+            $call($single->id)->assertNotFound();
+            $call('not-a-uuid')->assertNotFound();
+            $this->assertSame(0, OutlookSeriesSetting::query()->count(), $name);
+        }
+        // Impersonating the user: even their own occurrence is a 404 (D-14)
+        $this->startImpersonation();
+        foreach ($calls as $name => $call) {
+            $call($own->id)->assertNotFound();
+            $this->assertSame(0, OutlookSeriesSetting::query()->count(), $name.' while impersonating');
+        }
+    }
+
+    public function test_series_routes_are_web_session_routes(): void
+    {
+        // Arrange
+        $methods = [
+            'microsoft.meetings.series.ignore' => 'POST',
+            'microsoft.meetings.series.unignore' => 'DELETE',
+            'microsoft.meetings.series.forget' => 'DELETE',
+        ];
+
+        // Assert
+        foreach ($methods as $name => $method) {
+            $route = Route::getRoutes()->getByName($name);
+            $this->assertNotNull($route, $name);
+            $this->assertStringStartsWith('m365/meetings/{meeting}/series', $route->uri());
+            $this->assertStringStartsNotWith('api/', $route->uri());
+            $this->assertSame(['meeting'], $route->parameterNames());
+            $this->assertContains($method, $route->methods(), $name);
+            $middleware = $route->gatherMiddleware();
+            foreach (['web', 'auth:web', 'auth.session', 'verified'] as $expected) {
+                $this->assertContains($expected, $middleware, $name);
+            }
+            $throttles = array_filter(
+                $middleware,
+                fn (mixed $entry): bool => is_string($entry) && str_starts_with($entry, 'throttle:') && str_contains($entry, 'm365-series'),
+            );
+            $this->assertCount(1, $throttles, $name);
+        }
     }
 }

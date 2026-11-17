@@ -49,6 +49,14 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
             ->whereUuid('meeting')
             ->middleware('throttle:60,1,m365-series:')
             ->name('microsoft.meetings.series.ignore');
+        Route::delete('/meetings/{meeting}/series/ignore', [OutlookSeriesController::class, 'unignore'])
+            ->whereUuid('meeting')
+            ->middleware('throttle:60,1,m365-series:')
+            ->name('microsoft.meetings.series.unignore');
+        Route::delete('/meetings/{meeting}/series/assignment', [OutlookSeriesController::class, 'forget'])
+            ->whereUuid('meeting')
+            ->middleware('throttle:60,1,m365-series:')
+            ->name('microsoft.meetings.series.forget');
         // Turns the session user's own meetings into time entries in this organization (Phase 4). The
         // parameter must be named `organization`: core's blocked-organization middleware and
         // TimeEntryStoreRequest read it through route model binding. Web group, so openapi.json stays
