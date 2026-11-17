@@ -11,6 +11,7 @@ import OutlookGhostLayer from './OutlookGhostLayer.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
 import { ghostLaneWidth } from './ghostLayout';
 import { resetHoverCardDelay } from './hoverCardDelay';
+import { useOutlookSelection, type OutlookSelection } from './useOutlookSelection';
 import { useCalendarEvents } from '@/packages/ui/src/FullCalendar/useCalendarEvents';
 import type { DayEvent } from '@/packages/ui/src/FullCalendar/calendarTypes';
 import type { TimeEntry } from '@/packages/api/src';
@@ -897,6 +898,14 @@ function mountInteractive(initial: OutlookMeeting[], canAct = true, includeDismi
     return { wrapper, dismiss, restore };
 }
 
+// Vue's DOM listeners ignore an event stamped no later than the moment they were attached. The
+// lane's click.capture listener stamps every click first, so under fake timers (frozen Date) a click
+// right after mounting (or right after a re-render attached a listener) would never reach the
+// block's own listeners. Moving the fake clock forward restores the ordering of a real browser.
+function passMountTime(): void {
+    vi.setSystemTime(Date.now() + 1);
+}
+
 function ghostElements(): HTMLElement[] {
     return Array.from(document.body.querySelectorAll<HTMLElement>('[data-calendar-overlay]'));
 }
@@ -1188,6 +1197,7 @@ describe('OutlookGhostLayer close and suppress rules', () => {
                 },
             },
         });
+        passMountTime();
         return wrapper;
     }
 
@@ -1443,6 +1453,7 @@ describe('OutlookGhostLayer conversion form', () => {
             seq += 1;
             formRequest.value = { id, seq };
         };
+        passMountTime();
         return { list, request };
     }
 
@@ -1600,5 +1611,343 @@ describe('OutlookGhostLayer conversion form', () => {
 
         expect(panel()).toBeNull();
         expect(document.activeElement).toBe(block('a'));
+    });
+});
+
+describe('OutlookGhostLayer multi-select', () => {
+    let wrapper: VueWrapper | null = null;
+
+    const selectLabels = {
+        ...labels,
+        hover_hint: 'Click for details',
+        hover_hint_select: 'Click for details. Ctrl+click to select several.',
+        hover_hint_select_mac: 'Click for details. ⌘+click to select several.',
+        create_entry: 'Create time entry',
+        selected_suffix: ', selected',
+    } as OutlookCalendarLabels;
+
+    const at = (
+        id: string,
+        day: string,
+        hour: number,
+        minutes = 60,
+        extra: Partial<OutlookMeeting> = {}
+    ) => {
+        const start = `${day}T${String(hour).padStart(2, '0')}:00:00Z`;
+        const end = new Date(new Date(start).getTime() + minutes * 60_000)
+            .toISOString()
+            .replace('.000Z', 'Z');
+        return meeting({ id, subject: 'Meeting ' + id, start, end, ...extra });
+    };
+
+    // Every rendered day gets its own lane inside one calendar root (.fc), all sharing one context
+    // whose meeting list may hold meetings of days that are not rendered.
+    function mountSelect(all: OutlookMeeting[], days: string[] = [DAY], canAct = true) {
+        const root = document.createElement('div');
+        root.className = 'fc';
+        document.body.appendChild(root);
+        const list = ref(all);
+        const canActRef = ref(canAct);
+        const base = useOutlookSelection();
+        // Like the composable: inert while the context cannot act
+        const selection: OutlookSelection = {
+            ...base,
+            toggle: (id) => {
+                if (canActRef.value) base.toggle(id);
+            },
+            selectRange: (id, candidates) => {
+                if (canActRef.value) base.selectRange(id, candidates);
+            },
+        };
+        const context = {
+            canAct: canActRef,
+            includeDismissed: ref(false),
+            meetings: list,
+            dismiss: vi.fn(),
+            restore: vi.fn(),
+            openForm: vi.fn(),
+            formRequest: ref(null),
+            selection,
+        } as unknown as OutlookMeetingsContext;
+        const Host = defineComponent({
+            setup() {
+                return () =>
+                    h(
+                        'div',
+                        days.map((day) =>
+                            h(OutlookGhostLayer, {
+                                key: day,
+                                meetings: list.value,
+                                labels: selectLabels,
+                                dayStr: day,
+                                isDayView: false,
+                                minutesToPixels,
+                                settings,
+                            })
+                        )
+                    );
+            },
+        });
+        wrapper = mount(Host, {
+            attachTo: root,
+            global: {
+                provide: {
+                    [OUTLOOK_MEETINGS_KEY as symbol]: context,
+                    organization: computed(() => ({ time_format: '24-hours' })),
+                },
+            },
+        });
+        passMountTime();
+        return { selection, list };
+    }
+
+    function block(id: string): HTMLElement {
+        return document.body.querySelector<HTMLElement>(`[data-ghost-id="${id}"]`)!;
+    }
+
+    function panel(): HTMLElement | null {
+        return document.body.querySelector('[data-testid="outlook-ghost-detail"]');
+    }
+
+    function card(): HTMLElement | null {
+        return document.body.querySelector('[data-testid="outlook-hover-card"]');
+    }
+
+    function click(el: Element, init: MouseEventInit = {}) {
+        passMountTime();
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...init }));
+    }
+
+    function enter(el: Element, init: KeyboardEventInit = {}) {
+        passMountTime();
+        el.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...init })
+        );
+    }
+
+    async function advance(ms: number) {
+        await vi.advanceTimersByTimeAsync(ms);
+        await nextTick();
+    }
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        resetHoverCardDelay();
+    });
+
+    afterEach(() => {
+        wrapper?.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+        resetHoverCardDelay();
+        vi.useRealTimers();
+    });
+
+    it.each([
+        ['ctrlKey', { ctrlKey: true }],
+        ['metaKey', { metaKey: true }],
+    ])('a %s click toggles the meeting without opening the panel', async (_name, init) => {
+        const { selection } = mountSelect([at('a', DAY, 8), at('b', DAY, 10)]);
+
+        click(block('a'), init);
+        await advance(20);
+
+        expect(selection.selectedIds.value).toEqual(['a']);
+        expect(selection.anchorId.value).toBe('a');
+        expect(block('a').hasAttribute('data-selected')).toBe(true);
+        expect(block('b').hasAttribute('data-selected')).toBe(false);
+        expect(panel()).toBeNull();
+        expect(block('a').hasAttribute('data-panel-open')).toBe(false);
+
+        click(block('a'), init);
+        await advance(20);
+
+        expect(selection.selectedIds.value).toEqual([]);
+        expect(block('a').hasAttribute('data-selected')).toBe(false);
+        expect(panel()).toBeNull();
+    });
+
+    it('a shift-click adds every rendered meeting between the anchor and the clicked one', async () => {
+        const later = '2026-10-22';
+        const hidden = '2026-10-21';
+        const { selection } = mountSelect(
+            [
+                at('a', DAY, 8),
+                at('b', DAY, 10),
+                at('h', hidden, 9),
+                at('c', later, 8),
+                at('d', later, 10),
+            ],
+            [DAY, later]
+        );
+        expect(document.body.querySelector('[data-ghost-id="h"]')).toBeNull();
+
+        click(block('b'), { ctrlKey: true });
+        await advance(20);
+        click(block('c'), { shiftKey: true });
+        await advance(20);
+
+        expect([...selection.selectedIds.value].sort()).toEqual(['b', 'c']);
+        expect(block('b').hasAttribute('data-selected')).toBe(true);
+        expect(block('c').hasAttribute('data-selected')).toBe(true);
+        expect(block('a').hasAttribute('data-selected')).toBe(false);
+        expect(block('d').hasAttribute('data-selected')).toBe(false);
+        expect(panel()).toBeNull();
+    });
+
+    it('Ctrl+Enter toggles, Shift+Enter adds the range, plain Enter opens the panel', async () => {
+        const { selection } = mountSelect([at('a', DAY, 8), at('b', DAY, 10), at('c', DAY, 12)]);
+
+        enter(block('a'), { ctrlKey: true });
+        await advance(20);
+        expect(selection.selectedIds.value).toEqual(['a']);
+        expect(panel()).toBeNull();
+
+        enter(block('a'), { metaKey: true });
+        await advance(20);
+        expect(selection.selectedIds.value).toEqual([]);
+
+        enter(block('a'), { ctrlKey: true });
+        enter(block('c'), { shiftKey: true });
+        await advance(20);
+        expect(selection.selectedIds.value).toEqual(['a', 'b', 'c']);
+        expect(panel()).toBeNull();
+
+        enter(block('b'));
+        await advance(20);
+        expect(panel()).not.toBeNull();
+        expect(block('b').hasAttribute('data-panel-open')).toBe(true);
+        // A panel and a selection never coexist
+        expect(selection.selectedIds.value).toEqual([]);
+    });
+
+    it('a modifier click closes an open panel; a plain click clears the selection and opens the panel', async () => {
+        const { selection } = mountSelect([at('a', DAY, 8), at('b', DAY, 10)]);
+
+        click(block('a'));
+        await advance(20);
+        expect(panel()).not.toBeNull();
+
+        click(block('b'), { ctrlKey: true });
+        await advance(20);
+        expect(panel()).toBeNull();
+        expect(block('a').hasAttribute('data-panel-open')).toBe(false);
+        expect(selection.selectedIds.value).toEqual(['b']);
+
+        click(block('a'));
+        await advance(20);
+        expect(selection.selectedIds.value).toEqual([]);
+        expect(block('b').hasAttribute('data-selected')).toBe(false);
+        expect(panel()).not.toBeNull();
+        expect(block('a').hasAttribute('data-panel-open')).toBe(true);
+    });
+
+    it('marks selected blocks with aria-pressed, the label suffix, the ring and a badge by tier', async () => {
+        mountSelect([at('a', DAY, 8, 40), at('b', DAY, 10, 20), at('c', DAY, 12)]);
+
+        // No selection: no aria-pressed at all, no badge
+        expect(block('a').hasAttribute('aria-pressed')).toBe(false);
+        expect(block('c').hasAttribute('aria-pressed')).toBe(false);
+        expect(document.body.querySelector('[data-ghost-badge]')).toBeNull();
+
+        click(block('a'), { ctrlKey: true });
+        click(block('b'), { ctrlKey: true });
+        await advance(20);
+
+        expect(block('a').getAttribute('aria-pressed')).toBe('true');
+        expect(block('b').getAttribute('aria-pressed')).toBe('true');
+        expect(block('c').getAttribute('aria-pressed')).toBe('false');
+        expect(block('a').getAttribute('aria-label')).toMatch(/, selected$/);
+        expect(block('c').getAttribute('aria-label')).not.toContain('selected');
+
+        expect(block('a').className).toContain('m365-meeting--selected');
+        expect(block('a').className).toContain('ring-2');
+        expect(block('a').className).toContain('ring-accent-700');
+        expect(block('a').className).toContain('dark:ring-accent-200');
+        expect(block('c').className).not.toContain('m365-meeting--selected');
+
+        // 40px block (tier 3): 16px badge; 20px block (tier 2): 12px badge; both aria-hidden
+        const badgeA = block('a').querySelector('[data-ghost-badge]');
+        const badgeB = block('b').querySelector('[data-ghost-badge]');
+        expect(block('a').querySelector('[data-ghost-tier]')?.getAttribute('data-ghost-tier')).toBe(
+            '3'
+        );
+        expect(block('b').querySelector('[data-ghost-tier]')?.getAttribute('data-ghost-tier')).toBe(
+            '2'
+        );
+        expect(badgeA?.getAttribute('class')).toContain('size-4');
+        expect(badgeA?.getAttribute('aria-hidden')).toBe('true');
+        expect(badgeA?.querySelector('svg')?.getAttribute('class')).toContain('size-3');
+        expect(badgeB?.getAttribute('class')).toContain('size-3');
+        expect(badgeB?.getAttribute('aria-hidden')).toBe('true');
+        expect(badgeB?.querySelector('svg')?.getAttribute('class')).toContain('size-2');
+        expect(block('c').querySelector('[data-ghost-badge]')).toBeNull();
+    });
+
+    it('a selected dismissed meeting keeps its dotted variant', async () => {
+        mountSelect([at('a', DAY, 8, 60, { dismissed: true })]);
+
+        click(block('a'), { ctrlKey: true });
+        await advance(20);
+
+        expect(block('a').className).toContain('m365-meeting--dismissed');
+        expect(block('a').hasAttribute('data-selected')).toBe(true);
+        expect(block('a').getAttribute('aria-label')).toMatch(/, dismissed, selected$/);
+    });
+
+    it('without canAct a ctrl-click opens the panel and selects nothing', async () => {
+        // The link gives the read-only panel a focusable element: in happy-dom a popover without one
+        // loses focus to the page and closes again at once.
+        const { selection } = mountSelect(
+            [at('a', DAY, 8, 60, { web_link: 'https://outlook.example.test/a' })],
+            [DAY],
+            false
+        );
+
+        click(block('a'), { ctrlKey: true });
+        await advance(20);
+
+        expect(selection.selectedIds.value).toEqual([]);
+        expect(block('a').hasAttribute('data-selected')).toBe(false);
+        expect(block('a').hasAttribute('aria-pressed')).toBe(false);
+        expect(panel()).not.toBeNull();
+    });
+
+    it('refuses a hover card while a selection exists and a modifier is held', async () => {
+        mountSelect([at('a', DAY, 8), at('b', DAY, 10), at('c', DAY, 12)]);
+        const hover = (el: Element, init: PointerEventInit = {}) =>
+            el.dispatchEvent(
+                new PointerEvent('pointerenter', { bubbles: true, pointerType: 'mouse', ...init })
+            );
+        const unhover = async (el: Element) => {
+            el.dispatchEvent(
+                new PointerEvent('pointerleave', { bubbles: true, pointerType: 'mouse' })
+            );
+            await advance(200);
+        };
+
+        // Without a selection a held modifier changes nothing
+        hover(block('c'), { ctrlKey: true });
+        await advance(400);
+        expect(card()?.textContent).toContain('Meeting c');
+
+        // A modifier click closes the card and selects
+        click(block('a'), { ctrlKey: true });
+        await advance(20);
+        expect(card()).toBeNull();
+        await unhover(block('c'));
+
+        for (const init of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }]) {
+            hover(block('b'), init);
+            await advance(1000);
+            expect(card()).toBeNull();
+            await unhover(block('b'));
+        }
+
+        // Modifiers released: the card opens again
+        document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Control', bubbles: true }));
+        hover(block('b'));
+        await advance(400);
+        expect(card()?.textContent).toContain('Meeting b');
     });
 });

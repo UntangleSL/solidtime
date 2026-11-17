@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref } from 'vue';
-import { ClockPlus, ExternalLink, Eye, EyeOff } from '@lucide/vue';
+import { ClockPlus, ExternalLink, Eye, EyeOff, ListChecks, X } from '@lucide/vue';
 import {
     ContextMenuItem,
     ContextMenuLabel,
@@ -40,6 +40,18 @@ const link = computed(() => (meeting.value ? safeHttpsUrl(meeting.value.web_link
 const canAct = computed(() => meeting.value !== null && context?.canAct.value === true);
 
 const rootEl = ref<HTMLElement | null>(null);
+
+// Select / Deselect: the keyboard and discoverable path to multi-select (D-07), always for the
+// right-clicked meeting only, even while other meetings are selected.
+const selected = computed(
+    () => meeting.value !== null && context?.selection?.isSelected(meeting.value.id) === true
+);
+
+function onToggleSelect(): void {
+    const current = meeting.value;
+    if (!context || !current || !canAct.value) return;
+    context.selection.toggle(current.id);
+}
 
 function openInOutlook(): void {
     if (link.value) window.open(link.value, '_blank', 'noopener,noreferrer');
@@ -134,6 +146,15 @@ async function onRestore(): Promise<void> {
             @select="onCreate()">
             <ClockPlus class="w-4 h-4 text-icon-default" aria-hidden="true" />
             <span>{{ labels.create_entry }}</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+            v-if="canAct && meeting"
+            class="space-x-3"
+            data-testid="outlook-menu-select"
+            @select="onToggleSelect()">
+            <X v-if="selected" class="w-4 h-4 text-icon-default" aria-hidden="true" />
+            <ListChecks v-else class="w-4 h-4 text-icon-default" aria-hidden="true" />
+            <span>{{ selected ? labels.deselect : labels.select }}</span>
         </ContextMenuItem>
         <ContextMenuItem
             v-if="link"

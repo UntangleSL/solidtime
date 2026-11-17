@@ -8,6 +8,7 @@ import {
 } from '@/packages/ui/src/context-menu';
 import OutlookMeetingContextItems from './OutlookMeetingContextItems.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
+import { useOutlookSelection } from './useOutlookSelection';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 
 const labels = {
@@ -62,6 +63,7 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
     const openForm = vi.fn((_id: string) => {
         menuAtOpenForm.push(menu() !== null);
     });
+    const selection = useOutlookSelection();
     const context = {
         labels: ref(labels),
         meetings: list,
@@ -70,8 +72,9 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
         dismiss,
         restore,
         openForm,
+        selection,
     } as unknown as OutlookMeetingsContext;
-    return { context, dismiss, restore, list, openForm, menuAtOpenForm };
+    return { context, dismiss, restore, list, openForm, menuAtOpenForm, selection };
 }
 
 // A day lane like OutlookGhostLayer renders it: a group with focusable blocks in start order.
@@ -252,6 +255,7 @@ describe('OutlookMeetingContextItems', () => {
         expect(itemOrder()).toEqual([
             'outlook-menu-label',
             'outlook-menu-create',
+            'outlook-menu-select',
             'outlook-menu-open',
             'separator',
             'outlook-menu-dismiss',
@@ -273,14 +277,48 @@ describe('OutlookMeetingContextItems', () => {
         expect(dismiss).not.toHaveBeenCalled();
     });
 
-    it('offers no "Create time entry" when the context cannot act', async () => {
+    it('offers neither "Create time entry" nor "Select meeting" when the context cannot act', async () => {
         const [block] = renderLane(['m-1']);
         const { context, openForm } = fakeContext([meeting()], { canAct: false });
         await openMenu(block!, context);
 
         expect(menu()).not.toBeNull();
         expect(item('outlook-menu-create')).toBeNull();
+        expect(item('outlook-menu-select')).toBeNull();
         expect(openForm).not.toHaveBeenCalled();
+    });
+
+    it('"Select meeting" adds the right-clicked meeting to the selection only', async () => {
+        const [first] = renderLane(['m-1', 'm-2']);
+        const { context, selection } = fakeContext([meeting(), meeting({ id: 'm-2' })]);
+        selection.toggle('m-2');
+        await openMenu(first!, context);
+
+        const select = item('outlook-menu-select');
+        expect(select?.textContent?.trim()).toBe('Select meeting');
+        expect(select?.querySelector('svg')?.getAttribute('class')).toContain('list-checks');
+        select?.click();
+        await nextTick();
+
+        expect(selection.selectedIds.value).toEqual(['m-2', 'm-1']);
+    });
+
+    it('"Deselect meeting" (X icon) removes a selected meeting', async () => {
+        const [block] = renderLane(['m-1', 'm-2']);
+        const { context, selection } = fakeContext([meeting(), meeting({ id: 'm-2' })]);
+        selection.toggle('m-1');
+        selection.toggle('m-2');
+        await openMenu(block!, context);
+
+        const deselect = item('outlook-menu-select');
+        expect(deselect?.textContent?.trim()).toBe('Deselect meeting');
+        const icon = deselect?.querySelector('svg')?.getAttribute('class') ?? '';
+        expect(icon).toContain('lucide-x');
+        expect(icon).not.toContain('list-checks');
+        deselect?.click();
+        await nextTick();
+
+        expect(selection.selectedIds.value).toEqual(['m-2']);
     });
 
     it('selecting Dismiss calls dismiss(id)', async () => {
@@ -327,6 +365,7 @@ describe('OutlookMeetingContextItems', () => {
         expect(item('outlook-menu-dismiss')).toBeNull();
         expect(item('outlook-menu-restore')).toBeNull();
         expect(item('outlook-menu-create')).toBeNull();
+        expect(item('outlook-menu-select')).toBeNull();
         expect(menu()?.querySelector('[role="separator"]')).toBeNull();
         expect(itemOrder()).toEqual(['outlook-menu-label']);
     });
