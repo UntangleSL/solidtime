@@ -142,6 +142,47 @@ describe('shipped early-theme script', () => {
         expect(localStorage.getItem('accent')).toBe('violet');
     });
 
+    it('keeps the stored values and does not overwrite them while a save is pending', () => {
+        // Last page: picked light + ember, reloaded before the save reached the server.
+        localStorage.setItem('theme', 'light');
+        localStorage.setItem('accent', 'ember');
+        localStorage.setItem('appearance-pending', '1');
+
+        runScript({ theme: 'dark', accent: 'violet', accents: ACCENTS });
+
+        expect(modeClasses()).toEqual(['light']);
+        expect(accentClasses()).toEqual(['accent-ember']);
+        expect(localStorage.getItem('theme')).toBe('light');
+        expect(localStorage.getItem('accent')).toBe('ember');
+        expect(localStorage.getItem('appearance-pending')).toBe('1');
+    });
+
+    it('uses the server value for a key with no valid stored value while a save is pending', () => {
+        localStorage.setItem('theme', 'light');
+        localStorage.setItem('accent', 'rose');
+        localStorage.setItem('appearance-pending', '1');
+
+        runScript({ theme: 'dark', accent: 'violet', accents: ACCENTS });
+
+        expect(modeClasses()).toEqual(['light']);
+        expect(accentClasses()).toEqual(['accent-violet']);
+        expect(localStorage.getItem('theme')).toBe('light');
+        expect(localStorage.getItem('accent')).toBe('violet');
+    });
+
+    it('lets the server win again once no save is pending (change made on another device)', () => {
+        localStorage.setItem('theme', 'light');
+        localStorage.setItem('accent', 'ember');
+
+        runScript({ theme: 'dark', accent: 'violet', accents: ACCENTS });
+
+        expect(modeClasses()).toEqual(['dark']);
+        expect(accentClasses()).toEqual(['accent-violet']);
+        expect(localStorage.getItem('theme')).toBe('dark');
+        expect(localStorage.getItem('accent')).toBe('violet');
+        expect(localStorage.getItem('appearance-pending')).toBeNull();
+    });
+
     it('falls back to localStorage when the server has no value', () => {
         localStorage.setItem('theme', 'light');
         localStorage.setItem('accent', 'ember');

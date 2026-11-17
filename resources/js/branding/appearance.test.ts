@@ -305,3 +305,211 @@ describe('useAppearance', () => {
         expect(themeSetting.value).toBe('dark');
     });
 });
+
+describe('useAppearance: a pending local choice survives a reload', () => {
+    const PENDING = 'appearance-pending';
+
+    it('test_marker_is_set_synchronously_on_change_and_cleared_after_the_put', async () => {
+        vi.useFakeTimers();
+        const { useAppearance, themeSetting } = await loadModules();
+        useAppearance();
+        await flush();
+        expect(localStorage.getItem(PENDING)).toBeNull();
+
+        themeSetting.value = 'light';
+        expect(localStorage.getItem(PENDING)).toBe('1');
+
+        await vi.advanceTimersByTimeAsync(500);
+        await flush();
+
+        expect(put).toHaveBeenCalledWith(UPDATE_URL, { theme: 'light', accent: 'untangle' });
+        expect(localStorage.getItem(PENDING)).toBeNull();
+    });
+
+    it('test_changing_back_to_the_server_value_clears_the_marker', async () => {
+        vi.useFakeTimers();
+        const { useAppearance, themeSetting } = await loadModules();
+        useAppearance();
+        await flush();
+
+        themeSetting.value = 'dark';
+        expect(localStorage.getItem(PENDING)).toBe('1');
+        themeSetting.value = 'system';
+        expect(localStorage.getItem(PENDING)).toBeNull();
+
+        await vi.advanceTimersByTimeAsync(500);
+        expect(put).not.toHaveBeenCalled();
+    });
+
+    it('test_reload_with_marker_keeps_local_values_and_sends_them', async () => {
+        vi.useFakeTimers();
+        // Previous page: picked light, reloaded before the debounced PUT; the server still has dark.
+        localStorage.setItem('theme', 'light');
+        localStorage.setItem('accent', 'ember');
+        localStorage.setItem(PENDING, '1');
+        setProps('dark', 'violet');
+        const { useAppearance, themeSetting, activeAccent } = await loadModules();
+
+        useAppearance();
+        await flush();
+
+        expect(themeSetting.value).toBe('light');
+        expect(activeAccent.value).toBe('ember');
+        expect(put).toHaveBeenCalledTimes(1);
+        expect(put).toHaveBeenCalledWith(UPDATE_URL, { theme: 'light', accent: 'ember' });
+        expect(localStorage.getItem(PENDING)).toBeNull();
+
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(put).toHaveBeenCalledTimes(1);
+    });
+
+    it('test_reload_with_marker_and_matching_server_clears_it_without_put', async () => {
+        vi.useFakeTimers();
+        localStorage.setItem('theme', 'light');
+        localStorage.setItem(PENDING, '1');
+        setProps('light', 'untangle');
+        const { useAppearance } = await loadModules();
+
+        useAppearance();
+        await flush();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(put).not.toHaveBeenCalled();
+        expect(localStorage.getItem(PENDING)).toBeNull();
+    });
+
+    it('test_load_without_marker_adopts_the_server_value_from_another_device', async () => {
+        vi.useFakeTimers();
+        localStorage.setItem('theme', 'light');
+        localStorage.setItem('accent', 'ember');
+        setProps('dark', 'violet');
+        const { useAppearance, themeSetting, activeAccent } = await loadModules();
+
+        useAppearance();
+        await flush();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(themeSetting.value).toBe('dark');
+        expect(activeAccent.value).toBe('violet');
+        expect(put).not.toHaveBeenCalled();
+        expect(localStorage.getItem(PENDING)).toBeNull();
+    });
+
+    it('test_failed_put_keeps_the_marker', async () => {
+        vi.useFakeTimers();
+        put.mockRejectedValue(new Error('network'));
+        const { useAppearance, themeSetting } = await loadModules();
+        useAppearance();
+        await flush();
+
+        themeSetting.value = 'dark';
+        await vi.advanceTimersByTimeAsync(500);
+        await flush();
+
+        expect(put).toHaveBeenCalledTimes(1);
+        expect(localStorage.getItem(PENDING)).toBe('1');
+    });
+
+    it('test_change_back_while_a_put_is_in_flight_is_sent_after_it', async () => {
+        vi.useFakeTimers();
+        let resolveFirst: (value: unknown) => void = () => undefined;
+        put.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveFirst = resolve;
+                })
+        );
+        const { useAppearance, themeSetting } = await loadModules();
+        useAppearance();
+        await flush();
+
+        themeSetting.value = 'dark';
+        await vi.advanceTimersByTimeAsync(500);
+        expect(put).toHaveBeenCalledTimes(1);
+
+        // Back to the value the server held before the request: the debounce skips it.
+        themeSetting.value = 'system';
+        await vi.advanceTimersByTimeAsync(500);
+        expect(put).toHaveBeenCalledTimes(1);
+
+        resolveFirst({ data: {} });
+        await flush();
+
+        expect(put).toHaveBeenCalledTimes(2);
+        expect(put).toHaveBeenLastCalledWith(UPDATE_URL, { theme: 'system', accent: 'untangle' });
+        await flush();
+        expect(localStorage.getItem(PENDING)).toBeNull();
+    });
+
+    it('test_pagehide_flushes_a_pending_change_with_keepalive', async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+        vi.stubGlobal('fetch', fetchMock);
+        document.cookie = 'XSRF-TOKEN=abc%3D%3D';
+        try {
+            const { useAppearance, themeSetting } = await loadModules();
+            useAppearance();
+            await flush();
+
+            themeSetting.value = 'light';
+            window.dispatchEvent(new Event('pagehide'));
+            await flush();
+
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+            expect(url).toBe(UPDATE_URL);
+            expect(init.method).toBe('PUT');
+            expect(init.keepalive).toBe(true);
+            expect(JSON.parse(init.body as string)).toEqual({ theme: 'light', accent: 'untangle' });
+            expect((init.headers as Record<string, string>)['X-XSRF-TOKEN']).toBe('abc==');
+            expect(localStorage.getItem(PENDING)).toBeNull();
+
+            // The debounced save finds nothing left to send.
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(put).not.toHaveBeenCalled();
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        } finally {
+            document.cookie = 'XSRF-TOKEN=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('test_pagehide_without_a_pending_change_sends_nothing', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+        vi.stubGlobal('fetch', fetchMock);
+        try {
+            const { useAppearance } = await loadModules();
+            useAppearance();
+            await flush();
+
+            window.dispatchEvent(new Event('pagehide'));
+            await flush();
+
+            expect(fetchMock).not.toHaveBeenCalled();
+            expect(put).not.toHaveBeenCalled();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('test_guest_never_sets_the_marker_or_flushes', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+        vi.stubGlobal('fetch', fetchMock);
+        try {
+            setProps(null, null, null);
+            const { useAppearance, themeSetting } = await loadModules();
+            useAppearance();
+            await flush();
+
+            themeSetting.value = 'light';
+            window.dispatchEvent(new Event('pagehide'));
+            await flush();
+
+            expect(localStorage.getItem(PENDING)).toBeNull();
+            expect(fetchMock).not.toHaveBeenCalled();
+            expect(put).not.toHaveBeenCalled();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+});
