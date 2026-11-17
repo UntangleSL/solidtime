@@ -145,3 +145,5 @@ PHPUnit (`CalendarViewFixturesTest`): no disponible el 2026-10-19 (el equipo de 
 | 2026-11-04 | Fase 2: primer inicio de sesión con Microsoft en producción | propietaria / orquestación |
 | 2026-11-05 | Fase 2: cliente OAuth de la extensión creado; extensión conectada | propietaria / orquestación |
 | 2026-11-10 | Fase 3: reuniones de Outlook en el calendario publicadas (imagen sha-22fbbab; sin variables nuevas) | propietaria / orquestación |
+| 2026-11-17 | Fase 3.1: mejoras de uso del calendario publicadas (imagen sha-293c055; sin variables nuevas ni migraciones) | propietaria / orquestación |
+| 2026-11-17 | Fase 3.2: apariencia y marca Untangle publicadas (imagen sha-293c055; sin variables nuevas) | propietaria / orquestación |
