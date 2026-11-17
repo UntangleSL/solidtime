@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref, type ComputedRef } from 'vue';
-import { CalendarDays, Clock, User, Video } from '@lucide/vue';
+import { CalendarDays, Clock, EyeOff, User, Video } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
 import {
     formatHumanReadableDuration,
@@ -31,6 +31,15 @@ const organization = inject<ComputedRef<Organization | undefined> | undefined>(
     undefined
 );
 const timeFormat = computed(() => organization?.value?.time_format ?? '24-hours');
+
+// An occurrence of an ignored series (shown only with "Show dismissed meetings") says so, with the
+// EyeOff icon; the series wording wins over the dismissed one (Phase 5 UI-SPEC section 5).
+const seriesIgnored = computed(() => props.meeting.series_ignored === true);
+
+const eyebrow = computed(() => {
+    if (seriesIgnored.value) return props.labels.eyebrow_series_ignored;
+    return props.meeting.dismissed ? props.labels.eyebrow_dismissed : props.labels.eyebrow;
+});
 
 const subject = computed(() =>
     props.meeting.subject?.trim() ? props.meeting.subject : props.labels.no_subject
@@ -71,9 +80,12 @@ defineExpose({ subjectEl });
 </script>
 
 <template>
-    <div class="flex items-center gap-1.5 text-xs text-text-tertiary">
-        <CalendarDays class="size-3.5 shrink-0" aria-hidden="true" />
-        <span>{{ meeting.dismissed ? labels.eyebrow_dismissed : labels.eyebrow }}</span>
+    <div
+        class="flex items-center gap-1.5 text-xs text-text-tertiary"
+        :data-testid="`${testidPrefix}-eyebrow`">
+        <EyeOff v-if="seriesIgnored" class="size-3.5 shrink-0" aria-hidden="true" />
+        <CalendarDays v-else class="size-3.5 shrink-0" aria-hidden="true" />
+        <span>{{ eyebrow }}</span>
     </div>
     <h3
         :id="subjectId"

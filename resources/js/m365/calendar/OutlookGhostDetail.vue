@@ -109,7 +109,9 @@ function onConfirm(): void {
 }
 
 // A menu action hands focus to the caller (the panel closes and the layer moves focus), so the
-// menu must not send focus back to its trigger inside the closing panel.
+// menu must not send focus back to its trigger inside the closing panel. The menu is non-modal for
+// the same reason: a modal menu traps focus and would pull it back from the block the layer focuses
+// (the panel's interact-outside guard keeps the panel open while the menu is used).
 let menuActed = false;
 
 function fromMenu(run: () => void): void {
@@ -227,7 +229,7 @@ function onOpenAutoFocus(event: Event): void {
                     variant="full" />
                 <Separator class="mt-3" />
                 <div class="mt-4 flex items-center gap-2">
-                    <DropdownMenu v-if="showMore">
+                    <DropdownMenu v-if="showMore" :modal="false">
                         <DropdownMenuTrigger as-child>
                             <Button
                                 type="button"

@@ -69,6 +69,13 @@ const labels = {
     tags_many: ':count Tags',
     billable: 'Billable',
     non_billable: 'Non-Billable',
+    more_actions: 'More actions',
+    ignore_series: 'Always ignore this series',
+    unignore_series: 'Stop ignoring this series',
+    forget_series: 'Forget this series',
+    eyebrow_series_ignored: 'Outlook meeting · Series ignored',
+    series_ignored_suffix: ', series ignored',
+    selected_suffix: ', selected',
 } as OutlookCalendarLabels;
 
 const settings: CalendarSettings = { snapMinutes: 15, startHour: 0, endHour: 24, slotMinutes: 15 };
@@ -2147,8 +2154,9 @@ describe('OutlookGhostLayer pre-assigned meetings (Phase 5)', () => {
 
     function mountPhase5(
         initial: OutlookMeeting[],
-        options: { canAct?: boolean; includeDismissed?: boolean } = {}
+        options: { canAct?: boolean; includeDismissed?: boolean; selected?: string[] } = {}
     ) {
+        const includeDismissed = options.includeDismissed ?? false;
         const root = document.createElement('div');
         root.className = 'fc';
         document.body.appendChild(root);
@@ -2166,14 +2174,47 @@ describe('OutlookGhostLayer pre-assigned meetings (Phase 5)', () => {
             }
             return result;
         });
+        // Mirror the composable's optimistic series actions over the occurrences of the series
+        const seriesOf = (id: string) => list.value.find((item) => item.id === id)?.series_key;
+        const ignoreSeries = vi.fn(async (id: string) => {
+            const key = seriesOf(id);
+            list.value = includeDismissed
+                ? list.value.map((item) =>
+                      item.series_key === key ? { ...item, series_ignored: true } : item
+                  )
+                : list.value.filter((item) => item.series_key !== key);
+        });
+        const unignoreSeries = vi.fn(async (id: string) => {
+            const key = seriesOf(id);
+            list.value = list.value.map((item) =>
+                item.series_key === key ? { ...item, series_ignored: false } : item
+            );
+        });
+        const forgetSeries = vi.fn(async (id: string) => {
+            const key = seriesOf(id);
+            list.value = list.value.map((item) =>
+                item.series_key === key ? { ...item, assignment: null } : item
+            );
+        });
+        const selectedIds = ref<string[]>(options.selected ?? []);
         const context = {
             canAct: ref(options.canAct ?? true),
-            includeDismissed: ref(options.includeDismissed ?? false),
+            includeDismissed: ref(includeDismissed),
             dismiss: vi.fn(),
             restore: vi.fn(),
             formRequest: ref(null),
             confirmOne,
             isConfirmPending: (id: string) => pending.value.includes(id),
+            ignoreSeries,
+            unignoreSeries,
+            forgetSeries,
+            selection: {
+                selectedIds,
+                isSelected: (id: string) => selectedIds.value.includes(id),
+                clear: () => (selectedIds.value = []),
+                toggle: vi.fn(),
+                selectRange: vi.fn(),
+            },
         } as unknown as OutlookMeetingsContext;
         const Host = defineComponent({
             setup() {
@@ -2207,6 +2248,9 @@ describe('OutlookGhostLayer pre-assigned meetings (Phase 5)', () => {
             context,
             confirmOne,
             pending,
+            ignoreSeries,
+            unignoreSeries,
+            forgetSeries,
             answer: async (result: OutlookConversionResult | null) => {
                 settleConfirm(result);
                 await advance(20);
@@ -2485,6 +2529,145 @@ describe('OutlookGhostLayer pre-assigned meetings (Phase 5)', () => {
             await nextTick();
 
             expect(spinnerOf('a')).toBeNull();
+        });
+    });
+
+    describe('ignored series and series actions', () => {
+        async function pickFromMenu(id: string, item: string) {
+            await openPanel(id);
+            byTestId('outlook-detail-more')!.click();
+            await advance(20);
+            expect(document.body.querySelector('[role="menu"]')).not.toBeNull();
+            byTestId(item)!.click();
+            await advance(20);
+        }
+
+        it('an occurrence of an ignored series uses the dismissed variant, no project line', () => {
+            mountPhase5([preassigned('a', 8, { series_ignored: true }), preassigned('b', 10)], {
+                includeDismissed: true,
+            });
+
+            const ignored = block('a');
+            expect(ignored.classList.contains('m365-meeting--dismissed')).toBe(true);
+            expect(ignored.hasAttribute('data-preassigned')).toBe(false);
+            expect(ignored.querySelector('[data-testid="outlook-preassigned-line"]')).toBeNull();
+            expect(ignored.querySelector('[data-testid="outlook-project-dot"]')).toBeNull();
+            expect(ignored.querySelector('svg.lucide-eye-off')).not.toBeNull();
+            expect(
+                ignored.querySelector('[data-ghost-subject]')!.classList.contains('font-semibold')
+            ).toBe(false);
+            expect(ignored.getAttribute('aria-label')).toBe(
+                'Meeting a, 10:00 to 11:00, Outlook meeting suggestion, series ignored'
+            );
+
+            expect(block('b').classList.contains('m365-meeting--dismissed')).toBe(false);
+            expect(block('b').hasAttribute('data-preassigned')).toBe(true);
+        });
+
+        it('an ignored occurrence that is also dismissed reads as series ignored only', () => {
+            mountPhase5([at('a', 8, { series_key: 's', series_ignored: true, dismissed: true })], {
+                includeDismissed: true,
+            });
+
+            const label = block('a').getAttribute('aria-label')!;
+            expect(label).toMatch(/, series ignored$/);
+            expect(label).not.toContain('dismissed');
+        });
+
+        it('its panel shows the series-ignored eyebrow', async () => {
+            mountPhase5([at('a', 8, { series_key: 's', series_ignored: true })], {
+                includeDismissed: true,
+            });
+            await openPanel('a');
+
+            expect(panel()!.textContent).toContain('Outlook meeting · Series ignored');
+        });
+
+        it('a selected pre-assigned block keeps its ring, badge and project line', () => {
+            mountPhase5([preassigned('a', 8)], { selected: ['a'] });
+
+            const selected = block('a');
+            expect(selected.classList.contains('m365-meeting--selected')).toBe(true);
+            expect(selected.querySelector('[data-ghost-badge]')).not.toBeNull();
+            expect(
+                selected.querySelector('[data-testid="outlook-preassigned-line"]')
+            ).not.toBeNull();
+            expect(selected.getAttribute('aria-label')).toBe(
+                'Meeting a, 10:00 to 11:00, Outlook meeting suggestion, pre-assigned to Acme Website, selected'
+            );
+        });
+
+        it('Always ignore calls ignoreSeries, closes the panel and focuses the next meeting outside the series', async () => {
+            const mounted = mountPhase5([
+                preassigned('a', 8, { series_key: 'weekly' }),
+                preassigned('b', 10, { series_key: 'weekly' }),
+                at('c', 12),
+            ]);
+
+            await pickFromMenu('a', 'outlook-more-ignore-series');
+
+            expect(mounted.ignoreSeries).toHaveBeenCalledWith('a');
+            expect(panel()).toBeNull();
+            expect(document.body.querySelector('[data-ghost-id="a"]')).toBeNull();
+            expect(document.body.querySelector('[data-ghost-id="b"]')).toBeNull();
+            expect(document.activeElement).toBe(block('c'));
+        });
+
+        it('Always ignore on the only series of the day focuses the Sync button', async () => {
+            mountPhase5([at('a', 8, { series_key: 'weekly' })]);
+
+            await pickFromMenu('a', 'outlook-more-ignore-series');
+
+            expect(document.activeElement).toBe(byTestId('outlook-sync-button'));
+        });
+
+        it('Always ignore while dismissed meetings are shown keeps focus on the same, faded block', async () => {
+            const mounted = mountPhase5([preassigned('a', 8), at('b', 10)], {
+                includeDismissed: true,
+            });
+
+            await pickFromMenu('a', 'outlook-more-ignore-series');
+
+            expect(mounted.ignoreSeries).toHaveBeenCalledWith('a');
+            expect(panel()).toBeNull();
+            expect(block('a').classList.contains('m365-meeting--dismissed')).toBe(true);
+            expect(document.activeElement).toBe(block('a'));
+        });
+
+        it('Stop ignoring calls unignoreSeries and keeps focus on the same block', async () => {
+            const mounted = mountPhase5(
+                [preassigned('a', 8, { series_ignored: true }), at('b', 10)],
+                { includeDismissed: true }
+            );
+
+            await pickFromMenu('a', 'outlook-more-unignore-series');
+
+            expect(mounted.unignoreSeries).toHaveBeenCalledWith('a');
+            expect(panel()).toBeNull();
+            expect(block('a').classList.contains('m365-meeting--dismissed')).toBe(false);
+            expect(block('a').hasAttribute('data-preassigned')).toBe(true);
+            expect(document.activeElement).toBe(block('a'));
+        });
+
+        it('Forget calls forgetSeries, the block turns plain and keeps focus', async () => {
+            const mounted = mountPhase5([preassigned('a', 8), at('b', 10)]);
+
+            await pickFromMenu('a', 'outlook-more-forget-series');
+
+            expect(mounted.forgetSeries).toHaveBeenCalledWith('a');
+            expect(panel()).toBeNull();
+            expect(block('a').hasAttribute('data-preassigned')).toBe(false);
+            expect(block('a').querySelector('[data-testid="outlook-preassigned-line"]')).toBeNull();
+            expect(document.activeElement).toBe(block('a'));
+        });
+
+        it('Dismiss from the More actions menu follows the Dismiss rule', async () => {
+            const mounted = mountPhase5([preassigned('a', 8), at('b', 10)]);
+
+            await pickFromMenu('a', 'outlook-more-dismiss');
+
+            expect(mounted.context.dismiss).toHaveBeenCalledWith('a');
+            expect(panel()).toBeNull();
         });
     });
 });

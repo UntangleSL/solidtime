@@ -15,7 +15,7 @@ import OutlookGhostDetail from './OutlookGhostDetail.vue';
 import OutlookMeetingHoverCard from './OutlookMeetingHoverCard.vue';
 import OutlookProjectDot from './OutlookProjectDot.vue';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
-import { isPreassigned } from './suggestions';
+import { isFaded, isPreassigned } from './suggestions';
 import {
     HOVER_CLOSE_DELAY_MS,
     hoverOpenDelay,
@@ -292,11 +292,19 @@ async function onRestore(meeting: OutlookMeeting): Promise<void> {
     await keepFocusOn(meeting.id);
 }
 
-// The ghost after `id` in this day (the previous one for the last), read before it leaves.
-function neighbourOf(id: string): string | null {
+// The ghost after `id` in this day (the previous one for the last), read before it leaves. Ghosts
+// for which `leaves` is true (e.g. the other occurrences of a series being ignored) are skipped.
+function neighbourOf(
+    id: string,
+    leaves: (meeting: OutlookMeeting) => boolean = (meeting) => meeting.id === id
+): string | null {
     const list = boxes.value;
     const index = list.findIndex((box) => box.meeting.id === id);
-    return (list[index + 1] ?? list[index - 1] ?? null)?.meeting.id ?? null;
+    if (index < 0) return null;
+    const stays = (box: GhostBox) => !leaves(box.meeting);
+    const after = list.slice(index + 1).find(stays);
+    const before = list.slice(0, index).reverse().find(stays);
+    return (after ?? before)?.meeting.id ?? null;
 }
 
 // Focus after a ghost left the lane: its neighbour, or the Sync button when the day has none.
@@ -320,6 +328,41 @@ async function onDismiss(meeting: OutlookMeeting): Promise<void> {
     }
 
     await focusAfterRemoval(neighbour);
+}
+
+// Series actions from the panel's More actions menu (Phase 5, D-10 / D-11). The context is
+// optimistic and owns the feedback (toasts, announcements, revert on failure); the panel closes.
+// Ignore hides every occurrence of the series (or fades them while dismissed meetings are shown):
+// focus follows the Dismiss rule, skipping the other occurrences that leave with it.
+async function onIgnoreSeries(meeting: OutlookMeeting): Promise<void> {
+    const stays = context?.includeDismissed.value === true;
+    const series = meeting.series_key ?? null;
+    const neighbour = neighbourOf(
+        meeting.id,
+        (other) => other.id === meeting.id || (series !== null && other.series_key === series)
+    );
+    openId.value = null;
+    void context?.ignoreSeries(meeting.id);
+
+    if (stays) {
+        await keepFocusOn(meeting.id);
+        return;
+    }
+
+    await focusAfterRemoval(neighbour);
+}
+
+// Stop ignoring and Forget keep the meeting in the lane (normal or plain look): focus stays on it.
+async function onUnignoreSeries(meeting: OutlookMeeting): Promise<void> {
+    openId.value = null;
+    void context?.unignoreSeries(meeting.id);
+    await keepFocusOn(meeting.id);
+}
+
+async function onForgetSeries(meeting: OutlookMeeting): Promise<void> {
+    openId.value = null;
+    void context?.forgetSeries(meeting.id);
+    await keepFocusOn(meeting.id);
 }
 
 // The form created (or found) the entry: the panel closes and focus follows the Dismiss rule.
@@ -537,7 +580,9 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
     if (assignment) {
         label += fillLabel(props.labels.preassigned_suffix, { project: assignment.project_name });
     }
-    if (meeting.dismissed) label += props.labels.dismissed_suffix;
+    // An occurrence of an ignored series reads as such instead of ", dismissed" (UI-SPEC section 5).
+    if (meeting.series_ignored === true) label += props.labels.series_ignored_suffix;
+    else if (meeting.dismissed) label += props.labels.dismissed_suffix;
     return isSelected(meeting.id) ? label + props.labels.selected_suffix : label;
 }
 
@@ -579,13 +624,16 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                 @restore="onRestore(box.meeting)"
                 @create="onCreate(box.meeting)"
                 @confirm="onConfirm(box.meeting)"
+                @ignore-series="onIgnoreSeries(box.meeting)"
+                @unignore-series="onUnignoreSeries(box.meeting)"
+                @forget-series="onForgetSeries(box.meeting)"
                 @converted="onConverted(box.meeting)"
                 @cancel-form="onCancelForm(box.meeting)">
                 <HoverCardTrigger as-child>
                     <div
                         class="m365-ghost m365-meeting absolute pointer-events-auto select-none rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"
                         :class="{
-                            'm365-meeting--dismissed': box.meeting.dismissed,
+                            'm365-meeting--dismissed': isFaded(box.meeting),
                             'm365-meeting--cascaded': box.cascade > 0,
                             'rounded-t-none': box.isClippedStart,
                             'rounded-b-none': box.isClippedEnd,
@@ -626,7 +674,7 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                 </template>
                                 <span
                                     class="m365-meeting__subject min-w-0 truncate"
-                                    :class="{ 'font-semibold': !box.meeting.dismissed }"
+                                    :class="{ 'font-semibold': !isFaded(box.meeting) }"
                                     data-ghost-subject>
                                     {{ subjectOf(box.meeting) }}
                                 </span>
@@ -645,7 +693,7 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                 <span
                                     class="m365-meeting__subject min-w-0 break-words"
                                     :class="{
-                                        'font-semibold': !box.meeting.dismissed,
+                                        'font-semibold': !isFaded(box.meeting),
                                         truncate: subjectLinesOf(box) === 1,
                                         'line-clamp-2': subjectLinesOf(box) === 2,
                                     }"
@@ -657,7 +705,7 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                     class="m365-meeting__meta flex min-w-0 items-center gap-1"
                                     data-ghost-time>
                                     <EyeOff
-                                        v-if="box.meeting.dismissed"
+                                        v-if="isFaded(box.meeting)"
                                         class="size-3 shrink-0"
                                         aria-hidden="true" />
                                     <CalendarDays
