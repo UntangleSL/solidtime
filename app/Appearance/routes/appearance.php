@@ -20,4 +20,8 @@ Route::middleware(['web', 'auth:web', 'auth.session', 'verified'])->group(functi
         ->whereUuid('organization')
         ->middleware('throttle:20,1,org-icon:')
         ->name('organizations.icon.store');
+    Route::delete('/organizations/{organization}/icon', [OrganizationIconController::class, 'destroy'])
+        ->whereUuid('organization')
+        ->middleware('throttle:20,1,org-icon:')
+        ->name('organizations.icon.destroy');
 });

@@ -11,6 +11,7 @@ use App\Models\Organization;
 use App\Support\Base64File;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -52,6 +53,25 @@ class OrganizationIconController extends Controller
         }
 
         return response()->json(['url' => $disk->url($path)]);
+    }
+
+    /**
+     * Remove the icon. Idempotent: 204 also when there is no icon.
+     *
+     * @throws AuthorizationException
+     */
+    public function destroy(Organization $organization): Response
+    {
+        $this->authorizeUpdate($organization);
+
+        $icon = OrganizationIcon::query()->where('organization_id', '=', $organization->getKey())->first();
+        if ($icon !== null) {
+            $path = $icon->path;
+            $icon->delete();
+            Storage::disk($this->diskName())->delete($path);
+        }
+
+        return response()->noContent();
     }
 
     /**

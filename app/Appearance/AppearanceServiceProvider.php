@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace App\Appearance;
 
 use App\Appearance\Http\Middleware\ShareAppearanceInertiaData;
+use App\Appearance\Listeners\DeleteOrganizationIconFile;
+use App\Events\BeforeOrganizationDeletion;
 use Illuminate\Routing\Router;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 /**
@@ -26,6 +29,10 @@ class AppearanceServiceProvider extends ServiceProvider
     {
         // The appearance prop is shared per request from this middleware (see its docblock for why).
         $router->pushMiddlewareToGroup('web', ShareAppearanceInertiaData::class);
+
+        // Organization icon files are removed with the organization (Filament action and user deletion
+        // included: they all go through DeletionService::deleteOrganization)
+        Event::listen(BeforeOrganizationDeletion::class, DeleteOrganizationIconFile::class);
 
         $this->loadRoutesFrom(__DIR__.'/routes/appearance.php');
         $this->loadMigrationsFrom(__DIR__.'/database/migrations');
