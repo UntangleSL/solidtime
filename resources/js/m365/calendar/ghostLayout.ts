@@ -20,9 +20,11 @@ export interface GhostVisibleSettings {
     endHour: number;
 }
 
-// Layout decision D-23: width of the reserved right-hand Outlook lane of a day column.
+// Phase 3.1 D-04 (half-lane rule, supersedes Phase 3 D-23): on every day with a meeting the day
+// column splits into "My time" (left, entries) and "Outlook" (right, this lane). Week view: half the
+// column, at least 88px, always leaving 52px for entries. Day view: a 260px to 420px panel.
 export function ghostLaneWidth(isDayView: boolean): string {
-    return isDayView ? 'min(240px, 25%)' : 'max(16px, 30%)';
+    return isDayView ? 'min(420px, max(260px, 38%))' : 'min(max(88px, 50%), calc(100% - 52px))';
 }
 
 interface PlacedGhost {

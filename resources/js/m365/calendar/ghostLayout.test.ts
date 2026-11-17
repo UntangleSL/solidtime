@@ -251,8 +251,8 @@ describe('layoutGhostsForDay', () => {
 });
 
 describe('ghostLaneWidth', () => {
-    it('reserves 30% (min 16px) in week view and 25% (max 240px) in day view', () => {
-        expect(ghostLaneWidth(false)).toBe('max(16px, 30%)');
-        expect(ghostLaneWidth(true)).toBe('min(240px, 25%)');
+    it('reserves half the week column and a 260-420px day panel', () => {
+        expect(ghostLaneWidth(false)).toBe('min(max(88px, 50%), calc(100% - 52px))');
+        expect(ghostLaneWidth(true)).toBe('min(420px, max(260px, 38%))');
     });
 });

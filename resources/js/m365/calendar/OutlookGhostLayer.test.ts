@@ -16,7 +16,25 @@ import { getLocalizedDayJs, getLocalizedDayJsFromMinutes } from '@/packages/ui/s
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 
 const DAY = '2026-10-20';
-const LANE = 'max(16px, 30%)';
+const LANE = ghostLaneWidth(false);
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Events container: inline right = lane + 4px (only on days with a lane)
+function entriesRightPattern(lane: string): RegExp {
+    return new RegExp(
+        `class="absolute inset-y-0 left-0\\.5 right-0\\.5[^"]*" style="right:calc\\(${escapeRegExp(lane)} \\+ 4px\\);?"`
+    );
+}
+
+// Outlook layer: flush with the 2px right edge, width = lane, washed and pointer-transparent
+function lanePattern(lane: string): RegExp {
+    return new RegExp(
+        `role="group"[^>]*data-testid="outlook-lane"[^>]*class="m365-lane absolute inset-y-0 right-0\\.5 pointer-events-none"[^>]*style="width:${escapeRegExp(lane)};?"`
+    );
+}
 
 const labels = {
     no_subject: '(No subject)',
@@ -209,14 +227,8 @@ describe('OutlookGhostLayer in a day column', () => {
     it('days with ghosts inset the events container by the Outlook lane', async () => {
         const html = await renderHtml([meeting()], LANE);
 
-        // Events container: inline right = lane + 4px (only on days with a lane)
-        expect(html).toMatch(
-            /class="absolute inset-y-0 left-0\.5 right-0\.5[^"]*" style="right:calc\(max\(16px, 30%\) \+ 4px\);?"/
-        );
-        // Ghost layer: flush with the 2px right edge, width = lane
-        expect(html).toMatch(
-            /role="group"[^>]*class="absolute inset-y-0 right-0\.5 pointer-events-none"[^>]*style="width:max\(16px, 30%\);?"/
-        );
+        expect(html).toMatch(entriesRightPattern(LANE));
+        expect(html).toMatch(lanePattern(LANE));
 
         const mounted = mountHarness([meeting()]);
         wrapper = mounted.wrapper;
@@ -255,8 +267,42 @@ describe('OutlookGhostLayer in a day column', () => {
     });
 
     it('uses the lane width helper for both views', () => {
-        expect(ghostLaneWidth(false)).toBe('max(16px, 30%)');
-        expect(ghostLaneWidth(true)).toBe('min(240px, 25%)');
+        expect(ghostLaneWidth(false)).toBe('min(max(88px, 50%), calc(100% - 52px))');
+        expect(ghostLaneWidth(true)).toBe('min(420px, max(260px, 38%))');
+    });
+
+    it('marks the Outlook lane', () => {
+        const mounted = mountHarness([meeting()]);
+        wrapper = mounted.wrapper;
+
+        const layer = wrapper.find('[data-testid="outlook-lane"]');
+        expect(layer.exists()).toBe(true);
+        expect(layer.attributes('role')).toBe('group');
+        expect(layer.classes()).toContain('m365-lane');
+        expect(layer.classes()).toContain('pointer-events-none');
+    });
+
+    it('renders a solid barred block', () => {
+        const mounted = mountHarness([meeting()]);
+        wrapper = mounted.wrapper;
+
+        const block = wrapper.find('[data-calendar-overlay]');
+        expect(block.classes()).toContain('m365-ghost');
+        expect(block.classes()).toContain('m365-meeting');
+        expect(block.classes()).toContain('rounded-sm');
+        expect(block.classes()).not.toContain('m365-meeting--dismissed');
+        expect(block.classes().some((cls) => cls.startsWith('shadow'))).toBe(false);
+        expect(block.classes().some((cls) => cls.startsWith('border-dashed'))).toBe(false);
+        expect(block.attributes('data-ghost-id')).toBe('m-1');
+        expect(block.attributes('role')).toBe('button');
+        expect(block.attributes('tabindex')).toBe('0');
+        expect(block.attributes('data-event-id')).toBeUndefined();
+        for (const cls of ['fc-event', 'touch-none', 'fc-event-resizer']) {
+            expect(block.classes()).not.toContain(cls);
+        }
+        expect(block.find('.fc-event-resizer').exists()).toBe(false);
+        // 1px gap under every block: a 60 minute meeting is drawn 59px tall
+        expect((block.element as HTMLElement).style.height).toBe('59px');
     });
 });
 
@@ -320,17 +366,16 @@ describe('D-01 reachability: a meeting beside a logged entry', () => {
         const entry = wrapper.find('.fc-event');
         expect(ghost.exists()).toBe(true);
         expect((ghost.element as HTMLElement).style.top).toBe('600px');
-        expect((ghost.element as HTMLElement).style.height).toBe('60px');
+        // 1px gap under every meeting block
+        expect((ghost.element as HTMLElement).style.height).toBe('59px');
         expect((entry.element as HTMLElement).style.top).toBe('600px');
         expect((entry.element as HTMLElement).style.height).toBe('60px');
 
         // ...and the two never share horizontal space: events container right = lane + 4px,
         // ghost layer flush right with width = lane (disjoint)
         const html = await renderHtml([sameTime], lane, entryColumnProps());
-        expect(html).toContain('style="right:calc(max(16px, 30%) + 4px);"');
-        expect(html).toMatch(
-            /class="absolute inset-y-0 right-0\.5 pointer-events-none"[^>]*style="width:max\(16px, 30%\);?"/
-        );
+        expect(html).toContain(`style="right:calc(${lane} + 4px);"`);
+        expect(html).toMatch(lanePattern(lane));
         expect(wrapper.find('[role="group"]').classes()).toContain('right-0.5');
 
         // Clicking the ghost neither reaches the entry nor starts a selection
@@ -508,47 +553,109 @@ describe('ghost content by available height', () => {
         });
     }
 
-    it('under 24px shows the marker icon and the subject only', () => {
-        wrapper = mountLayer([lasting(20)], true);
+    function tierOf(ghost: ReturnType<VueWrapper['find']>): string | undefined {
+        return ghost.find('[data-ghost-tier]').attributes('data-ghost-tier');
+    }
+
+    it('under 18px shows the subject only, without a time line icon', () => {
+        // a 10 minute meeting is drawn at the 16px minimum
+        wrapper = mountLayer([lasting(10)], true);
 
         const ghost = wrapper.find('[data-calendar-overlay]');
-        expect(ghost.find('svg').exists()).toBe(true);
+        expect(tierOf(ghost)).toBe('1');
         expect(ghost.text()).toBe('Sprint planning');
+        expect(ghost.find('svg').exists()).toBe(false);
+        expect(ghost.find('[data-ghost-subject]').classes()).toContain('font-semibold');
     });
 
-    it('24px to 39px shows the subject only in week view and adds the time inline in day view', () => {
-        wrapper = mountLayer([lasting(30)], false);
-        expect(wrapper.find('[data-calendar-overlay]').text()).toBe('Sprint planning');
+    it('18px to 31px shows the subject on one line only', () => {
+        wrapper = mountLayer([lasting(25)], false);
+        let ghost = wrapper.find('[data-calendar-overlay]');
+        expect(tierOf(ghost)).toBe('2');
+        expect(ghost.text()).toBe('Sprint planning');
+        expect(ghost.find('[data-ghost-subject]').classes()).toContain('truncate');
+        expect(ghost.find('[data-ghost-time]').exists()).toBe(false);
         wrapper.unmount();
 
-        wrapper = mountLayer([lasting(30)], true);
-        const ghost = wrapper.find('[data-calendar-overlay]');
-        expect(ghost.text()).toContain('Sprint planning');
-        expect(ghost.find('[data-ghost-time-inline]').text()).toBe('10:00 – 10:30');
+        wrapper = mountLayer([lasting(25)], true);
+        ghost = wrapper.find('[data-calendar-overlay]');
+        expect(tierOf(ghost)).toBe('2');
         expect(ghost.text()).not.toContain('Ada Lovelace');
+        expect(ghost.find('svg.lucide-calendar-days').exists()).toBe(false);
     });
 
-    it('40px and over shows the time line, plus the organizer in day view', () => {
-        wrapper = mountLayer([lasting(60)], false);
-        expect(wrapper.find('[data-calendar-overlay]').text()).toContain('10:00 – 11:00');
-        expect(wrapper.find('[data-calendar-overlay]').text()).not.toContain('Ada Lovelace');
+    it('32px to 45px adds the time line with the CalendarDays icon', () => {
+        wrapper = mountLayer([lasting(40)], false);
+
+        const ghost = wrapper.find('[data-calendar-overlay]');
+        expect(tierOf(ghost)).toBe('3');
+        const subject = ghost.find('[data-ghost-subject]');
+        expect(subject.classes()).toContain('truncate');
+        expect(subject.classes()).not.toContain('line-clamp-2');
+        const time = ghost.find('[data-ghost-time]');
+        expect(time.text()).toBe('10:00 – 10:40');
+        expect(time.find('svg.lucide-calendar-days').exists()).toBe(true);
+    });
+
+    it('from 46px the subject clamps to two lines; week view never shows the organizer', () => {
+        wrapper = mountLayer([lasting(50)], false);
+        let ghost = wrapper.find('[data-calendar-overlay]');
+        expect(tierOf(ghost)).toBe('4');
+        expect(ghost.find('[data-ghost-subject]').classes()).toContain('line-clamp-2');
+        expect(ghost.find('[data-ghost-time]').text()).toBe('10:00 – 10:50');
+        expect(ghost.text()).not.toContain('Ada Lovelace');
         wrapper.unmount();
 
-        wrapper = mountLayer([lasting(60)], true);
-        const text = wrapper.find('[data-calendar-overlay]').text();
-        expect(text).toContain('Sprint planning');
-        expect(text).toContain('10:00 – 11:00');
-        expect(text).toContain('Ada Lovelace');
-        expect(wrapper.find('[data-ghost-time-inline]').exists()).toBe(false);
+        wrapper = mountLayer([lasting(100)], false);
+        ghost = wrapper.find('[data-calendar-overlay]');
+        expect(tierOf(ghost)).toBe('4');
+        expect(ghost.find('[data-ghost-organizer]').exists()).toBe(false);
+        wrapper.unmount();
+
+        // day view under 60px stays at T4 as well
+        wrapper = mountLayer([lasting(50)], true);
+        expect(tierOf(wrapper.find('[data-calendar-overlay]'))).toBe('4');
+    });
+
+    it('from 60px in day view adds the organizer line', () => {
+        wrapper = mountLayer([lasting(100)], true);
+        let ghost = wrapper.find('[data-calendar-overlay]');
+        expect(tierOf(ghost)).toBe('5');
+        const organizer = ghost.find('[data-ghost-organizer]');
+        expect(organizer.text()).toBe('Ada Lovelace');
+        expect(organizer.find('svg.lucide-user').exists()).toBe(true);
+        expect(ghost.find('[data-ghost-time]').text()).toBe('10:00 – 11:40');
+        wrapper.unmount();
+
+        wrapper = mountLayer([lasting(100, { is_organizer: true })], true);
+        ghost = wrapper.find('[data-calendar-overlay]');
+        expect(ghost.find('[data-ghost-organizer]').text()).toBe('You are the organizer');
     });
 
     it('shows a Video icon for online meetings only', () => {
+        // time line tiers: right-aligned in the time line
         wrapper = mountLayer([lasting(60, { is_online_meeting: true })], false);
-        expect(wrapper.find('[data-calendar-overlay]').findAll('svg')).toHaveLength(2);
+        let ghost = wrapper.find('[data-calendar-overlay]');
+        expect(ghost.find('[data-ghost-time] svg.lucide-video').exists()).toBe(true);
+        expect(ghost.findAll('svg')).toHaveLength(2);
+        wrapper.unmount();
+
+        // one-line tiers: trailing the subject, no leading icon
+        wrapper = mountLayer([lasting(25, { is_online_meeting: true })], false);
+        ghost = wrapper.find('[data-calendar-overlay]');
+        expect(ghost.findAll('svg')).toHaveLength(1);
+        expect(ghost.find('svg.lucide-video').exists()).toBe(true);
         wrapper.unmount();
 
         wrapper = mountLayer([lasting(60)], false);
-        expect(wrapper.find('[data-calendar-overlay]').findAll('svg')).toHaveLength(1);
+        ghost = wrapper.find('[data-calendar-overlay]');
+        expect(ghost.find('svg.lucide-video').exists()).toBe(false);
+        expect(ghost.findAll('svg')).toHaveLength(1);
+    });
+
+    it('never fades meeting text with opacity', () => {
+        wrapper = mountLayer([lasting(100, { dismissed: true })], true);
+        expect(wrapper.html()).not.toMatch(/\bopacity-/);
     });
 
     it('squares the clipped side of a meeting that crosses midnight', () => {
@@ -681,8 +788,7 @@ describe('OutlookGhostLayer detail panel', () => {
         await settle();
 
         expect(ghost.getAttribute('aria-expanded')).toBe('true');
-        expect(ghost.getAttribute('data-state')).toBe('open');
-        expect(ghost.className).toContain('data-[state=open]:ring-accent-500');
+        expect(ghost.hasAttribute('data-panel-open')).toBe(true);
         const dialog = document.body.querySelector('[role="dialog"]');
         expect(dialog?.textContent).toContain('Sprint planning');
     });
@@ -702,6 +808,25 @@ describe('OutlookGhostLayer detail panel', () => {
         expect(ghost.getAttribute('aria-expanded')).toBe('false');
         // Reka hands focus back to the trigger, which is the ghost
         expect(document.activeElement).toBe(ghost);
+    });
+
+    it('drives the open-panel ring from data-panel-open', async () => {
+        wrapper = mountInteractive([meeting()]).wrapper;
+        const ghost = ghostElements()[0]!;
+
+        expect(ghost.hasAttribute('data-panel-open')).toBe(false);
+        expect(ghost.className).toContain('data-[panel-open]:ring-2');
+        expect(ghost.className).toContain('data-[panel-open]:ring-accent-700');
+        expect(ghost.className).toContain('dark:data-[panel-open]:ring-accent-200');
+        expect(ghost.className).not.toContain('data-[state=open]');
+
+        ghost.click();
+        await settle();
+        expect(ghost.hasAttribute('data-panel-open')).toBe(true);
+
+        keydown(document.body, 'Escape');
+        await settle();
+        expect(ghost.hasAttribute('data-panel-open')).toBe(false);
     });
 
     it('offers no Dismiss button when the context cannot act', async () => {
@@ -775,15 +900,20 @@ describe('OutlookGhostLayer dismissed variant', () => {
         ).wrapper;
 
         const [dismissed, regular] = ghostElements();
-        expect(dismissed!.classList.contains('m365-ghost--dismissed')).toBe(true);
-        expect(dismissed!.classList.contains('border-dotted')).toBe(true);
-        expect(dismissed!.classList.contains('border-dashed')).toBe(false);
+        // The dismissed modifier carries the dotted border and drops the bar (scoped style)
+        expect(dismissed!.classList.contains('m365-meeting--dismissed')).toBe(true);
+        expect(dismissed!.classList.contains('m365-meeting')).toBe(true);
+        expect(
+            dismissed!.querySelector('[data-ghost-subject]')!.classList.contains('font-semibold')
+        ).toBe(false);
         expect(dismissed!.querySelector('svg.lucide-eye-off')).not.toBeNull();
         expect(dismissed!.querySelector('svg.lucide-calendar-days')).toBeNull();
         expect(dismissed!.getAttribute('aria-label')).toMatch(/, dismissed$/);
 
-        expect(regular!.classList.contains('m365-ghost--dismissed')).toBe(false);
-        expect(regular!.classList.contains('border-dashed')).toBe(true);
+        expect(regular!.classList.contains('m365-meeting--dismissed')).toBe(false);
+        expect(
+            regular!.querySelector('[data-ghost-subject]')!.classList.contains('font-semibold')
+        ).toBe(true);
         expect(regular!.querySelector('svg.lucide-calendar-days')).not.toBeNull();
         expect(regular!.getAttribute('aria-label')).not.toMatch(/dismissed/);
     });
@@ -806,7 +936,7 @@ describe('OutlookGhostLayer dismissed variant', () => {
         expect(document.body.querySelector('[role="dialog"]')).toBeNull();
         const ghosts = ghostElements();
         expect(ghosts).toHaveLength(1);
-        expect(ghosts[0]!.classList.contains('m365-ghost--dismissed')).toBe(false);
+        expect(ghosts[0]!.classList.contains('m365-meeting--dismissed')).toBe(false);
         expect(document.activeElement).toBe(ghosts[0]);
     });
 
@@ -835,7 +965,7 @@ describe('OutlookGhostLayer dismissed variant', () => {
         expect(mounted.dismiss).toHaveBeenCalledWith('a');
         const ghosts = ghostElements();
         expect(ghosts).toHaveLength(2);
-        expect(ghosts[0]!.classList.contains('m365-ghost--dismissed')).toBe(true);
+        expect(ghosts[0]!.classList.contains('m365-meeting--dismissed')).toBe(true);
         expect(document.activeElement).toBe(ghosts[0]);
         // Not the neighbour: the focused ghost is the one that was dismissed
         expect(document.activeElement).not.toBe(ghosts[1]);
