@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import chroma from 'chroma-js';
 import { readShippedCss } from './shippedCss';
+import { ACCENT_IDS, ACCENT_PRESETS, DEFAULT_ACCENT, isAccentId } from './accentPresets';
 
 const themeCss = readShippedCss('untangle-theme.css');
+const presetsCss = readShippedCss('accent-presets.css');
 const appCss = readShippedCss('app.css');
 
 type Blocks = Map<string, Record<string, string>>;
@@ -156,5 +158,80 @@ describe('untangle-theme.css (BRAND-01)', () => {
         expect(themeCss).not.toMatch(/@font-face/);
         expect(themeCss).not.toMatch(/syne/i);
         expect(appCss).not.toMatch(/syne/i);
+    });
+});
+
+const presetBlocks = parseBlocks(presetsCss);
+const NON_BASELINE = ['azure', 'indigo', 'violet', 'ember', 'graphite'];
+
+function scaleOf(mode: 'light' | 'dark', id: string): Record<string, string> {
+    const baseline = mode === 'dark' ? dark : light;
+    if (id === 'untangle') return baseline;
+    return presetBlocks.get(`html:root.${mode}.accent-${id}`) ?? {};
+}
+
+describe('accent presets (D-04)', () => {
+    it('accent-presets.css holds one block per mode for the five non-baseline presets', () => {
+        const expected = NON_BASELINE.flatMap((id) => [
+            `html:root.light.accent-${id}`,
+            `html:root.dark.accent-${id}`,
+        ]);
+        expect([...presetBlocks.keys()].sort()).toEqual([...expected].sort());
+        for (const [selector, props] of presetBlocks) {
+            expect(Object.keys(props).sort(), selector).toEqual(
+                STEPS.map((s) => `--color-accent-${s}`).sort()
+            );
+            for (const value of Object.values(props)) {
+                expect(value, selector).toMatch(/^\d{1,3}, \d{1,3}, \d{1,3}$/);
+            }
+        }
+        expect(presetsCss).not.toMatch(/accent-untangle/);
+    });
+
+    it('lists the six presets in order with Untangle as the default', () => {
+        expect(ACCENT_PRESETS.map((p) => p.id)).toEqual([
+            'untangle',
+            'azure',
+            'indigo',
+            'violet',
+            'ember',
+            'graphite',
+        ]);
+        expect(ACCENT_PRESETS.map((p) => p.name)).toEqual([
+            'Untangle',
+            'Azure',
+            'Indigo',
+            'Violet',
+            'Ember',
+            'Graphite',
+        ]);
+        expect(ACCENT_IDS).toEqual(ACCENT_PRESETS.map((p) => p.id));
+        expect(DEFAULT_ACCENT).toBe('untangle');
+    });
+
+    it('isAccentId accepts every preset id and rejects anything else', () => {
+        for (const id of ACCENT_IDS) {
+            expect(isAccentId(id), id).toBe(true);
+        }
+        for (const value of ['rose', 'gold', 'sky', '', null, undefined, 42, {}, 'Untangle']) {
+            expect(isAccentId(value), String(value)).toBe(false);
+        }
+    });
+
+    it.each(ACCENT_PRESETS.map((p) => [p.id, p] as const))(
+        'swatches of %s equal the stylesheet (light 400, dark 300)',
+        (_id, preset) => {
+            const light400 = scaleOf('light', preset.id)['--color-accent-400'];
+            const dark300 = scaleOf('dark', preset.id)['--color-accent-300'];
+            expect(chroma(preset.swatch.light).rgb().join(', ')).toBe(light400);
+            expect(chroma(preset.swatch.dark).rgb().join(', ')).toBe(dark300);
+        }
+    );
+
+    it('app.css imports accent-presets.css right after untangle-theme.css', () => {
+        const appLines = lines(appCss).map((l) => l.trim());
+        const themeIdx = appLines.indexOf("@import './untangle-theme.css';");
+        expect(themeIdx).toBeGreaterThanOrEqual(0);
+        expect(appLines[themeIdx + 1]).toBe("@import './accent-presets.css';");
     });
 });

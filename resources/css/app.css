@@ -1,6 +1,7 @@
 /* Import shared solidtime styles from UI package */
 @import '../js/packages/ui/styles.css';
 @import './untangle-theme.css';
+@import './accent-presets.css';
 
 /* Main app specific styles - Inter font */
 @font-face {
