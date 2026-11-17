@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace App\Appearance;
 
 use App\Appearance\Http\Requests\AppearanceUpdateRequest;
+use App\Appearance\Models\OrganizationIcon;
 use App\Appearance\Models\UserAppearanceSetting;
+use App\Models\Member;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Reads a user's stored appearance for the Inertia prop and for the pre-paint partial.
@@ -66,9 +69,10 @@ class AppearanceResolver
 
     /**
      * The `appearance` Inertia prop: the session user's own values, the preset ids, the update URL
-     * (null for guests) and the phase copy for the current locale.
+     * (null for guests), the phase copy for the current locale and the icon URLs of the user's own
+     * organizations (`org_icons`, keyed by organization id; empty for guests).
      *
-     * @return array{theme: string|null, accent: string|null, accents: list<string>, update_url: string|null, labels: array<string, string>, presets: array<string, string>}
+     * @return array{theme: string|null, accent: string|null, accents: list<string>, update_url: string|null, labels: array<string, string>, presets: array<string, string>, org_icons: array<string, string>}
      */
     public function sharedProps(): array
     {
@@ -82,7 +86,33 @@ class AppearanceResolver
             'update_url' => $user !== null ? route('appearance.update') : null,
             'labels' => $this->strings('branding.ui'),
             'presets' => $this->strings('branding.presets'),
+            'org_icons' => $this->organizationIcons($user),
         ];
+    }
+
+    /**
+     * Public icon URLs of the organizations the user is a member of (one query), never of others.
+     *
+     * @return array<string, string>
+     */
+    public function organizationIcons(?User $user): array
+    {
+        if ($user === null) {
+            return [];
+        }
+
+        $disk = Storage::disk((string) config('filesystems.public'));
+        $icons = [];
+        $rows = OrganizationIcon::query()
+            ->whereIn('organization_id', Member::query()
+                ->where('user_id', '=', $user->getKey())
+                ->select('organization_id'))
+            ->get(['organization_id', 'path']);
+        foreach ($rows as $icon) {
+            $icons[$icon->organization_id] = $disk->url($icon->path);
+        }
+
+        return $icons;
     }
 
     private function sessionUser(): ?User
