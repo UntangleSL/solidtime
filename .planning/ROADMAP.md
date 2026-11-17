@@ -183,13 +183,13 @@ Plans:
   5. The mouse wheel / trackpad navigates the calendar predictably (scroll through hours, and a zoom gesture to change the hour height).
   6. After pressing Sync Outlook the user can see when it can be pressed again (visible short cooldown), and automatic syncs from week navigation do not keep the manual button disabled.
 
-**Plans**: 8 plans
+**Plans**: 3/8 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 03.1-01-PLAN.md — Show weekends option (package-local Switch), sanitised calendar settings, full-week range, hidden-weekend deep link, browser proof (wave 1)
-- [ ] 03.1-02-PLAN.md — Visible Sync cooldown (manual and back-off only, ring, "Sync in 8s", tooltip) and the phase's fork copy en/es (wave 1)
-- [ ] 03.1-03-PLAN.md — Solid, readable meeting blocks in a half-width Outlook lane (wash, divider, tiers, measured columns, cascade) with sky-blue and six-overlap browser fixtures (wave 1)
+- [x] 03.1-01-PLAN.md — Show weekends option (package-local Switch), sanitised calendar settings, full-week range, hidden-weekend deep link, browser proof (wave 1)
+- [x] 03.1-02-PLAN.md — Visible Sync cooldown (manual and back-off only, ring, "Sync in 8s", tooltip) and the phase's fork copy en/es (wave 1)
+- [x] 03.1-03-PLAN.md — Solid, readable meeting blocks in a half-width Outlook lane (wash, divider, tiers, measured columns, cascade) with sky-blue and six-overlap browser fixtures (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 03.1-04-PLAN.md — Meeting context menu through a core overlay slot, contextMenuOpen/interacting slot props, "My time | Outlook" header captions (wave 2)
@@ -201,6 +201,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 03.1-08-PLAN.md — Release: ten workflows green, ledger reconciliation, sha-pinned compose, owner-approved Dokploy deploy, public checks, owner UAT (wave 4, owner checkpoint)
+
 **UI hint**: yes
 
 ### Phase 03.2: Appearance & Untangle Branding (INSERTED)
@@ -214,13 +215,13 @@ Plans:
   3. An organization admin can upload or change the organization icon in the workspace settings, and it shows wherever the organization is displayed.
   4. Theme and colour changes keep text and calendar blocks readable (contrast checked in light and dark).
 
-**Plans**: 9 plans
+**Plans**: 3/9 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 03.2-01-PLAN.md — Untangle token stylesheet, six accent presets per mode, contrast gate (no Syne, D-10) over every theme x accent (wave 1)
-- [ ] 03.2-02-PLAN.md — Fork module app/Appearance: user_appearance_settings, PUT /user/appearance, appearance prop, en/es copy, TS prop contract (wave 1)
-- [ ] 03.2-03-PLAN.md — Contrast fixes (timer button, pale accent link/check/progress), e2e timer assertions; wave-1 CI gate (wave 1)
+- [x] 03.2-01-PLAN.md — Untangle token stylesheet, six accent presets per mode, contrast gate (no Syne, D-10) over every theme x accent (wave 1)
+- [x] 03.2-02-PLAN.md — Fork module app/Appearance: user_appearance_settings, PUT /user/appearance, appearance prop, en/es copy, TS prop contract (wave 1)
+- [x] 03.2-03-PLAN.md — Contrast fixes (timer button, pale accent link/check/progress), e2e timer assertions; wave-1 CI gate (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 03.2-04-PLAN.md — Pre-paint Blade partial (server > localStorage > default) in app and OAuth layouts, theme-color metas (wave 2)
@@ -233,6 +234,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 03.2-09-PLAN.md — Release: ten workflows green, operator doc, sha-pinned compose, owner-approved Dokploy deploy, public checks, owner UAT (wave 4, owner checkpoint)
+
 **UI hint**: yes
 
 ### Phase 4: Assign Meetings to Projects
@@ -321,8 +323,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 and 3.2 (parallel, both d
 | 1. Tenant Setup & Outlook Spike | 8/8 | Complete    | 2026-11-05 |
 | 2. Sign in with Microsoft | 11/11 | Complete    | 2026-11-05 |
 | 3. Outlook Meetings in the Calendar | 12/12 | Complete    | 2026-11-10 |
-| 3.1 Calendar UX Polish | 0/TBD | Not started | - |
-| 3.2 Appearance & Untangle Branding | 0/TBD | Not started | - |
+| 3.1 Calendar UX Polish | 3/8 | In Progress | - |
+| 3.2 Appearance & Untangle Branding | 3/9 | In Progress | - |
 | 4. Assign Meetings to Projects | 0/TBD | Not started | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |
