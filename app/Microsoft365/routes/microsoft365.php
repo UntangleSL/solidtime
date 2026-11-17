@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Microsoft365\Http\Controllers\MeetingConversionController;
 use App\Microsoft365\Http\Controllers\MicrosoftAccountController;
 use App\Microsoft365\Http\Controllers\MicrosoftAuthController;
 use App\Microsoft365\Http\Controllers\OutlookMeetingController;
@@ -19,7 +20,7 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
 });
 
 // Outlook meetings for the calendar. Web group (session + CSRF), never under api/ so openapi.json is untouched.
-// Both routes only ever act on the current user: no user id is accepted anywhere.
+// Every route only ever acts on the current user: no user id is accepted anywhere.
 Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.session', 'verified'])
     ->prefix('m365')
     ->group(function (): void {
@@ -40,4 +41,12 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
             ->whereUuid('meeting')
             ->middleware('throttle:60,1,m365-dismiss:')
             ->name('microsoft.meetings.restore');
+        // Turns the session user's own meetings into time entries in this organization (Phase 4). The
+        // parameter must be named `organization`: core's blocked-organization middleware and
+        // TimeEntryStoreRequest read it through route model binding. Web group, so openapi.json stays
+        // untouched (D-12); the body names meetings only, never a user or member.
+        Route::post('/organizations/{organization}/meetings/time-entries', [MeetingConversionController::class, 'store'])
+            ->whereUuid('organization')
+            ->middleware(['check-organization-blocked', 'throttle:30,1,m365-convert:'])
+            ->name('microsoft.meetings.convert');
     });
