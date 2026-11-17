@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Appearance\AppearanceServiceProvider;
 use App\Enums\CurrencyFormat;
 use App\Enums\DateFormat;
 use App\Enums\IntervalFormat;
@@ -248,6 +249,7 @@ return [
         RouteServiceProvider::class,
         FortifyServiceProvider::class,
         Microsoft365ServiceProvider::class,
+        AppearanceServiceProvider::class,
         // Warning: Do not add TelescopeServiceProvider here since it is already conditionally registered in AppServiceProvider
         LaravelModulesServiceProvider::class,
     ])->toArray(),
