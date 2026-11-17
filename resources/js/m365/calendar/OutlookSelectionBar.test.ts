@@ -487,7 +487,7 @@ describe('OutlookSelectionBar selection lifecycle', () => {
         selection.toggle('m-1');
         await settle();
 
-        const position = el('outlook-selection-bar-position');
+        const position = el('outlook-selection-placement');
         expect(position.className).toContain('fixed');
         expect(position.className).toContain('z-40');
         expect(position.style.left).toBe('600px');

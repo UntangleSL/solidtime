@@ -201,7 +201,7 @@ const placementStyle = computed(() =>
             v-if="visible && labels"
             class="fixed z-40 -translate-x-1/2"
             :style="placementStyle"
-            data-testid="outlook-selection-bar-position">
+            data-testid="outlook-selection-placement">
             <div
                 ref="barEl"
                 role="toolbar"
