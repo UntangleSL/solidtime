@@ -218,6 +218,16 @@ class OutlookSeriesSettingsTest extends TestCaseWithDatabase
         return $entryId;
     }
 
+    /**
+     * Confirm mode (05-05): meeting ids only, the server books the series assignment.
+     *
+     * @param  list<string>  $meetingIds
+     */
+    private function confirm(Organization $organization, array $meetingIds): TestResponse
+    {
+        return $this->convert($organization, ['meeting_ids' => $meetingIds, 'use_series_assignment' => true]);
+    }
+
     private function startImpersonation(): void
     {
         // The session key of stechstudio/filament-impersonate: the id of the admin who impersonates
@@ -582,6 +592,63 @@ class OutlookSeriesSettingsTest extends TestCaseWithDatabase
         // Assert: created, the series is still ignored and its other occurrences stay hidden
         $convert->assertOk();
         $convert->assertJsonPath('results.0.status', 'created');
+        $this->assertTrue($ignoredAt->equalTo($this->settingOf($data->user)?->ignored_at), 'ignored_at is unchanged');
+        $read->assertOk();
+        $this->assertSame([$week['d']->id], $this->ids($read));
+    }
+
+    public function test_confirm_after_forget_answers_no_assignment(): void
+    {
+        // Arrange: A converted to the first project, then the series is forgotten through B
+        $data = $this->employee();
+        $first = $this->publicProject($data->organization);
+        $second = $this->publicProject($data->organization);
+        $week = $this->week($data->user);
+        $this->convertTo($data->organization, $week['a'], $first);
+        $this->forget($week['b']->id)->assertNoContent();
+
+        // Act: confirm B, then a minute later convert C to the second project and confirm B again
+        $forgotten = $this->confirm($data->organization, [$week['b']->id]);
+        $this->travel(1)->minutes();
+        $this->convertTo($data->organization, $week['c'], $second);
+        $confirmed = $this->confirm($data->organization, [$week['b']->id]);
+
+        // Assert: nothing to confirm while forgotten; the next conversion brings the assignment back (D-11, D-05)
+        $forgotten->assertOk();
+        $forgotten->assertJsonPath('results.0.status', 'failed');
+        $forgotten->assertJsonPath('results.0.error.key', 'no_assignment');
+        $confirmed->assertOk();
+        $confirmed->assertJsonPath('results.0.status', 'created');
+        $entryId = $confirmed->json('results.0.time_entry_id');
+        $this->assertIsString($entryId);
+        $this->assertSame($second->getKey(), TimeEntry::query()->findOrFail($entryId)->project_id);
+        $this->assertSame(3, TimeEntry::query()->count());
+    }
+
+    public function test_confirming_an_ignored_occurrence_keeps_the_series_ignored(): void
+    {
+        // Arrange: A converted, then the series is ignored; B is still listed with include_dismissed
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $week = $this->week($data->user);
+        $this->convertTo($data->organization, $week['a'], $project);
+        $this->ignore($week['b']->id)->assertNoContent();
+        $ignoredAt = $this->settingOf($data->user)?->ignored_at;
+        $this->assertNotNull($ignoredAt);
+        $listed = $this->read(['include_dismissed' => '1']);
+        $this->assertTrue($this->item($listed, $week['b'])['series_ignored']);
+
+        // Act: B is confirmed explicitly a minute later (D-18)
+        $this->travel(1)->minutes();
+        $confirmed = $this->confirm($data->organization, [$week['b']->id]);
+        $read = $this->read();
+
+        // Assert: booked with the series assignment, the series still ignored and hidden
+        $confirmed->assertOk();
+        $confirmed->assertJsonPath('results.0.status', 'created');
+        $entryId = $confirmed->json('results.0.time_entry_id');
+        $this->assertIsString($entryId);
+        $this->assertSame($project->getKey(), TimeEntry::query()->findOrFail($entryId)->project_id);
         $this->assertTrue($ignoredAt->equalTo($this->settingOf($data->user)?->ignored_at), 'ignored_at is unchanged');
         $read->assertOk();
         $this->assertSame([$week['d']->id], $this->ids($read));

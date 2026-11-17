@@ -574,4 +574,33 @@ class OutlookMeetingSuggestionTest extends TestCaseWithDatabase
         $this->assertSame($before, $this->storedSnapshot());
         $this->assertSame(2, TimeEntry::query()->count());
     }
+
+    public function test_forgotten_series_history_does_not_suggest_itself(): void
+    {
+        // Arrange: three occurrences of a series with people from client.test converted to P, then the
+        // series is forgotten through its fourth occurrence
+        $data = $this->employee();
+        $p = $this->publicProject($data->organization);
+        $people = [['ana@client.test', 'Ana']];
+        foreach (['2026-10-19', '2026-10-20', '2026-10-21'] as $index => $day) {
+            $this->convertTo($data->organization, $this->occurrence($data->user, 'occ-'.$index, $day, $people), $p);
+        }
+        $fourth = $this->occurrence($data->user, 'occ-3', '2026-10-22', $people);
+        $single = $this->single($data->user, 'single', '2026-10-23 09:00:00', [['eva@client.test', 'Eva']]);
+        $this->assertSame($p->getKey(), $this->item($this->read(), $fourth)['assignment']['project_id'] ?? null);
+        $this->deleteJson(route('microsoft.meetings.series.forget', ['meeting' => $fourth->id], false))->assertNoContent();
+
+        // Act
+        $read = $this->read();
+
+        // Assert: the forgotten links neither pre-assign nor suggest their own series (RESEARCH Pitfall 9),
+        // while another meeting with the same client still learns from them
+        $read->assertOk();
+        $this->assertNull($this->item($read, $fourth)['assignment']);
+        $this->assertNotContains($p->getKey(), $this->suggestedProjectIds($read, $fourth));
+        $suggestions = $this->suggestionsOf($read, $single);
+        $this->assertNotEmpty($suggestions);
+        $this->assertSame($p->getKey(), $suggestions[0]['project_id']);
+        $this->assertSame(['kind' => 'domain', 'count' => 3, 'value' => 'client.test'], $suggestions[0]['reason']);
+    }
 }
