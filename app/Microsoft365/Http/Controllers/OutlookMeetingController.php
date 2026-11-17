@@ -12,6 +12,7 @@ use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -20,12 +21,14 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The calendar's two Outlook endpoints. Both answer only for the session user: there is no user id
  * input and every query is scoped by the authenticated user (CAL-03, D-16). While an admin impersonates
  * the user nothing is served (D-22): an empty list, no sync, and a 404 for dismiss and restore.
- * A meeting converted into a time entry is not listed while that entry exists (Phase 4 D-04).
+ * A meeting converted into a time entry is not listed while that entry exists (Phase 4 D-04); the read
+ * carries the ids of the user's entries created from meetings instead (linked_time_entry_ids).
  */
 class OutlookMeetingController extends Controller
 {
@@ -47,6 +50,7 @@ class OutlookMeetingController extends Controller
         if ($this->access->blocked() || $account === null || $account->calendarAccessState() === 'not_connected') {
             return OutlookMeetingResource::collection(collect())->additional([
                 'sync' => ['last_synced_at' => null, 'retry_after' => null],
+                'linked_time_entry_ids' => [],
             ]);
         }
 
@@ -85,7 +89,41 @@ class OutlookMeetingController extends Controller
                 // Seconds Graph is still backed off for (D-12): a reload keeps the Sync control waiting
                 'retry_after' => $account->backoffRemainingSeconds(),
             ],
+            'linked_time_entry_ids' => $this->linkedTimeEntryIds($user, $start, $end),
         ]);
+    }
+
+    /**
+     * Ids of the session user's own time entries that were created from a meeting and overlap the
+     * half-open range [start, end) by their own start and end (an entry without an end counts from its
+     * start). The meeting's time plays no part: an entry dragged to another week carries its Outlook icon
+     * there (Phase 4 D-04). An entry now owned by someone else is not the user's and is left out.
+     *
+     * @return list<string>
+     */
+    private function linkedTimeEntryIds(User $user, CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $rangeStart = $start->format('Y-m-d H:i:s');
+
+        $ids = DB::table('outlook_meeting_links')
+            ->join('time_entries', 'time_entries.id', '=', 'outlook_meeting_links.time_entry_id')
+            ->where('outlook_meeting_links.user_id', '=', $user->getKey())
+            ->where('time_entries.user_id', '=', $user->getKey())
+            ->where('time_entries.start', '<', $end->format('Y-m-d H:i:s'))
+            ->where(function (QueryBuilder $query) use ($rangeStart): void {
+                $query->where('time_entries.end', '>', $rangeStart)
+                    ->orWhere(function (QueryBuilder $running) use ($rangeStart): void {
+                        $running->whereNull('time_entries.end')
+                            ->where('time_entries.start', '>=', $rangeStart);
+                    });
+            })
+            ->orderBy('time_entries.start')
+            ->orderBy('time_entries.id')
+            ->pluck('time_entries.id')
+            ->map(fn (mixed $id): string => (string) $id)
+            ->all();
+
+        return array_values($ids);
     }
 
     /**
