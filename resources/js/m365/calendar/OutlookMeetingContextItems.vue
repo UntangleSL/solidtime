@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref } from 'vue';
-import { ExternalLink, Eye, EyeOff } from '@lucide/vue';
+import { ClockPlus, ExternalLink, Eye, EyeOff } from '@lucide/vue';
 import {
     ContextMenuItem,
     ContextMenuLabel,
@@ -10,10 +10,12 @@ import type { OutlookMeeting } from '@/m365/types';
 import { safeHttpsUrl } from './safeUrl';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
-// Items of the meeting context menu (UI-SPEC 3.1 section 4, D-06), rendered through the core
-// `context-menu-overlay` slot of TimeEntryCalendar for the right-clicked meeting block. The menu
-// only opens Outlook or dismisses / restores the meeting: nothing here creates, changes or deletes
-// a time entry. Meeting values are only ever rendered through text interpolation.
+// Items of the meeting context menu (UI-SPEC 3.1 section 4, D-06; Phase 4 UI-SPEC section 4),
+// rendered through the core `context-menu-overlay` slot of TimeEntryCalendar for the right-clicked
+// meeting block. The menu starts a conversion ("Create time entry" opens the meeting's form in its
+// panel once the menu has closed), opens Outlook or dismisses / restores the meeting; it never
+// changes or deletes a time entry itself. It always acts on the right-clicked meeting only. Meeting
+// values are only ever rendered through text interpolation.
 const props = defineProps<{
     element: HTMLElement;
 }>();
@@ -94,6 +96,16 @@ async function onDismiss(): Promise<void> {
     (target ?? syncButton())?.focus();
 }
 
+// The panel opens in form mode only after the menu has closed (3.1 layering rule: never a panel
+// while the menu is open); the lane's formRequest watcher does the opening.
+async function onCreate(): Promise<void> {
+    const current = meeting.value;
+    if (!context || !current || !canAct.value) return;
+    const menu = rootEl.value?.closest('[role="menu"]') ?? null;
+    await afterMenuClosed(menu);
+    context.openForm(current.id);
+}
+
 async function onRestore(): Promise<void> {
     const current = meeting.value;
     if (!context || !current) return;
@@ -115,7 +127,14 @@ async function onRestore(): Promise<void> {
             data-testid="outlook-menu-label">
             {{ subject }}
         </ContextMenuLabel>
-        <!-- Reserved for Phase 4: "Create time entry" as the first item (not rendered yet) -->
+        <ContextMenuItem
+            v-if="canAct && meeting"
+            class="space-x-3"
+            data-testid="outlook-menu-create"
+            @select="onCreate()">
+            <ClockPlus class="w-4 h-4 text-icon-default" aria-hidden="true" />
+            <span>{{ labels.create_entry }}</span>
+        </ContextMenuItem>
         <ContextMenuItem
             v-if="link"
             class="space-x-3"

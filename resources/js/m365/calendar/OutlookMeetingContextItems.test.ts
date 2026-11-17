@@ -16,6 +16,9 @@ const labels = {
     opens_new_tab: '(opens in a new tab)',
     dismiss: 'Dismiss meeting',
     restore: 'Restore meeting',
+    create_entry: 'Create time entry',
+    select: 'Select meeting',
+    deselect: 'Deselect meeting',
 } as OutlookCalendarLabels;
 
 function meeting(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
@@ -54,6 +57,11 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
     const restore = vi.fn(async (id: string) => {
         list.value = list.value.map((m) => (m.id === id ? { ...m, dismissed: false } : m));
     });
+    // Records whether the menu was still in the DOM when the form was requested (layering rule).
+    const menuAtOpenForm: boolean[] = [];
+    const openForm = vi.fn((_id: string) => {
+        menuAtOpenForm.push(menu() !== null);
+    });
     const context = {
         labels: ref(labels),
         meetings: list,
@@ -61,8 +69,9 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
         includeDismissed,
         dismiss,
         restore,
+        openForm,
     } as unknown as OutlookMeetingsContext;
-    return { context, dismiss, restore, list };
+    return { context, dismiss, restore, list, openForm, menuAtOpenForm };
 }
 
 // A day lane like OutlookGhostLayer renders it: a group with focusable blocks in start order.
@@ -138,6 +147,15 @@ function unmountMenu(): void {
 
 function menu(): HTMLElement | null {
     return document.body.querySelector<HTMLElement>('[data-testid="outlook-meeting-menu"]');
+}
+
+// Test ids of the menu entries in DOM order, separators as 'separator'.
+function itemOrder(): string[] {
+    const root = menu();
+    if (!root) return [];
+    return Array.from(root.querySelectorAll<HTMLElement>('[data-testid], [role="separator"]')).map(
+        (el) => (el.getAttribute('role') === 'separator' ? 'separator' : el.dataset.testid!)
+    );
 }
 
 function item(testId: string): HTMLElement | null {
@@ -226,6 +244,45 @@ describe('OutlookMeetingContextItems', () => {
         expect(menu()?.querySelector('[role="separator"]')).toBeNull();
     });
 
+    it('lists the items in the UI-SPEC order', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([meeting({ web_link: 'https://outlook.example.test/a' })]);
+        await openMenu(block!, context);
+
+        expect(itemOrder()).toEqual([
+            'outlook-menu-label',
+            'outlook-menu-create',
+            'outlook-menu-open',
+            'separator',
+            'outlook-menu-dismiss',
+        ]);
+        expect(item('outlook-menu-create')?.textContent?.trim()).toBe('Create time entry');
+    });
+
+    it('"Create time entry" asks for the form only after the menu has closed', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context, openForm, menuAtOpenForm, dismiss } = fakeContext([meeting()]);
+        await openMenu(block!, context);
+
+        item('outlook-menu-create')?.click();
+
+        await vi.waitFor(() => expect(openForm).toHaveBeenCalledTimes(1));
+        expect(openForm).toHaveBeenCalledWith('m-1');
+        expect(menuAtOpenForm).toEqual([false]);
+        expect(menu()).toBeNull();
+        expect(dismiss).not.toHaveBeenCalled();
+    });
+
+    it('offers no "Create time entry" when the context cannot act', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context, openForm } = fakeContext([meeting()], { canAct: false });
+        await openMenu(block!, context);
+
+        expect(menu()).not.toBeNull();
+        expect(item('outlook-menu-create')).toBeNull();
+        expect(openForm).not.toHaveBeenCalled();
+    });
+
     it('selecting Dismiss calls dismiss(id)', async () => {
         const [block] = renderLane(['m-1']);
         const { context, dismiss, restore } = fakeContext([meeting()]);
@@ -269,7 +326,9 @@ describe('OutlookMeetingContextItems', () => {
         expect(item('outlook-menu-open')).toBeNull();
         expect(item('outlook-menu-dismiss')).toBeNull();
         expect(item('outlook-menu-restore')).toBeNull();
+        expect(item('outlook-menu-create')).toBeNull();
         expect(menu()?.querySelector('[role="separator"]')).toBeNull();
+        expect(itemOrder()).toEqual(['outlook-menu-label']);
     });
 });
 
