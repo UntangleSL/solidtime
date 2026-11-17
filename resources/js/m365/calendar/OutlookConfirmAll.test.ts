@@ -352,6 +352,27 @@ describe('OutlookConfirmAll', () => {
         );
     });
 
+    // Regression (CI Playwright): the trigger sits inside the tooltip, whose own popper root took the
+    // anchor, so the popover was never placed and stayed parked above the viewport. Floating UI only
+    // replaces reka's parking transform once it has a reference to measure.
+    it('anchors the popover to the toolbar button so it is placed on screen', async () => {
+        mountButton();
+        await settle();
+        const button = el('outlook-confirm-all');
+        const measured = vi.spyOn(button, 'getBoundingClientRect');
+        await openPopover();
+        await settle();
+
+        const wrapper = el('outlook-confirm-all-popover').closest<HTMLElement>(
+            '[data-reka-popper-content-wrapper]'
+        )!;
+        expect(wrapper).not.toBeNull();
+        expect(wrapper.style.transform).not.toBe('translate(0, -200%)');
+        expect(wrapper.style.transform).toMatch(/^translate\(-?[\d.]+px, -?[\d.]+px\)$/);
+        expect(measured).toHaveBeenCalled();
+        expect(el('outlook-confirm-all-popover').dataset.side).toBe('bottom');
+    });
+
     it('sends only the ticked meetings and keeps the checkbox of an unticked row', async () => {
         const request = deferred<void>();
         gate = request.promise;

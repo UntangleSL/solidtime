@@ -104,6 +104,12 @@ const noneSelected = ref(false);
 const summaryEl = ref<HTMLElement | null>(null);
 const titleId = useId();
 
+// The trigger sits inside the tooltip, and reka's PopoverTrigger registers its anchor with the
+// nearest popper root, which is the tooltip's: the popover would never get one and would stay
+// parked off screen. The content is anchored to the button explicitly instead.
+const triggerButton = ref<InstanceType<typeof Button> | null>(null);
+const anchor = computed(() => (triggerButton.value?.$el as HTMLElement | undefined) ?? undefined);
+
 // The button stays while its popover is open (it anchors it) and freezes its count meanwhile.
 const visible = computed(
     () => labels.value !== null && allowed.value && (count.value > 0 || open.value)
@@ -321,6 +327,7 @@ function onCloseAutoFocus(event: Event): void {
                     <span class="inline-flex">
                         <PopoverTrigger as-child>
                             <Button
+                                ref="triggerButton"
                                 type="button"
                                 variant="outline"
                                 size="sm"
@@ -351,6 +358,7 @@ function onCloseAutoFocus(event: Event): void {
             side="bottom"
             align="end"
             :side-offset="8"
+            :reference="anchor"
             class="w-96 space-y-4 p-4"
             data-testid="outlook-confirm-all-popover"
             :aria-labelledby="titleId"
