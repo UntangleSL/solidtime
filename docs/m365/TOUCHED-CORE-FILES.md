@@ -74,3 +74,70 @@ Phase 2 does not edit these upstream hot spots, so they cannot conflict because 
 - `config/octane.php`
 - `openapi.json`
 - `app/Models/User.php`
+
+## Phase 3.2 (Appearance & Untangle branding)
+
+Built from `git log --grep="(03.2-" --name-only b4e003e6..HEAD`. Owner decision D-10 (no Syne) means no
+font files were added; Inter stays the only typeface.
+
+### Core files edited
+
+| File | Change | Plan | Merge note |
+| --- | --- | --- | --- |
+| `resources/css/app.css` | Two `@import` lines after the core imports: `./untangle-theme.css` and `./accent-presets.css`. | 03.2-01 | Re-add the two imports after taking upstream's file; keep them after `styles.css` so the fork tokens win. |
+| `config/app.php` | `use App\Appearance\AppearanceServiceProvider;` and the provider added to the providers list. | 03.2-02 | Re-add the import and the one provider line. |
+| `resources/views/app.blade.php` | `@include('branding.early-theme')` at the top of `<head>` (before any stylesheet or bundle); the single `theme-color` meta replaced by two `media`-scoped metas (`#1C1C1C` dark, `#F9FCFD` light). | 03.2-04 | Re-add the include first in `<head>` and the two metas after taking upstream's file. |
+| `resources/views/auth/oauth/authorize.blade.php` | Upstream's inline theme script removed and replaced by `@include('branding.early-theme')` before `@vite`. | 03.2-04 | Take upstream's file, delete its inline theme script and re-add the include. |
+| `resources/js/Layouts/AppLayout.vue` | Import of `useAppearance` and one `useAppearance()` call (accent class and debounced server sync). | 03.2-06 | Re-add the import and the call. |
+| `resources/js/Pages/Profile/Partials/ThemeForm.vue` | `AccentPicker` after the Theme select; the "System default: …" helper replaced by the localized `theme_helper` text (computed from `theme` and the `appearance` labels); `usePreferredColorScheme` import dropped. | 03.2-06 | Re-apply the imports, the computed helper, the description binding and the `<AccentPicker />` line. |
+| `resources/js/utils/theme.ts` | One leftover `console.log(preferredColor.value)` removed. | 03.2-06 | Drop the line again if upstream still has it. |
+| `resources/js/utils/commandPaletteCommands.ts` | `'accent'` added to the command group union (reformatted one member per line) and `accent: 150` to `GROUP_PRIORITIES`. | 03.2-06 | Re-add the union member and the priority. |
+| `resources/js/utils/useCommandPalette.ts` | Imports of `createAccentCommands` and `setAccent`, the `{ id: 'accent', heading: 'Accent color' }` group, an `accentCommands` computed and its spread into the command list. | 03.2-06 | Re-add the two imports, the group, the computed and the spread. |
+| `resources/js/Components/OrganizationSwitcher.vue` | The `bg-blue-900` letter tile in the trigger replaced by `<OrganizationIcon size="sm">`; an `<OrganizationIcon>` added to each "Switch Organizations" row; `useOrganizationIcons()` for the URLs. `data-testid` and texts unchanged. | 03.2-07 | Re-apply the two imports, the composable call and the two `OrganizationIcon` usages. |
+| `resources/js/Pages/Teams/Partials/UpdateTeamNameForm.vue` | `OrganizationIconField` before the Organization Name field; Save awaits `iconField.commit()` after the organization update; the reload also asks for the `appearance` prop. | 03.2-07 | Re-add the import, the ref, the `commit()` call, `'appearance'` in `only` and the field component. |
+| `resources/js/packages/ui/src/TimeTrackerStartStop.vue` | Stopped (and active default) button uses the solid accent fill (`--theme-color-accent-solid` / `-hover`) with `--color-on-accent` text; `text-white` moved from the shared classes to the red running state; the break state uses `text-[#1C1C1C]`. | 03.2-03 | Re-apply the class strings after taking upstream's file (contrast gate, BRAND-04). |
+| `resources/js/Pages/Teams/Partials/ExportData.vue` | Export link `text-accent-500 hover:text-accent-600 dark:text-accent-200 dark:hover:text-accent-300`. | 03.2-03 | Re-apply the light-safe class pair. |
+| `resources/js/packages/ui/src/Client/ClientDropdownItem.vue` | Check icon `text-accent-500 dark:text-accent-200`. | 03.2-03 | Re-apply the class. |
+| `resources/js/Components/Common/Goal/GoalProgressBar.vue` | Progress fill `bg-accent-400 dark:bg-accent-200`. | 03.2-03 | Re-apply the class. |
+| `resources/js/packages/ui/src/EstimatedTimeProgress.vue` | Progress fill `bg-accent-400 dark:bg-accent-200` (when not over the estimate). | 03.2-03 | Re-apply the class. |
+| `e2e/profile.spec.ts` | Theme test expects `Follows your device setting.` instead of `System default:`. | 03.2-06 | Re-apply the one expectation. |
+| `e2e/command-palette.spec.ts` | Stopped-timer class assertion matches `bg-[color:var(--theme-color-accent-solid)]` instead of `bg-accent-300/70`. | 03.2-03 | Re-apply the regex. |
+| `e2e/utils/currentTimeEntry.ts` | Same stopped-timer class assertion change. | 03.2-03 | Re-apply the regex. |
+
+### New files inside core directories
+
+| File | Purpose |
+| --- | --- |
+| `resources/css/untangle-theme.css` | Untangle token stylesheet: default palette (`html:root.light` / `html:root.dark`), accent steps, solid accent, chart and Outlook meeting tokens. |
+| `resources/css/accent-presets.css` | The five non-default accent presets as `html:root.<mode>.accent-<id>` blocks. |
+| `resources/views/branding/early-theme.blade.php` | Pre-paint partial: server payload plus the inline script that sets `light`/`dark` and `accent-<id>` on `<html>` before the first paint. |
+| `lang/en/branding.php`, `lang/es/branding.php` | Appearance and organization icon copy shared through the `appearance` prop. |
+
+### Fork-owned paths
+
+| Path | Content |
+| --- | --- |
+| `app/Appearance/` | Service provider, routes (`PUT /user/appearance`, organization icon `POST`/`DELETE`), controllers, requests, models, the middleware sharing the `appearance` prop, listener and migrations. |
+| `resources/js/branding/` | Accent state and presets, `useAppearance` sync, `AccentPicker`, organization icon components, contrast helpers and their tests. |
+| `tests/Feature/Appearance/` | Feature tests (appearance persistence, pre-paint partial, organization icon). |
+| `tests/Unit/Appearance/` | Unit tests (branding copy parity). |
+| `e2e/appearance.spec.ts` | Browser tests of the default palette, pre-paint with bundles blocked, accent switch, picker and organization icon. |
+| `docs/deploy/APPEARANCE.md` | Operator notes for the appearance features (added by 03.2-09). |
+
+### Hot files deliberately not touched
+
+No 03.2 commit edits these, so they cannot conflict because of this phase:
+
+- `resources/js/packages/ui/styles.css`
+- `resources/js/packages/ui/tailwind.theme.js`
+- `tailwind.config.js`
+- `app/Models/User.php`
+- `app/Models/Organization.php`
+- `app/Http/Middleware/ShareInertiaData.php`
+- `routes/web.php`
+- `openapi.json`
+- `app/Http/Controllers/Api/V1/UserController.php`
+- `app/Http/Requests/V1/User/UserUpdateRequest.php`
+- `app/Http/Controllers/Web/OrganizationController.php`
+- `resources/js/m365/calendar/`
+- `resources/js/packages/ui/src/FullCalendar/`
