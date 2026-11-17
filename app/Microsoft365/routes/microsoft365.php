@@ -6,6 +6,7 @@ use App\Microsoft365\Http\Controllers\MeetingConversionController;
 use App\Microsoft365\Http\Controllers\MicrosoftAccountController;
 use App\Microsoft365\Http\Controllers\MicrosoftAuthController;
 use App\Microsoft365\Http\Controllers\OutlookMeetingController;
+use App\Microsoft365\Http\Controllers\OutlookSeriesController;
 use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
 use Illuminate\Support\Facades\Route;
 
@@ -41,6 +42,21 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
             ->whereUuid('meeting')
             ->middleware('throttle:60,1,m365-dismiss:')
             ->name('microsoft.meetings.restore');
+        // The series of one of the session user's own meetings (Phase 5). Same lookup as dismiss: a foreign,
+        // unknown or gone id, a single meeting and impersonation are all a plain 404. Writes only the
+        // user's series settings, never a time entry.
+        Route::post('/meetings/{meeting}/series/ignore', [OutlookSeriesController::class, 'ignore'])
+            ->whereUuid('meeting')
+            ->middleware('throttle:60,1,m365-series:')
+            ->name('microsoft.meetings.series.ignore');
+        Route::delete('/meetings/{meeting}/series/ignore', [OutlookSeriesController::class, 'unignore'])
+            ->whereUuid('meeting')
+            ->middleware('throttle:60,1,m365-series:')
+            ->name('microsoft.meetings.series.unignore');
+        Route::delete('/meetings/{meeting}/series/assignment', [OutlookSeriesController::class, 'forget'])
+            ->whereUuid('meeting')
+            ->middleware('throttle:60,1,m365-series:')
+            ->name('microsoft.meetings.series.forget');
         // Turns the session user's own meetings into time entries in this organization (Phase 4). The
         // parameter must be named `organization`: core's blocked-organization middleware and
         // TimeEntryStoreRequest read it through route model binding. Web group, so openapi.json stays

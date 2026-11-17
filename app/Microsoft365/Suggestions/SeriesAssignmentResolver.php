@@ -8,6 +8,7 @@ use App\Microsoft365\Models\OutlookMeeting;
 use App\Models\Organization;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
 
@@ -21,6 +22,9 @@ use Illuminate\Support\Facades\DB;
  * organization (T-05-01). The latest conversion is then filtered through the core booking rules
  * (BookableProjects, T-05-03): a project the user can no longer book gives no assignment, with no
  * fallback to an older conversion; a done task and tags that no longer exist are dropped silently.
+ *
+ * A forgotten series (D-11, outlook_series_settings.forgotten_at) only counts the links created after
+ * the forget: the history up to that moment is hidden and the next conversion pre-assigns again.
  *
  * Stateless (Octane).
  */
@@ -146,9 +150,19 @@ final readonly class SeriesAssignmentResolver
                 $join->on('te.id', '=', 'l.time_entry_id')
                     ->on('te.user_id', '=', 'l.user_id');
             })
+            // "Forget this series" (D-11): the links created up to forgotten_at no longer count, so the
+            // series has no assignment until its next conversion, which is newer than the forget
+            ->leftJoin('outlook_series_settings as s', function (JoinClause $join): void {
+                $join->on('s.user_id', '=', 'l.user_id')
+                    ->on('s.series_master_id', '=', 'l.series_master_id');
+            })
             ->where('l.user_id', '=', $user->getKey())
             ->where('te.organization_id', '=', $organization->getKey())
             ->whereIn('l.series_master_id', $seriesIds)
+            ->where(function (Builder $query): void {
+                $query->whereNull('s.forgotten_at')
+                    ->orWhereColumn('l.created_at', '>', 's.forgotten_at');
+            })
             ->selectRaw('DISTINCT ON (l.series_master_id) l.series_master_id, te.project_id, te.task_id, te.tags, te.billable, l.created_at')
             ->orderBy('l.series_master_id')
             ->orderByDesc('l.created_at')
