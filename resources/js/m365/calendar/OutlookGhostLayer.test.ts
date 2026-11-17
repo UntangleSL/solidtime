@@ -1,3 +1,4 @@
+/* eslint-disable vue/one-component-per-file */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computed, createSSRApp, defineComponent, h, nextTick, ref, type Ref } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
@@ -1364,5 +1365,240 @@ describe('OutlookGhostLayer close and suppress rules', () => {
         expect(block().hasAttribute('data-panel-open')).toBe(true);
         expect(block().className).toContain('data-[panel-open]:ring-2');
         expect(block().getAttribute('aria-expanded')).toBe('true');
+    });
+});
+
+// Phase 4: the panel's form mode and the context's form channel. The form itself is stubbed (it
+// talks to the Outlook context and the query caches, covered by OutlookConvertForm.test.ts).
+describe('OutlookGhostLayer conversion form', () => {
+    let wrapper: VueWrapper | null = null;
+
+    const FormStub = defineComponent({
+        name: 'OutlookConvertForm',
+        emits: ['done', 'cancel', 'busy'],
+        setup(_props, { emit }) {
+            return () =>
+                h('div', { 'data-testid': 'outlook-convert-form' }, [
+                    h('button', { 'data-testid': 'stub-done', onClick: () => emit('done', []) }),
+                    h('button', { 'data-testid': 'stub-cancel', onClick: () => emit('cancel') }),
+                ]);
+        },
+    });
+
+    const formLabels = {
+        ...labels,
+        hover_hint: 'Click for details',
+        create_entry: 'Create time entry',
+    } as OutlookCalendarLabels;
+
+    const later = (id: string, hour: number) =>
+        meeting({
+            id,
+            subject: 'Meeting ' + id,
+            start: `2026-10-20T${String(hour).padStart(2, '0')}:00:00Z`,
+            end: `2026-10-20T${String(hour + 1).padStart(2, '0')}:00:00Z`,
+        });
+
+    function mountForms(initial: OutlookMeeting[], canAct = true) {
+        const root = document.createElement('div');
+        root.className = 'fc';
+        document.body.appendChild(root);
+        const list = ref(initial);
+        const formRequest = ref<{ id: string; seq: number } | null>(null);
+        let seq = 0;
+        const context = {
+            canAct: ref(canAct),
+            includeDismissed: ref(false),
+            dismiss: vi.fn(),
+            restore: vi.fn(),
+            formRequest,
+        } as unknown as OutlookMeetingsContext;
+        const Host = defineComponent({
+            setup() {
+                return () =>
+                    h('div', [
+                        h(OutlookGhostLayer, {
+                            meetings: list.value,
+                            labels: formLabels,
+                            dayStr: DAY,
+                            isDayView: false,
+                            minutesToPixels,
+                            settings,
+                        }),
+                        h('button', { 'data-testid': 'outlook-sync-button' }, 'Sync'),
+                    ]);
+            },
+        });
+        wrapper = mount(Host, {
+            attachTo: root,
+            global: {
+                stubs: { OutlookConvertForm: FormStub },
+                provide: {
+                    [OUTLOOK_MEETINGS_KEY as symbol]: context,
+                    organization: computed(() => ({ time_format: '24-hours' })),
+                },
+            },
+        });
+        const request = (id: string) => {
+            seq += 1;
+            formRequest.value = { id, seq };
+        };
+        return { list, request };
+    }
+
+    function block(id: string): HTMLElement {
+        return document.body.querySelector<HTMLElement>(`[data-ghost-id="${id}"]`)!;
+    }
+
+    function panel(): HTMLElement | null {
+        return document.body.querySelector('[data-testid="outlook-ghost-detail"]');
+    }
+
+    function form(): HTMLElement | null {
+        return document.body.querySelector('[data-testid="outlook-convert-form"]');
+    }
+
+    function card(): HTMLElement | null {
+        return document.body.querySelector('[data-testid="outlook-hover-card"]');
+    }
+
+    async function advance(ms: number) {
+        await vi.advanceTimersByTimeAsync(ms);
+        await nextTick();
+    }
+
+    async function openFormOf(id: string) {
+        block(id).click();
+        await advance(20);
+        document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-create"]')!.click();
+        await advance(20);
+        expect(form()).not.toBeNull();
+    }
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        resetHoverCardDelay();
+    });
+
+    afterEach(() => {
+        wrapper?.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+        resetHoverCardDelay();
+        vi.useRealTimers();
+    });
+
+    it('"Create time entry" in an open panel switches that panel to form mode', async () => {
+        mountForms([later('a', 8)]);
+        block('a').click();
+        await advance(20);
+        expect(panel()?.getAttribute('data-mode')).toBe('detail');
+
+        document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-create"]')!.click();
+        await advance(20);
+
+        expect(panel()?.getAttribute('data-mode')).toBe('form');
+        expect(panel()?.className).toContain('w-96');
+        expect(form()).not.toBeNull();
+        expect(block('a').hasAttribute('data-panel-open')).toBe(true);
+    });
+
+    it('offers no create action when the context cannot act', async () => {
+        mountForms([later('a', 8)], false);
+        block('a').click();
+        await advance(20);
+
+        expect(document.body.querySelector('[data-testid="outlook-detail-create"]')).toBeNull();
+    });
+
+    it('a formRequest for a meeting of this day opens its panel in form mode and closes its card', async () => {
+        const { request } = mountForms([later('a', 8), later('b', 10)]);
+        block('b').dispatchEvent(
+            new PointerEvent('pointerenter', { bubbles: true, pointerType: 'mouse' })
+        );
+        await advance(400);
+        expect(card()).not.toBeNull();
+
+        request('b');
+        await advance(20);
+
+        expect(card()).toBeNull();
+        expect(panel()?.getAttribute('data-mode')).toBe('form');
+        expect(block('b').hasAttribute('data-panel-open')).toBe(true);
+        expect(block('a').hasAttribute('data-panel-open')).toBe(false);
+    });
+
+    it('a formRequest for a meeting of another day does nothing here', async () => {
+        const { request } = mountForms([later('a', 8)]);
+
+        request('elsewhere');
+        await advance(20);
+
+        expect(panel()).toBeNull();
+    });
+
+    it('reopening the panel after a close shows the details again', async () => {
+        mountForms([later('a', 8)]);
+        await openFormOf('a');
+
+        document.body.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        );
+        await advance(20);
+        expect(panel()).toBeNull();
+
+        block('a').click();
+        await advance(20);
+        expect(panel()?.getAttribute('data-mode')).toBe('detail');
+    });
+
+    it('after converted the panel closes and focus moves to the next meeting of the day', async () => {
+        const { list } = mountForms([later('a', 8), later('b', 10), later('c', 12)]);
+        await openFormOf('b');
+
+        // The context removes the converted meeting before the form reports done
+        list.value = list.value.filter((item) => item.id !== 'b');
+        document.body.querySelector<HTMLElement>('[data-testid="stub-done"]')!.click();
+        await advance(20);
+
+        expect(panel()).toBeNull();
+        expect(block('b')).toBeNull();
+        expect(document.activeElement).toBe(block('c'));
+    });
+
+    it('a converted meeting that leaves the lane before done still closes the panel; the last one focuses the previous', async () => {
+        const { list } = mountForms([later('a', 8), later('b', 10)]);
+        await openFormOf('b');
+
+        list.value = list.value.filter((item) => item.id !== 'b');
+        await advance(20);
+
+        expect(panel()).toBeNull();
+        expect(document.activeElement).toBe(block('a'));
+    });
+
+    it('converting the only meeting of the day focuses the Sync button', async () => {
+        const { list } = mountForms([later('a', 8)]);
+        await openFormOf('a');
+
+        list.value = [];
+        document.body.querySelector<HTMLElement>('[data-testid="stub-done"]')?.click();
+        await advance(20);
+
+        expect(document.body.querySelector('[data-calendar-overlay]')).toBeNull();
+        expect(document.activeElement).toBe(
+            document.body.querySelector('[data-testid="outlook-sync-button"]')
+        );
+    });
+
+    it('after cancel-form the panel closes and focus returns to the block', async () => {
+        mountForms([later('a', 8), later('b', 10)]);
+        await openFormOf('a');
+
+        document.body.querySelector<HTMLElement>('[data-testid="stub-cancel"]')!.click();
+        await advance(20);
+
+        expect(panel()).toBeNull();
+        expect(document.activeElement).toBe(block('a'));
     });
 });

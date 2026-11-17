@@ -303,6 +303,20 @@ function timeLineOf(box: GhostBox): string {
         : timeRangeOf(box.meeting);
 }
 
+// The form channel of the context (hover card and meeting menu actions): a request for a meeting of
+// this day opens its panel straight in form mode, never while the context menu is open (that
+// surface waits for the menu to close before asking). Requests for other days are not ours.
+watch(
+    () => context?.formRequest?.value ?? null,
+    (request) => {
+        if (!request || !canAct.value || props.contextMenuOpen) return;
+        if (!boxes.value.some((box) => box.meeting.id === request.id)) return;
+        closeHover();
+        openId.value = request.id;
+        formId.value = request.id;
+    }
+);
+
 // The context removes a converted meeting from the cache as soon as the server answered, which can
 // unmount its panel (and the form) before the form reports `done`. So a meeting that leaves the
 // lane while its form is open closes the panel here, and focus moves to the ghost that followed it

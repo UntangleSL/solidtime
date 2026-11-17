@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { nextTick } from 'vue';
+import { defineComponent, h, nextTick } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import OutlookGhostDetail from './OutlookGhostDetail.vue';
 import OutlookMeetingSummary from './OutlookMeetingSummary.vue';
@@ -17,7 +17,34 @@ const labels = {
     opens_new_tab: '(opens in a new tab)',
     dismiss: 'Dismiss meeting',
     restore: 'Restore meeting',
+    create_entry: 'Create time entry',
 } as OutlookCalendarLabels;
+
+// The form talks to the Outlook context and the query caches; here only its events matter.
+const FormStub = defineComponent({
+    name: 'OutlookConvertForm',
+    emits: ['done', 'cancel', 'busy'],
+    setup(_props, { emit }) {
+        return () =>
+            h('div', { 'data-testid': 'outlook-convert-form' }, [
+                h('button', { 'data-testid': 'stub-busy', onClick: () => emit('busy', true) }),
+                h('button', { 'data-testid': 'stub-idle', onClick: () => emit('busy', false) }),
+                h('button', {
+                    'data-testid': 'stub-done',
+                    onClick: () =>
+                        emit('done', [
+                            {
+                                meeting_id: 'm-1',
+                                status: 'created',
+                                time_entry_id: 'te-1',
+                                error: null,
+                            },
+                        ]),
+                }),
+                h('button', { 'data-testid': 'stub-cancel', onClick: () => emit('cancel') }),
+            ]);
+    },
+});
 
 function meeting(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
     return {
@@ -37,11 +64,17 @@ function meeting(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
 let wrapper: VueWrapper | null = null;
 
 // The panel is portaled to document.body, so it is mounted open and queried from the body.
-function mountOpen(m: OutlookMeeting, canAct = true, slots: Record<string, string> = {}) {
+function mountOpen(
+    m: OutlookMeeting,
+    canAct = true,
+    slots: Record<string, string> = {},
+    mode: 'detail' | 'form' = 'detail'
+) {
     wrapper = mount(OutlookGhostDetail, {
         attachTo: document.body,
-        props: { meeting: m, labels, canAct, open: true },
+        props: { meeting: m, labels, canAct, open: true, mode },
         slots: { default: '<div class="trigger">ghost</div>', ...slots },
+        global: { stubs: { OutlookConvertForm: FormStub } },
     });
     return wrapper;
 }
@@ -286,7 +319,152 @@ describe('OutlookGhostDetail', () => {
             await nextTick();
 
             expect(panel().querySelector('[data-testid^="slot-"]')).toBeNull();
-            expect(panel().textContent?.trim().endsWith('Dismiss meeting')).toBe(true);
+            expect(panel().textContent?.trim().endsWith('Create time entry')).toBe(true);
+        });
+    });
+
+    describe('Create time entry (Phase 4)', () => {
+        function createButton(): HTMLElement | null {
+            return document.body.querySelector<HTMLElement>(
+                '[data-testid="outlook-detail-create"]'
+            );
+        }
+
+        function pointerDownOn(target: Element) {
+            target.dispatchEvent(
+                new PointerEvent('pointerdown', {
+                    bubbles: true,
+                    cancelable: true,
+                    button: 0,
+                    pointerType: 'mouse',
+                })
+            );
+        }
+
+        async function settle() {
+            await nextTick();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            await nextTick();
+        }
+
+        it('renders the primary action after Dismiss and emits create', async () => {
+            const w = mountOpen(meeting());
+            await nextTick();
+
+            const button = createButton();
+            expect(button?.textContent?.trim()).toBe('Create time entry');
+            expect(button?.querySelector('svg.lucide-clock-plus')).not.toBeNull();
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-detail-create')).toBeGreaterThan(
+                html.indexOf('outlook-detail-action')
+            );
+            button!.click();
+
+            expect(w.emitted('create')).toHaveLength(1);
+            expect(w.emitted('dismiss')).toBeUndefined();
+        });
+
+        it('is offered for a dismissed meeting too', async () => {
+            mountOpen(meeting({ dismissed: true }));
+            await nextTick();
+
+            expect(createButton()).not.toBeNull();
+        });
+
+        it('is hidden, not disabled, when it cannot act', async () => {
+            mountOpen(meeting(), false);
+            await nextTick();
+
+            expect(createButton()).toBeNull();
+        });
+
+        it('form mode widens the same popover to w-96 and renders the form instead of the details', async () => {
+            mountOpen(meeting(), true, {}, 'form');
+            await nextTick();
+
+            expect(panel().className).toContain('w-96');
+            expect(panel().className).not.toContain('w-80');
+            expect(panel().getAttribute('data-mode')).toBe('form');
+            expect(panel().querySelector('[data-testid="outlook-convert-form"]')).not.toBeNull();
+            expect(panel().querySelector('[data-testid="outlook-detail-subject"]')).toBeNull();
+            expect(createButton()).toBeNull();
+        });
+
+        it('detail mode keeps w-80', async () => {
+            mountOpen(meeting());
+            await nextTick();
+
+            expect(panel().className).toContain('w-80');
+            expect(panel().getAttribute('data-mode')).toBe('detail');
+        });
+
+        it('never shows the form when it cannot act', async () => {
+            mountOpen(meeting(), false, {}, 'form');
+            await nextTick();
+
+            expect(panel().querySelector('[data-testid="outlook-convert-form"]')).toBeNull();
+        });
+
+        it('relays converted and cancel-form from the form', async () => {
+            const w = mountOpen(meeting(), true, {}, 'form');
+            await nextTick();
+
+            document.body.querySelector<HTMLElement>('[data-testid="stub-done"]')!.click();
+            document.body.querySelector<HTMLElement>('[data-testid="stub-cancel"]')!.click();
+
+            expect(w.emitted('converted')).toEqual([
+                [[{ meeting_id: 'm-1', status: 'created', time_entry_id: 'te-1', error: null }]],
+            ]);
+            expect(w.emitted('cancel-form')).toHaveLength(1);
+        });
+
+        it('an outside pointer closes the form, except while it is busy', async () => {
+            const outside = document.createElement('div');
+            document.body.appendChild(outside);
+            const w = mountOpen(meeting(), true, {}, 'form');
+            await settle();
+
+            document.body.querySelector<HTMLElement>('[data-testid="stub-busy"]')!.click();
+            await nextTick();
+            pointerDownOn(outside);
+            await settle();
+            expect(w.emitted('update:open')).toBeUndefined();
+
+            document.body.querySelector<HTMLElement>('[data-testid="stub-idle"]')!.click();
+            await nextTick();
+            pointerDownOn(outside);
+            await settle();
+            expect(w.emitted('update:open')).toEqual([[false]]);
+        });
+
+        it('ignores Escape while busy', async () => {
+            const w = mountOpen(meeting(), true, {}, 'form');
+            await settle();
+
+            document.body.querySelector<HTMLElement>('[data-testid="stub-busy"]')!.click();
+            await nextTick();
+            document.body.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+            );
+            await settle();
+
+            expect(w.emitted('update:open')).toBeUndefined();
+        });
+
+        it('a pointer inside a nested picker layer never closes the form', async () => {
+            const layer = document.createElement('div');
+            layer.setAttribute('data-reka-popper-content-wrapper', '');
+            const option = document.createElement('div');
+            option.setAttribute('role', 'option');
+            layer.appendChild(option);
+            document.body.appendChild(layer);
+            const w = mountOpen(meeting(), true, {}, 'form');
+            await settle();
+
+            pointerDownOn(option);
+            await settle();
+
+            expect(w.emitted('update:open')).toBeUndefined();
         });
     });
 });

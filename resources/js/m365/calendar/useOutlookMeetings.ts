@@ -33,6 +33,7 @@ import type {
 } from '@/m365/types';
 import { dismissMeeting, fetchMeetings, postSync, restoreMeeting } from './meetingsApi';
 import { conversionErrorMessage, failedResults, postConversion } from './conversionApi';
+import { useOutlookSelection, type OutlookSelection } from './useOutlookSelection';
 import { ghostLaneWidth } from './ghostLayout';
 
 export interface WeekBucket {
@@ -93,7 +94,16 @@ export interface OutlookMeetingsContext {
     // Converts meetings into time entries (Phase 4). Pessimistic: the meetings leave the cache only
     // after the server answered created or existing for them. Never rejects: a failed request comes
     // back as one failed result per id.
+    // An id already in flight makes the call return [] without a request (double activation).
     convert: (ids: string[], fields: OutlookConversionFields) => Promise<OutlookConversionResult[]>;
+    // Asks the lane that renders meeting `id` to open its panel in form mode (hover card and context
+    // menu actions). Each request gets a new seq so the same id can be asked for twice. Ignored while
+    // the context cannot act; clears the selection (a panel and a selection never coexist).
+    openForm: (id: string) => void;
+    formRequest: Readonly<Ref<{ id: string; seq: number } | null>>;
+    // Multi-select (D-07). Empty and inert while the context cannot act; cleared on every range
+    // change; meetings that leave the list leave the selection.
+    selection: OutlookSelection;
     dayOverlayLane: (dayStr: string, isDayView: boolean) => string | null;
 }
 
@@ -432,6 +442,47 @@ export function useOutlookMeetings(
 
     const canAct = computed(() => calendar.value !== null && testMeetings.value === null);
 
+    // --- Multi-select (D-07): the methods are wrapped so nothing can be selected while !canAct.
+    const baseSelection = useOutlookSelection();
+    const selection: OutlookSelection = {
+        ...baseSelection,
+        toggle: (id) => {
+            if (canAct.value) baseSelection.toggle(id);
+        },
+        selectRange: (id, candidates) => {
+            if (canAct.value) baseSelection.selectRange(id, candidates);
+        },
+    };
+
+    watch(canAct, (value) => {
+        if (!value) baseSelection.clear();
+    });
+
+    // A meeting gone after a sync, a conversion or a dismiss drops out of the selection silently.
+    watch(meetings, (list) => {
+        const present = new Set(list.map((meeting) => meeting.id));
+        baseSelection.remove(baseSelection.selectedIds.value.filter((id) => !present.has(id)));
+    });
+
+    // Week or day navigation and view changes clear the selection.
+    watch(
+        () => [calendarStart.value?.valueOf(), calendarEnd.value?.valueOf()],
+        ([start, end], [oldStart, oldEnd]) => {
+            if (start !== oldStart || end !== oldEnd) baseSelection.clear();
+        }
+    );
+
+    // --- Form channel: another surface asks the lane to open a meeting's panel in form mode.
+    const formRequest = ref<{ id: string; seq: number } | null>(null);
+    let formSeq = 0;
+
+    function openForm(id: string): void {
+        if (!canAct.value) return;
+        baseSelection.clear();
+        formSeq += 1;
+        formRequest.value = { id, seq: formSeq };
+    }
+
     // Text of the polite live region in the toolbar controls (screen readers only).
     const announcement = ref('');
 
@@ -506,6 +557,8 @@ export function useOutlookMeetings(
     const dismiss = (id: string): Promise<void> => changeDismissal(id, true);
     const restore = (id: string): Promise<void> => changeDismissal(id, false);
 
+    const convertsInFlight = new Set<string>();
+
     // Every cached read (each week, with and without dismissed meetings) loses the given meetings.
     function removeFromCache(ids: string[]): void {
         if (ids.length === 0) return;
@@ -527,12 +580,18 @@ export function useOutlookMeetings(
         const current = labels.value;
         const fallback = current?.error_generic ?? '';
         if (!url || !current || ids.length === 0) return failedResults(ids, fallback);
+        // A second activation for a meeting whose conversion still runs sends nothing (ASGN-03
+        // client side; the server's unique link is the real guard).
+        if (ids.some((id) => convertsInFlight.has(id))) return [];
 
         let results: OutlookConversionResult[];
+        ids.forEach((id) => convertsInFlight.add(id));
         try {
             results = await postConversion(url, { meeting_ids: ids, ...fields });
         } catch (error) {
             return failedResults(ids, conversionErrorMessage(error, fallback));
+        } finally {
+            ids.forEach((id) => convertsInFlight.delete(id));
         }
 
         const done = results
@@ -541,6 +600,7 @@ export function useOutlookMeetings(
         if (done.length > 0) {
             void queryClient.cancelQueries({ queryKey: MEETINGS_QUERY_KEY });
             removeFromCache(done);
+            baseSelection.remove(done);
             void queryClient.invalidateQueries({ queryKey: ['timeEntries'] });
             void queryClient.invalidateQueries({ queryKey: ['goals'] });
             void queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
@@ -621,6 +681,9 @@ export function useOutlookMeetings(
         announcement,
         announce,
         convert,
+        openForm,
+        formRequest,
+        selection,
         dayOverlayLane,
     };
 
