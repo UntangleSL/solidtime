@@ -3,6 +3,7 @@
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        @include('branding.early-theme')
 
         <title inertia>{{ config('app.name', 'Laravel') }}</title>
 
@@ -15,7 +16,8 @@
         <link rel="shortcut icon" href="/favicons/favicon.ico">
         <meta name="msapplication-TileColor" content="#000000">
         <meta name="msapplication-config" content="/favicons/browserconfig.xml">
-        <meta name="theme-color" content="#000000">
+        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1C1C1C">
+        <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F9FCFD">
 
         <!-- Scripts -->
         @routes
