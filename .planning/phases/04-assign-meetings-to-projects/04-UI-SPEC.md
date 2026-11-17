@@ -55,7 +55,7 @@ This table is a **non-exhaustive** list of known-good components, never a closed
 
 | Component | Import path | Notes |
 |-----------|-------------|-------|
-| PrimaryButton (`loading` prop, `icon` prop) | `@/packages/ui/src/Buttons/PrimaryButton.vue` | Every accent CTA of this phase: "Create time entry", "Create", "Assign N meetings", "Create N time entries", "Retry failed". `h-9`, accent fill per 3.2. Use `loading` while a request runs (spinner replaces icon, button disabled) |
+| PrimaryButton (`loading` prop, `icon` prop) | `@/packages/ui/src/Buttons/PrimaryButton.vue` | Every accent CTA of this phase: "Create time entry", "Create entry", "Assign N meetings", "Create N time entries", "Retry failed". `h-9`, accent fill per 3.2. Use `loading` while a request runs (spinner replaces icon, button disabled) |
 | SecondaryButton | `@/packages/ui/src/Buttons/SecondaryButton.vue` | "Cancel", "Close" in the forms |
 | Button (`variant="outline"`, `variant="ghost"`, `size="sm"`/`icon`) | `@/packages/ui/src/Buttons` | Existing panel Dismiss (outline); bar "Clear selection" icon button (ghost) |
 | Popover, PopoverTrigger, PopoverContent, PopoverAnchor | `@/packages/ui/src/popover` | Existing panel (single form lives in it); batch form anchored to the floating bar |
@@ -91,7 +91,7 @@ Declared values (multiples of 4):
 | 3xl | 64px | not used |
 
 Exceptions:
-- Selection check badge: 16px (`size-4`, 12px `Check` inside) on blocks of tier T3 and above (32px or taller); 12px (`size-3`, 8px `Check`) on T1/T2 blocks. Both multiples of 4. Inset 4px from the top-right corner (T1: 2px, `top-0.5 right-0.5`, the block is only 16px tall; same micro-value family as the 3.1 block internals).
+- Selection check badge: 16px (`size-4`, 12px `Check` inside) on blocks of tier T3 and above (32px or taller); 12px (`size-3`, 8px `Check`) on T1/T2 blocks. Both multiples of 4. Inset 4px from the top-right corner (`top-1 right-1`) on every tier; the 12px T1/T2 badge still fits inside a 16px block.
 - Popover widths: single form and batch form `w-96` (384px); detail panel stays `w-80`; hover card stays `w-72`.
 - Batch meeting list `max-h-40` (160px) with internal scroll; result rows 32px minimum (`min-h-8`).
 - The bar's inner padding is `px-3 py-2` (12px / 8px): 12px is a multiple of 4 and matches the `px-3` of every existing button so the bar's left text lines up with button text.
@@ -130,7 +130,7 @@ All colours are theme tokens, `--m365-*` properties or `color-mix()` of tokens (
 Accent reserved for (and nothing else), in this phase:
 1. Outlook identity of meeting blocks, lane wash, caption icon, open-panel ring: unchanged from 3.1 items 1-3 / 3.2 item 8.
 2. **Selected meeting** (new): 2px ring `ring-accent-700` light / `ring-accent-200` dark (the same tokens as the open-panel ring; the two states never coexist, see section 5) plus the check badge: fill `var(--m365-meeting-bar)`, `Check` icon in `var(--color-on-accent)`. Selected blocks also use the hover fill `--m365-meeting-bg-hover` at rest.
-3. Primary buttons of this phase through `PrimaryButton` (3.2 item 1): "Create time entry", "Create", "Assign N meetings", "Create N time entries", "Retry failed".
+3. Primary buttons of this phase through `PrimaryButton` (3.2 item 1): "Create time entry", "Create entry", "Assign N meetings", "Create N time entries", "Retry failed".
 4. "Open in Outlook" link (unchanged).
 
 Never accent: the Outlook icon on converted time entries (inherits the entry text colour), the floating bar surface and its text, result rows (green / destructive / tertiary icons, neutral text), form labels and context line.
@@ -180,10 +180,10 @@ Layout, `w-96 p-4 space-y-4`, top to bottom:
 4. **Tags and billable** on one row, `flex gap-2`: `TagDropdown` trigger ("Tags" / "1 Tag" / "N Tags") and the billable `Select` ("Billable" / "Non-Billable"). Billable follows the selected project's default and updates when the project changes (same watcher as the core modal); "Billable" item disabled under `billableRatesLocked`.
 5. **Time**: `FieldLabel` "Start" and "End", two `TimePickerSimple` side by side (`grid grid-cols-2 gap-2`), followed by the duration (12px `text-tertiary`, `tabular-nums`, e.g. "1h 00min", via `formatHumanReadableDuration`). Dates are fixed to the meeting's own start and end dates; only times are edited (D-03). Edited times never change the meeting link.
 6. **Inline error area** (only when a submit failed): `role="alert"`, 12px `text-destructive` with `CircleX` 12px, copy per Copywriting.
-7. **Footer** `flex justify-end gap-2`: `SecondaryButton` "Cancel", `PrimaryButton` "Create" (`loading` while the request runs).
+7. **Footer** `flex justify-end gap-2`: `SecondaryButton` "Cancel", `PrimaryButton` "Create entry" (`loading` while the request runs).
 
 Keyboard and focus:
-- On open, focus goes to the **"Create" button when a project is prefilled** (so a repeat conversion is: click "Create time entry", press Enter; D-02 "two clicks") and to the **project picker trigger when no project is prefilled**.
+- On open, focus goes to the **"Create entry" button when a project is prefilled** (so a repeat conversion is: click "Create time entry", press Enter; D-02 "two clicks") and to the **project picker trigger when no project is prefilled**.
 - Enter in the description submits; Enter on a focused button activates it; Ctrl/Cmd+Enter submits from any field. Enter inside an open picker dropdown is owned by the picker.
 - Esc closes the open picker first; a second Esc closes the form and returns focus to the meeting block. "Cancel" does the same.
 - Nested dropdowns (project, tags, billable select, time pickers) are reka layers inside the Popover; opening or clicking inside them must never close the form. Playwright acceptance: open form, pick a project, add a tag, change billable, change start time, assert the form is still open and the values are kept.
@@ -193,9 +193,9 @@ Validation (client, before any request):
 - End not after start: `FieldError` under the times "End time must be after start time."
 
 Submit behaviour (pessimistic: the form is already open, so the user waits on it):
-- While saving: "Create" shows the spinner and is disabled, other fields `disabled`, the popover cannot be dismissed by pointer-down outside (Esc is ignored until the request settles, at most the request time).
+- While saving: "Create entry" shows the spinner and is disabled, other fields `disabled`, the popover cannot be dismissed by pointer-down outside (Esc is ignored until the request settles, at most the request time).
 - Success (`created`, or the server returned the existing entry for an already converted occurrence, D-06): popover closes; meetings and time-entries queries are invalidated; the meeting disappears from the lane and the entry appears in the "My time" side; toast "Time entry created successfully" (core copy, same helper as manual creation); live-region announcement "Time entry created"; focus moves to the next meeting of that day, else the previous one, else the Sync button (same rule as Dismiss).
-- Failure: form stays open with all values, the error area shows the mapped reason, focus moves to the "Create" button so a retry is Enter (the alert is read by its `role="alert"`).
+- Failure: form stays open with all values, the error area shows the mapped reason, focus moves to the "Create entry" button so a retry is Enter (the alert is read by its `role="alert"`).
 - Double click / Enter repeat: the button is disabled after the first activation; the server unique link (D-06) is the real guard.
 
 Lane geometry after conversion: when the converted meeting was the last meeting of that day, the lane disappears and the day column returns to full width (3.1 rule "days with no meeting render exactly as upstream"). Accepted; no animation.
@@ -297,7 +297,7 @@ Fork copy goes through the server shared prop `calendar.labels` (keys under `mic
 | Key | English | Spanish mirror |
 |-----|---------|----------------|
 | `create_entry` | Create time entry | Crear registro de tiempo |
-| `create_submit` | Create | Crear |
+| `create_submit` | Create entry | Crear entrada |
 | `form_context` | From Outlook · :when | De Outlook · :when |
 | `field_description` | Description | Descripción |
 | `field_project` | Project | Proyecto |
@@ -337,7 +337,7 @@ Fork copy goes through the server shared prop `calendar.labels` (keys under `mic
 
 | Element | Copy |
 |---------|------|
-| Primary CTA | "Create time entry" (hover card, panel, menu); "Create" (single form submit); "Assign 3 meetings" (bar); "Create 3 time entries" (batch submit) |
+| Primary CTA | "Create time entry" (hover card, panel, menu); "Create entry" (single form submit); "Assign 3 meetings" (bar); "Create 3 time entries" (batch submit) |
 | Empty state | No new empty state: an empty selection hides the bar; a day without meetings is unchanged (3.1). The project picker with no prefill shows the core placeholder "No Project" |
 | Error state | Inline in the form, `role="alert"`: mapped reason (`error_forbidden_project`, `error_meeting_gone`, `error_generic`, or the server validation message); per row in the batch result. Values are kept, retry is one Enter / "Retry N failed" |
 | Destructive confirmation | None. Nothing in this phase deletes data; converting is undone by deleting the entry (core delete flow, which keeps its own behaviour) |
@@ -350,7 +350,7 @@ Applicable state considerations resolved: 17 covered, 3 backstop, 0 unresolved.
 
 | Category | Element(s) | Status | Resolution / Reason |
 |----------|------------|--------|---------------------|
-| loading | Single form submit | ✅ covered | "Create" spinner, fields disabled, popover not dismissable until settled |
+| loading | Single form submit | ✅ covered | "Create entry" spinner, fields disabled, popover not dismissable until settled |
 | loading | Batch submit | ✅ covered | Per-row spinner in the status slot, rows resolve independently |
 | empty | No prefill project (new user, no conversions, no entries) | ✅ covered | Picker empty with core "No Project", focus on the picker, "Choose a project." on submit |
 | empty | Selection becomes empty (after success, clear, navigation, sync) | ✅ covered | Bar hides, "Selection cleared" announced |
