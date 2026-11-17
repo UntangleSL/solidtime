@@ -1,4 +1,4 @@
-# Touched core files (Phase 2: Sign in with Microsoft, Phase 3: Outlook meetings, Phase 3.1: calendar UX polish)
+# Touched core files (Phase 2: Sign in with Microsoft, Phase 3: Outlook meetings, Phase 3.1: calendar UX polish, Phase 3.2: appearance)
 
 Ledger for upstream merges. The Phase 7 merge rehearsal (and every later `git merge upstream/main`)
 checks these files first. Everything else the fork adds lives in fork-owned paths (second table).
@@ -53,7 +53,8 @@ These paths do not exist upstream, so they never conflict.
 | `tests/Feature/Microsoft365/` | Feature tests. |
 | `tests/Unit/Microsoft365/` | Unit tests. |
 | `e2e/microsoft-signin.spec.ts` | Browser test of the sign-in page. |
-| `e2e/outlook-ghosts.spec.ts` | Browser test of the Outlook ghosts (reachability beside entries, totals, no create flow). |
+| `e2e/outlook-ghosts.spec.ts` | Browser test of the Outlook ghosts (reachability beside entries, totals, no create flow); 03.1-07 appends the hover card, touch, panel layering and meeting-menu-on-top proofs. |
+| `e2e/outlook-meeting-look.spec.ts` | 03.1-03: browser test of the meeting look (sky-blue project entry fixture beside a meeting, six-overlap reachability). |
 | `e2e/calendar-view-options.spec.ts` | Browser tests of the calendar view options (weekends; zoom added by 03.1-06). |
 | `docs/deploy/dokploy-compose.fork.yml` | Compose for Dokploy. |
 | `.github/workflows/fork-image.yml` | Fork image build. |
@@ -80,7 +81,8 @@ Phase 2 does not edit these upstream hot spots, so they cannot conflict because 
 
 ## Phase 3.2 (Appearance & Untangle branding)
 
-Built from `git log --grep="(03.2-" --name-only b4e003e6..HEAD`. Owner decision D-10 (no Syne) means no
+Built from `git log --grep="(03.2-" --name-only b4e003e6..HEAD`; re-checked by 03.2-09 against the full diff
+(including the unnumbered `(03.2)` fix commits). Owner decision D-10 (no Syne) means no
 font files were added; Inter stays the only typeface.
 
 ### Core files edited
@@ -104,7 +106,7 @@ font files were added; Inter stays the only typeface.
 | `resources/js/Components/Common/Goal/GoalProgressBar.vue` | Progress fill `bg-accent-400 dark:bg-accent-200`. | 03.2-03 | Re-apply the class. |
 | `resources/js/packages/ui/src/EstimatedTimeProgress.vue` | Progress fill `bg-accent-400 dark:bg-accent-200` (when not over the estimate). | 03.2-03 | Re-apply the class. |
 | `e2e/profile.spec.ts` | Theme test expects `Follows your device setting.` instead of `System default:`. | 03.2-06 | Re-apply the one expectation. |
-| `e2e/command-palette.spec.ts` | Stopped-timer class assertion matches `bg-[color:var(--theme-color-accent-solid)]` instead of `bg-accent-300/70`. | 03.2-03 | Re-apply the regex. |
+| `e2e/command-palette.spec.ts` | Stopped-timer class assertion matches `bg-[color:var(--theme-color-accent-solid)]` instead of `bg-accent-300/70`; the organization-switch test keeps only the last (name) line of the switcher row, because the row now also renders the icon tile. | 03.2-03, 03.2 fix | Re-apply the regex and the name-line split. |
 | `e2e/utils/currentTimeEntry.ts` | Same stopped-timer class assertion change. | 03.2-03 | Re-apply the regex. |
 
 ### New files inside core directories
