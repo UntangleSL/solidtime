@@ -8,6 +8,7 @@ use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\In;
 use Illuminate\Validation\Rules\ProhibitedIf;
 use Illuminate\Validation\Rules\RequiredIf;
 
@@ -23,6 +24,10 @@ use Illuminate\Validation\Rules\RequiredIf;
  * Confirm mode (Phase 5 RULE-02, D-03, D-04): `use_series_assignment: true` with meeting ids only. The
  * server resolves each meeting's series assignment at confirm time, so the body may not carry a
  * project, task, tags, billable, description, times or prefill fields (T-05-15).
+ *
+ * Prefill measurement (Phase 5 D-16), explicit mode only: `prefill_source` says how the form was
+ * prefilled and `prefill_project_id` which project it offered, so the server can record whether the user
+ * kept it. Both are optional and never change the entry.
  */
 class MeetingConversionRequest extends FormRequest
 {
@@ -31,13 +36,16 @@ class MeetingConversionRequest extends FormRequest
     /** Largest batch: bounds the per-meeting core calls of one request (T-04-05). */
     public const int MAX_MEETINGS = 50;
 
+    /** How the form was prefilled (D-16); 'series' is also what confirm mode records. */
+    public const array PREFILL_SOURCES = ['series', 'suggestion', 'last_used', 'none'];
+
     public function authorize(): bool
     {
         return true;
     }
 
     /**
-     * @return array<string, array<int, string|Closure|ValidationRule|ProhibitedIf|RequiredIf>>
+     * @return array<string, array<int, string|Closure|ValidationRule|ProhibitedIf|RequiredIf|In>>
      */
     public function rules(): array
     {
@@ -61,6 +69,9 @@ class MeetingConversionRequest extends FormRequest
             // Single mode only, both or neither; an end is always sent so no running timer is ever started
             'start' => ['nullable', 'string', 'date_format:'.self::FORMAT, 'required_with:end', Rule::prohibitedIf($several), Rule::prohibitedIf($series)],
             'end' => ['nullable', 'string', 'date_format:'.self::FORMAT, 'required_with:start', 'after:start', Rule::prohibitedIf($several), Rule::prohibitedIf($series)],
+            // How the form was prefilled, for the hit rate (D-16); confirm mode records 'series' itself
+            'prefill_source' => ['sometimes', 'nullable', 'string', Rule::in(self::PREFILL_SOURCES), Rule::prohibitedIf($series)],
+            'prefill_project_id' => ['sometimes', 'nullable', 'string', 'uuid', Rule::prohibitedIf($series)],
         ];
     }
 
@@ -127,6 +138,20 @@ class MeetingConversionRequest extends FormRequest
     public function description(): ?string
     {
         $value = $this->validated('description');
+
+        return is_string($value) ? $value : null;
+    }
+
+    public function prefillSource(): ?string
+    {
+        $value = $this->validated('prefill_source');
+
+        return is_string($value) ? $value : null;
+    }
+
+    public function prefillProjectId(): ?string
+    {
+        $value = $this->validated('prefill_project_id');
 
         return is_string($value) ? $value : null;
     }

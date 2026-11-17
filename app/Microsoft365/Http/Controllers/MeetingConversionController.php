@@ -9,6 +9,8 @@ use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Microsoft365\Http\Requests\MeetingConversionRequest;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookMeetingLink;
+use App\Microsoft365\Suggestions\MeetingSignalInput;
+use App\Microsoft365\Suggestions\MeetingSignals;
 use App\Microsoft365\Suggestions\SeriesAssignmentResolver;
 use App\Microsoft365\TimeEntries\CoreTimeEntryCreator;
 use App\Models\Member;
@@ -42,12 +44,18 @@ use Illuminate\Validation\ValidationException;
  *   check, so a series changed, forgotten or no longer bookable since the read answers with the newest
  *   state (RESEARCH Pitfall 7); a meeting without one fails with 'no_assignment'. The entry still goes
  *   through core's create action, so every manual-entry rule applies to the server-chosen fields.
+ * - Learning data (Phase 5 RULE-03, D-09, D-17): every new link stores the converted meeting's signals as
+ *   keyed hashes only (see MeetingSignals): no address, domain or subject word is readable on the
+ *   link, and none of it is ever logged.
+ * - Hit rate (D-16): every new link records how the form was prefilled (prefill_source) and whether the
+ *   user kept that project (prefill_kept); confirm mode is 'series' and kept by definition.
  */
 class MeetingConversionController extends Controller
 {
     public function __construct(
         private readonly GraphAccessGuard $access,
         private readonly SeriesAssignmentResolver $resolver,
+        private readonly MeetingSignalInput $signalInput,
     ) {}
 
     /**
@@ -70,13 +78,17 @@ class MeetingConversionController extends Controller
             throw new AuthorizationException;
         }
 
+        // Once per request: the user's own addresses, the internal domains and the hash key (D-09)
+        $identity = $this->signalInput->identity($user);
+        $secret = (string) config('app.key');
+
         $results = [];
         foreach ($request->meetingIds() as $meetingId) {
             // The catch sits outside the transaction: a failure rolls back that meeting's entry and link
             // only, and is reported for that meeting instead of failing the request (D-08). Nothing about
             // the meeting or the body is logged (Phase 3 D-15).
             try {
-                $results[] = DB::transaction(fn (): array => $this->convertOne($request, $organization, $member, $user, $creator, $meetingId));
+                $results[] = DB::transaction(fn (): array => $this->convertOne($request, $organization, $member, $user, $creator, $meetingId, $identity, $secret));
             } catch (UniqueConstraintViolationException) {
                 // A concurrent request linked the same occurrence first: this meeting's transaction is
                 // already rolled back (no entry, no link of its own), so answer with the winner's entry
@@ -95,6 +107,7 @@ class MeetingConversionController extends Controller
     }
 
     /**
+     * @param  array{own: list<string>, internal: list<string>}  $identity
      * @return array{meeting_id: string, status: string, time_entry_id: string|null, error: array{key: string, message: string}|null}
      */
     private function convertOne(
@@ -104,6 +117,8 @@ class MeetingConversionController extends Controller
         User $user,
         CoreTimeEntryCreator $creator,
         string $meetingId,
+        array $identity,
+        string $secret,
     ): array {
         // Own, non-gone meeting only: a foreign, unknown and gone id are the same answer (T-04-01)
         $meeting = OutlookMeeting::query()
@@ -172,6 +187,12 @@ class MeetingConversionController extends Controller
             'meeting_ends_at' => $meeting->ends_at,
             // The series history lives on the link: Disconnect purges the meeting rows (Phase 5 D-17)
             'series_master_id' => $meeting->series_master_id,
+            // Keyed hashes only, never a readable address, domain or word (D-09, D-17)
+            'signals' => MeetingSignals::hashed(
+                MeetingSignals::features($this->signalInput->fromMeeting($meeting), $identity['own'], $identity['internal']),
+                $secret,
+            ),
+            ...$this->prefill($request),
         ]);
 
         if ($meeting->dismissed_at !== null) {
@@ -205,6 +226,28 @@ class MeetingConversionController extends Controller
         }
 
         return $this->failed($meetingId, 'conflict', $this->text('microsoft365.calendar.error_generic'));
+    }
+
+    /**
+     * How the form was prefilled and whether the user kept that project (D-16). Confirm mode is a series
+     * prefill kept as is; a form without a prefilled project records no "kept".
+     *
+     * @return array{prefill_source: string|null, prefill_kept: bool|null}
+     */
+    private function prefill(MeetingConversionRequest $request): array
+    {
+        if ($request->usesSeriesAssignment()) {
+            $source = 'series';
+            $kept = true;
+        } else {
+            $source = $request->prefillSource();
+            $prefilled = $request->prefillProjectId();
+            $kept = in_array($source, ['series', 'suggestion', 'last_used'], true) && $prefilled !== null
+                ? $prefilled === $request->projectId()
+                : null;
+        }
+
+        return ['prefill_source' => $source, 'prefill_kept' => $kept];
     }
 
     private function linkOf(User $user, string $graphId): ?OutlookMeetingLink

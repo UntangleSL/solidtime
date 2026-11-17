@@ -26,7 +26,10 @@ use App\Microsoft365\Models\OutlookMeetingLink;
 use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Microsoft365\Suggestions\Assignment;
 use App\Microsoft365\Suggestions\BookableProjects;
+use App\Microsoft365\Suggestions\MeetingSignalInput;
+use App\Microsoft365\Suggestions\MeetingSignals;
 use App\Microsoft365\Suggestions\SeriesAssignmentResolver;
+use App\Microsoft365\Suggestions\SubjectTokenizer;
 use App\Microsoft365\TimeEntries\CoreTimeEntryCreator;
 use App\Models\Member;
 use App\Models\Organization;
@@ -74,6 +77,9 @@ use Tests\TestCaseWithDatabase;
 #[UsesClass(SeriesAssignmentResolver::class)]
 #[UsesClass(BookableProjects::class)]
 #[UsesClass(Assignment::class)]
+#[UsesClass(MeetingSignalInput::class)]
+#[UsesClass(MeetingSignals::class)]
+#[UsesClass(SubjectTokenizer::class)]
 class OutlookMeetingConversionTest extends TestCaseWithDatabase
 {
     use InteractsWithGraphFixtures;
@@ -1083,6 +1089,219 @@ class OutlookMeetingConversionTest extends TestCaseWithDatabase
         $this->assertSame($entry->getKey(), $link->time_entry_id);
         $this->assertSame('series-1', $link->series_master_id);
         $this->assertSame(2, TimeEntry::query()->count());
+    }
+
+    /**
+     * The signals stored on the only link of the test, decoded from the jsonb column.
+     *
+     * @return array<string, mixed>
+     */
+    private function storedSignals(): array
+    {
+        $signals = OutlookMeetingLink::query()->sole()->signals;
+        $this->assertIsArray($signals);
+
+        return $signals;
+    }
+
+    private function signalHash(string $kind, string $value): string
+    {
+        return MeetingSignals::hash($kind, $value, (string) config('app.key'));
+    }
+
+    public function test_link_stores_keyed_signals(): void
+    {
+        // Arrange: an external organizer, one more external person, one colleague, the user and a room
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'signals', [
+            'subject' => 'Kickoff ACME roadmap',
+            'organizer_address' => 'ana@client.test',
+            'is_organizer' => false,
+            'attendees' => [
+                ['address' => 'ana@client.test', 'name' => 'Ana', 'type' => 'required'],
+                ['address' => 'eva@client.test', 'name' => 'Eva', 'type' => 'required'],
+                ['address' => 'colleague@example.test', 'name' => 'Colleague', 'type' => 'optional'],
+                ['address' => $data->user->email, 'name' => 'Me', 'type' => 'required'],
+                ['address' => 'room-4@client.test', 'name' => 'Room 4', 'type' => 'resource'],
+            ],
+            'attendee_count' => 5,
+        ]);
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert: keyed hashes only (D-09, D-17)
+        $response->assertJsonPath('results.0.status', 'created');
+        $signals = $this->storedSignals();
+        $this->assertSame(1, $signals['v']);
+        $this->assertSame(5, $signals['n']);
+        $this->assertSame($this->signalHash(MeetingSignals::KIND_PERSON, 'ana@client.test'), $signals['o']);
+        $this->assertSame([$this->signalHash(MeetingSignals::KIND_PERSON, 'eva@client.test')], $signals['a']);
+        $this->assertSame([$this->signalHash(MeetingSignals::KIND_PERSON, 'colleague@example.test')], $signals['i']);
+        $this->assertSame([$this->signalHash(MeetingSignals::KIND_DOMAIN, 'client.test')], $signals['d']);
+        $this->assertEqualsCanonicalizing([
+            $this->signalHash(MeetingSignals::KIND_TOKEN, 'kickoff'),
+            $this->signalHash(MeetingSignals::KIND_TOKEN, 'acme'),
+            $this->signalHash(MeetingSignals::KIND_TOKEN, 'roadmap'),
+        ], $signals['t']);
+        $this->assertIsString($signals['o']);
+        foreach ([[$signals['o']], $signals['a'], $signals['i'], $signals['d'], $signals['t']] as $hashes) {
+            $this->assertIsArray($hashes);
+            foreach ($hashes as $hash) {
+                $this->assertIsString($hash);
+                $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', $hash);
+            }
+        }
+        $json = (string) json_encode($signals);
+        $this->assertStringNotContainsString('@', $json);
+        $this->assertStringNotContainsString('client.test', $json);
+        $this->assertStringNotContainsStringIgnoringCase('acme', $json);
+        $this->assertStringNotContainsStringIgnoringCase('kickoff', $json);
+    }
+
+    public function test_signals_skip_the_organizer_when_the_user_organizes(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'organizer', [
+            'subject' => 'Planning',
+            'organizer_address' => $data->user->email,
+            'is_organizer' => true,
+            'attendees' => [
+                ['address' => 'eva@client.test', 'name' => 'Eva', 'type' => 'required'],
+            ],
+            'attendee_count' => 1,
+        ]);
+
+        // Act
+        $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ])->assertJsonPath('results.0.status', 'created');
+
+        // Assert
+        $signals = $this->storedSignals();
+        $this->assertNull($signals['o']);
+        $this->assertSame([$this->signalHash(MeetingSignals::KIND_PERSON, 'eva@client.test')], $signals['a']);
+    }
+
+    public function test_meeting_without_attendee_data_still_stores_signals(): void
+    {
+        // Arrange: a meeting cached before attendees were stored
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'no-attendees', [
+            'subject' => 'Budget forecast',
+            'organizer_address' => null,
+            'attendees' => null,
+            'attendee_count' => null,
+        ]);
+
+        // Act
+        $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ])->assertJsonPath('results.0.status', 'created');
+
+        // Assert
+        $signals = $this->storedSignals();
+        $this->assertSame(1, $signals['v']);
+        $this->assertNull($signals['o']);
+        $this->assertSame([], $signals['a']);
+        $this->assertSame([], $signals['i']);
+        $this->assertSame([], $signals['d']);
+        $this->assertSame(0, $signals['n']);
+        $this->assertEqualsCanonicalizing([
+            $this->signalHash(MeetingSignals::KIND_TOKEN, 'budget'),
+            $this->signalHash(MeetingSignals::KIND_TOKEN, 'forecast'),
+        ], $signals['t']);
+    }
+
+    public function test_prefill_kept_is_recorded(): void
+    {
+        // Arrange: four meetings, each converted from a differently prefilled form (D-16)
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $other = $this->publicProject($data->organization);
+        $kept = $this->meeting($data->user, 'prefill-kept');
+        $changed = $this->meeting($data->user, 'prefill-changed');
+        $none = $this->meeting($data->user, 'prefill-none');
+        $absent = $this->meeting($data->user, 'prefill-absent');
+        $base = ['project_id' => $project->getKey(), 'billable' => false];
+
+        // Act
+        $responses = [
+            $this->convert($data->organization, ['meeting_ids' => [$kept->id], 'prefill_source' => 'suggestion', 'prefill_project_id' => $project->getKey()] + $base),
+            $this->convert($data->organization, ['meeting_ids' => [$changed->id], 'prefill_source' => 'suggestion', 'prefill_project_id' => $other->getKey()] + $base),
+            $this->convert($data->organization, ['meeting_ids' => [$none->id], 'prefill_source' => 'none', 'prefill_project_id' => null] + $base),
+            $this->convert($data->organization, ['meeting_ids' => [$absent->id]] + $base),
+        ];
+
+        // Assert
+        foreach ($responses as $response) {
+            $response->assertJsonPath('results.0.status', 'created');
+        }
+        $links = OutlookMeetingLink::query()->get()->keyBy('graph_id');
+        $this->assertSame('suggestion', $links['prefill-kept']->prefill_source);
+        $this->assertTrue($links['prefill-kept']->prefill_kept);
+        $this->assertSame('suggestion', $links['prefill-changed']->prefill_source);
+        $this->assertFalse($links['prefill-changed']->prefill_kept);
+        $this->assertSame('none', $links['prefill-none']->prefill_source);
+        $this->assertNull($links['prefill-none']->prefill_kept);
+        $this->assertNull($links['prefill-absent']->prefill_source);
+        $this->assertNull($links['prefill-absent']->prefill_kept);
+    }
+
+    public function test_confirm_records_a_series_prefill(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'series-a', 'series-1', '2026-10-20');
+        $b = $this->occurrence($data->user, 'series-b', 'series-1', '2026-10-27');
+        $this->convert($data->organization, [
+            'meeting_ids' => [$a->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ])->assertJsonPath('results.0.status', 'created');
+
+        // Act
+        $this->confirm($data->organization, [$b->id])->assertJsonPath('results.0.status', 'created');
+
+        // Assert
+        $link = OutlookMeetingLink::query()->where('graph_id', '=', 'series-b')->sole();
+        $this->assertSame('series', $link->prefill_source);
+        $this->assertTrue($link->prefill_kept);
+        $this->assertIsArray($link->signals);
+    }
+
+    public function test_invalid_prefill_source_is_422(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'prefill-invalid');
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+            'prefill_source' => 'magic',
+        ]);
+
+        // Assert
+        $response->assertUnprocessable();
+        $this->assertSame(0, TimeEntry::query()->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
     }
 
     /**
