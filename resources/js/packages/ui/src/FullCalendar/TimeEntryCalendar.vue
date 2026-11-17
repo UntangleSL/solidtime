@@ -257,6 +257,7 @@ const {
 
 const {
     contextMenuTimeEntry,
+    contextMenuOverlayElement,
     handleCalendarContextMenu,
     handleContextEdit,
     handleContextDuplicate,
@@ -731,7 +732,11 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                                                     name="day-overlay"
                                                     v-bind="overlay"
                                                     :minutes-to-pixels="minutesToPixels"
-                                                    :settings="calendarSettings" />
+                                                    :settings="calendarSettings"
+                                                    :context-menu-open="contextMenuOpen"
+                                                    :interacting="
+                                                        isDragging || isResizing || isSelecting
+                                                    " />
                                             </template>
                                         </CalendarDayColumn>
                                     </div>
@@ -742,7 +747,13 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                 </ContextMenuTrigger>
 
                 <ContextMenuContent class="min-w-[160px]">
-                    <template v-if="contextMenuTimeEntry && contextMenuTimeEntry.end !== null">
+                    <!-- Fork seam (m365, D-06): a right-click on an overlay block gets the items of
+                         the `context-menu-overlay` slot; without that slot it keeps the slot menu -->
+                    <slot
+                        v-if="contextMenuOverlayElement && $slots['context-menu-overlay']"
+                        name="context-menu-overlay"
+                        :element="contextMenuOverlayElement" />
+                    <template v-else-if="contextMenuTimeEntry && contextMenuTimeEntry.end !== null">
                         <ContextMenuItem class="space-x-3" @select="handleContextEdit()">
                             <PencilIcon class="w-4 h-4 text-icon-default" />
                             <span>Edit</span>

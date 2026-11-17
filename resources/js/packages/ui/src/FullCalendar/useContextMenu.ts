@@ -24,6 +24,9 @@ export function useContextMenu(params: {
 }) {
     const contextMenuTimeEntry = ref<TimeEntry | null>(null);
     const contextMenuCreateTime = ref<{ start: Dayjs; end: Dayjs } | null>(null);
+    // Fork seam (m365, D-06): the overlay block ([data-calendar-overlay]) that was right-clicked,
+    // so a `context-menu-overlay` slot can render its own items for it. Null for entries and slots.
+    const contextMenuOverlayElement = ref<HTMLElement | null>(null);
 
     function getTimeAtClickPosition(event: MouseEvent): { start: Dayjs; end: Dayjs } | null {
         const date = params.getDayFromClientX(event.clientX);
@@ -47,11 +50,16 @@ export function useContextMenu(params: {
 
         if (!eventEl) {
             contextMenuTimeEntry.value = null;
+            // An overlay block (also when the menu is opened by keyboard on a focused block, whose
+            // event target is the block) keeps the click time as the fallback for the default items
+            contextMenuOverlayElement.value =
+                target.closest<HTMLElement>('[data-calendar-overlay]') ?? null;
             const timeInfo = getTimeAtClickPosition(event);
             contextMenuCreateTime.value = timeInfo;
             return;
         }
 
+        contextMenuOverlayElement.value = null;
         const eventId = eventEl.getAttribute('data-event-id');
         if (!eventId) return;
 
@@ -201,6 +209,7 @@ export function useContextMenu(params: {
     return {
         contextMenuTimeEntry,
         contextMenuCreateTime,
+        contextMenuOverlayElement,
         handleCalendarContextMenu,
         handleContextEdit,
         handleContextDuplicate,

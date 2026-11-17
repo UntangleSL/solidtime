@@ -29,6 +29,7 @@ import { getCurrentOrganizationId } from '@/utils/useUser';
 import OutlookCalendarControls from '@/m365/calendar/OutlookCalendarControls.vue';
 import OutlookDismissedSetting from '@/m365/calendar/OutlookDismissedSetting.vue';
 import OutlookGhostLayer from '@/m365/calendar/OutlookGhostLayer.vue';
+import OutlookMeetingContextItems from '@/m365/calendar/OutlookMeetingContextItems.vue';
 import { useOutlookMeetings } from '@/m365/calendar/useOutlookMeetings';
 
 const { organization } = useOrganizationQuery(getCurrentOrganizationId()!);
@@ -157,6 +158,9 @@ function onRefresh() {
                     v-bind="overlay"
                     :meetings="outlook.meetings.value"
                     :labels="outlook.labels.value" />
+            </template>
+            <template v-if="outlook.labels.value" #context-menu-overlay="{ element }">
+                <OutlookMeetingContextItems :element="element" />
             </template>
             <template v-if="outlook.calendar.value" #toolbar-extra>
                 <OutlookCalendarControls />
