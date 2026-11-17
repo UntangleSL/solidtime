@@ -10,7 +10,7 @@ import {
     onDeactivated,
     onUnmounted,
 } from 'vue';
-import { useLocalStorage } from '@vueuse/core';
+import { useElementSize, useLocalStorage } from '@vueuse/core';
 import { useCssVariable } from '../utils/useCssVariable';
 import { useBreaksEnabled } from '../utils/useBreaksEnabled';
 import { getLocalizedDayJs, getLocalizedDayJsFromMinutes } from '../utils/time';
@@ -19,6 +19,7 @@ import BreakCreateModal from '../TimeEntry/BreakCreateModal.vue';
 import FullCalendarDayHeader from './FullCalendarDayHeader.vue';
 import CalendarToolbar from './CalendarToolbar.vue';
 import CalendarDayColumn from './CalendarDayColumn.vue';
+import CalendarZoomControls from './CalendarZoomControls.vue';
 import type { CalendarSettings } from './calendarSettings';
 import { DEFAULT_CALENDAR_SETTINGS, sanitizeCalendarSettings } from './calendarSettings';
 import {
@@ -49,6 +50,7 @@ import { useEventResize } from './useEventResize';
 import { useSlotSelection } from './useSlotSelection';
 import { useContextMenu } from './useContextMenu';
 import { useWheelZoom } from './useWheelZoom';
+import { datesAffectingSettingsKey } from './calendarZoom';
 import type {
     TimeEntry,
     Project,
@@ -107,6 +109,9 @@ const contextMenuOpen = ref(false);
 
 const rootRef = ref<HTMLElement | null>(null);
 const scrollerRef = ref<HTMLElement | null>(null);
+const headerRef = ref<HTMLElement | null>(null);
+// The zoom pill sits just below the sticky day header
+const { height: headerHeight } = useElementSize(headerRef, undefined, { box: 'border-box' });
 
 const calendarSettings = useLocalStorage<CalendarSettings>(
     'solidtime:calendar-settings',
@@ -257,13 +262,15 @@ const {
 });
 
 // Ctrl/Cmd + wheel and pinch zoom the Grid Scale ladder (03.1-06, D-07); ignored mid-interaction
-useWheelZoom({
-    rootRef,
-    scrollerRef,
-    calendarSettings,
-    isInteracting: () => isDragging.value || isResizing.value || isSelecting.value,
-    pixelsToMinutesFromMidnight,
-});
+const { zoomIn, zoomOut, canZoomIn, canZoomOut, indicatorVisible, indicatorPercent } = useWheelZoom(
+    {
+        rootRef,
+        scrollerRef,
+        calendarSettings,
+        isInteracting: () => isDragging.value || isResizing.value || isSelecting.value,
+        pixelsToMinutesFromMidnight,
+    }
+);
 
 const {
     contextMenuTimeEntry,
@@ -369,12 +376,13 @@ watch(
     }
 );
 
+// Only settings that change the range or the day set re-emit dates-change: a zoom step changes
+// slotMinutes alone and must not refetch time entries (03.1-06)
 watch(
-    calendarSettings,
+    () => datesAffectingSettingsKey(calendarSettings.value),
     () => {
         emitDatesChange();
-    },
-    { deep: true }
+    }
 );
 
 let hasScrolledOnLoad = false;
@@ -549,15 +557,22 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                     @contextmenu="handleCalendarContextMenu">
                     <div
                         ref="rootRef"
-                        class="fc h-full flex flex-col bg-default-background text-foreground font-inherit border border-border border-l-transparent overflow-hidden">
+                        class="fc relative h-full flex flex-col bg-default-background text-foreground font-inherit border border-border border-l-transparent overflow-hidden">
                         <div
+                            ref="headerRef"
                             class="fc-header-scroll flex border-b border-border shrink-0 sticky top-0 z-10 bg-default-background">
                             <div
-                                class="shrink-0 bg-default-background border-r border-border"
+                                class="shrink-0 flex items-center justify-center bg-default-background border-r border-border"
                                 :style="{
                                     width: TIME_AXIS_WIDTH + 'px',
                                     minWidth: TIME_AXIS_WIDTH + 'px',
-                                }"></div>
+                                }">
+                                <CalendarZoomControls
+                                    :can-zoom-in="canZoomIn"
+                                    :can-zoom-out="canZoomOut"
+                                    @zoom-in="zoomIn"
+                                    @zoom-out="zoomOut" />
+                            </div>
                             <div
                                 class="grid flex-1 min-w-0"
                                 :style="{
@@ -587,6 +602,19 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                                         :is-day-view="activeView === 'timeGridDay'" />
                                 </div>
                             </div>
+                        </div>
+
+                        <!-- Zoom pill: stays mounted so the polite announcement fires on each change -->
+                        <div
+                            role="status"
+                            aria-live="polite"
+                            data-testid="calendar-zoom-indicator"
+                            class="pointer-events-none absolute left-14 z-20 rounded-md bg-primary px-2 py-1 text-xs font-semibold tabular-nums text-primary-foreground shadow-dropdown motion-safe:transition-opacity motion-safe:duration-150"
+                            :class="indicatorVisible ? 'opacity-100' : 'opacity-0'"
+                            :style="{ top: headerHeight + 8 + 'px' }">
+                            <template v-if="indicatorVisible">
+                                Zoom {{ indicatorPercent }}%
+                            </template>
                         </div>
 
                         <div ref="scrollerRef" class="fc-scroller">

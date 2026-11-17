@@ -169,3 +169,83 @@ describe('useWheelZoom wheel path', () => {
         expect(settings.value.slotMinutes).toBe(15);
     });
 });
+
+describe('useWheelZoom buttons and indicator', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('zoomIn() and zoomOut() step and anchor at the vertical centre of the scroller', async () => {
+        // Centre offset 300 px: scrollTop 1200 + 300 = 1500 px = 15:00 at 15-minute slots
+        const { scroller, settings, zoom } = await mountHarness({ scrollTop: 1200 });
+
+        expect(await zoom.zoomIn()).toBe(true);
+        expect(settings.value.slotMinutes).toBe(10);
+        // 15:00 at 10-minute slots is 2250 px, minus the 300 px centre offset
+        expect(scroller.scrollTop).toBe(1950);
+
+        expect(await zoom.zoomOut()).toBe(true);
+        expect(settings.value.slotMinutes).toBe(15);
+        expect(scroller.scrollTop).toBe(1200);
+    });
+
+    it('does nothing from the buttons at the ends of the ladder', async () => {
+        const { settings, zoom } = await mountHarness({ slotMinutes: 60 });
+        expect(await zoom.zoomOut()).toBe(false);
+        expect(settings.value.slotMinutes).toBe(60);
+        expect(zoom.indicatorVisible.value).toBe(false);
+    });
+
+    it('shows the new percent for 1200 ms after each step, restarting the timer', async () => {
+        vi.useFakeTimers();
+        const { zoom } = await mountHarness();
+        expect(zoom.indicatorVisible.value).toBe(false);
+
+        await zoom.zoomIn();
+        expect(zoom.indicatorVisible.value).toBe(true);
+        expect(zoom.indicatorPercent.value).toBe(150);
+
+        vi.advanceTimersByTime(1000);
+        await zoom.zoomIn();
+        expect(zoom.indicatorPercent.value).toBe(300);
+
+        vi.advanceTimersByTime(1000);
+        expect(zoom.indicatorVisible.value).toBe(true);
+        vi.advanceTimersByTime(200);
+        expect(zoom.indicatorVisible.value).toBe(false);
+    });
+});
+
+describe('useWheelZoom Safari pinch (gesture events)', () => {
+    function gesture(target: HTMLElement, type: string, scale: number): Event {
+        const event = new Event(type, { cancelable: true, bubbles: true });
+        Object.defineProperty(event, 'scale', { value: scale });
+        target.dispatchEvent(event);
+        return event;
+    }
+
+    it('zooms in once when the pinch scale passes 1.25', async () => {
+        const { root, settings } = await mountHarness();
+        expect(gesture(root, 'gesturestart', 1).defaultPrevented).toBe(true);
+        const change = gesture(root, 'gesturechange', 1.3);
+        expect(change.defaultPrevented).toBe(true);
+        expect(settings.value.slotMinutes).toBe(10);
+        // Still within 1.25x of the new baseline: no second step
+        gesture(root, 'gesturechange', 1.5);
+        expect(settings.value.slotMinutes).toBe(10);
+    });
+
+    it('zooms out once when the pinch scale drops below 0.8', async () => {
+        const { root, settings } = await mountHarness();
+        gesture(root, 'gesturestart', 1);
+        expect(gesture(root, 'gesturechange', 0.75).defaultPrevented).toBe(true);
+        expect(settings.value.slotMinutes).toBe(30);
+    });
+
+    it('ignores small scale changes', async () => {
+        const { root, settings } = await mountHarness();
+        gesture(root, 'gesturestart', 1);
+        expect(gesture(root, 'gesturechange', 1.1).defaultPrevented).toBe(true);
+        expect(settings.value.slotMinutes).toBe(15);
+    });
+});

@@ -1,5 +1,5 @@
-import { computed, nextTick, type Ref } from 'vue';
-import { useEventListener } from '@vueuse/core';
+import { computed, nextTick, ref, type Ref } from 'vue';
+import { tryOnScopeDispose, useEventListener } from '@vueuse/core';
 import type { CalendarSettings } from './calendarSettings';
 import {
     anchoredScrollTop,
@@ -10,6 +10,19 @@ import {
     zoomPercent as percentOf,
     type ZoomDirection,
 } from './calendarZoom';
+
+/** How long the "Zoom 150%" pill stays after a zoom change. */
+export const ZOOM_INDICATOR_MS = 1200;
+
+/** Safari pinch: one step once the scale moved this far from the last step's scale. */
+const GESTURE_ZOOM_IN_RATIO = 1.25;
+const GESTURE_ZOOM_OUT_RATIO = 0.8;
+
+/** Safari's non-standard GestureEvent (gesturestart / gesturechange), only the fields used here. */
+interface GestureLikeEvent extends Event {
+    scale: number;
+    clientY?: number;
+}
 
 export interface UseWheelZoomOptions {
     /** The `.fc` root: grid, time axis and sticky header, so Ctrl+wheel there never page-zooms. */
@@ -36,6 +49,30 @@ export function useWheelZoom(options: UseWheelZoomOptions) {
     const canZoomIn = computed(() => canZoom(calendarSettings.value.slotMinutes, 1));
     const canZoomOut = computed(() => canZoom(calendarSettings.value.slotMinutes, -1));
 
+    // Transient "Zoom 150%" pill: shown after every effective change, the timer restarts per step
+    const indicatorVisible = ref(false);
+    const indicatorPercent = ref(zoomPercent.value);
+    let indicatorTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function clearIndicatorTimer(): void {
+        if (indicatorTimer !== null) {
+            clearTimeout(indicatorTimer);
+            indicatorTimer = null;
+        }
+    }
+
+    function showIndicator(percent: number): void {
+        indicatorPercent.value = percent;
+        indicatorVisible.value = true;
+        clearIndicatorTimer();
+        indicatorTimer = setTimeout(() => {
+            indicatorVisible.value = false;
+            indicatorTimer = null;
+        }, ZOOM_INDICATOR_MS);
+    }
+
+    tryOnScopeDispose(clearIndicatorTimer);
+
     /**
      * One step in `direction`, anchored at `clientY` (default: the scroller's vertical centre).
      * Resolves to true when the zoom changed, false at the end of the ladder.
@@ -57,6 +94,7 @@ export function useWheelZoom(options: UseWheelZoomOptions) {
         }
 
         calendarSettings.value = { ...current, slotMinutes: next };
+        showIndicator(percentOf(next));
 
         // The grid only grows after the render, so scrollTop must be set afterwards
         await nextTick();
@@ -82,5 +120,52 @@ export function useWheelZoom(options: UseWheelZoomOptions) {
 
     useEventListener(rootRef, 'wheel', onWheel, { passive: false });
 
-    return { stepZoom, zoomPercent, canZoomIn, canZoomOut };
+    // Safari pinch arrives as gesture events, not as a ctrl wheel (best effort, no WebKit in CI)
+    let gestureBaseline = 1;
+
+    function onGestureStart(event: Event): void {
+        event.preventDefault();
+        gestureBaseline = 1;
+    }
+
+    function onGestureChange(event: Event): void {
+        event.preventDefault();
+        if (isInteracting()) return;
+        const gesture = event as GestureLikeEvent;
+        if (typeof gesture.scale !== 'number' || gesture.scale <= 0) return;
+        const ratio = gesture.scale / gestureBaseline;
+        const clientY = typeof gesture.clientY === 'number' ? gesture.clientY : undefined;
+        if (ratio >= GESTURE_ZOOM_IN_RATIO) {
+            gestureBaseline = gesture.scale;
+            void stepZoom(1, clientY);
+        } else if (ratio <= GESTURE_ZOOM_OUT_RATIO) {
+            gestureBaseline = gesture.scale;
+            void stepZoom(-1, clientY);
+        }
+    }
+
+    useEventListener(rootRef, 'gesturestart', onGestureStart, { passive: false });
+    useEventListener(rootRef, 'gesturechange', onGestureChange, { passive: false });
+
+    /** Button steps anchor at the vertical centre of the visible grid. */
+    function zoomIn(): Promise<boolean> {
+        if (isInteracting()) return Promise.resolve(false);
+        return stepZoom(1);
+    }
+
+    function zoomOut(): Promise<boolean> {
+        if (isInteracting()) return Promise.resolve(false);
+        return stepZoom(-1);
+    }
+
+    return {
+        stepZoom,
+        zoomIn,
+        zoomOut,
+        zoomPercent,
+        canZoomIn,
+        canZoomOut,
+        indicatorVisible,
+        indicatorPercent,
+    };
 }
