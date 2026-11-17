@@ -48,6 +48,7 @@ import { useEventDrag } from './useEventDrag';
 import { useEventResize } from './useEventResize';
 import { useSlotSelection } from './useSlotSelection';
 import { useContextMenu } from './useContextMenu';
+import { useWheelZoom } from './useWheelZoom';
 import type {
     TimeEntry,
     Project,
@@ -253,6 +254,15 @@ const {
         newEventEnd.value = end;
         showCreateTimeEntryModal.value = true;
     },
+});
+
+// Ctrl/Cmd + wheel and pinch zoom the Grid Scale ladder (03.1-06, D-07); ignored mid-interaction
+useWheelZoom({
+    rootRef,
+    scrollerRef,
+    calendarSettings,
+    isInteracting: () => isDragging.value || isResizing.value || isSelecting.value,
+    pixelsToMinutesFromMidnight,
 });
 
 const {
