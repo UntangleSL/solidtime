@@ -3,8 +3,12 @@ import { test } from '../playwright/fixtures';
 import type { TestContext } from '../playwright/fixtures';
 import { expect } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { createProjectWithClientViaApi } from './utils/api';
-import { showCalendarWeekends } from './utils/calendar';
+import { createProjectViaApi, createProjectWithClientViaApi } from './utils/api';
+import {
+    CALENDAR_SETTINGS_KEY,
+    WEEKENDS_HIDDEN_DEFAULT_MIGRATION_KEY,
+    showCalendarWeekends,
+} from './utils/calendar';
 
 // Phase 5 browser proof: pre-assigned meetings, bulk confirm, the learned prefill and the series
 // controls (RULE-01..05).
@@ -218,6 +222,10 @@ const LABELS = {
 };
 
 const HOVER_CARD = '[data-testid="outlook-hover-card"]';
+const DETAIL_PANEL = '[data-testid="outlook-ghost-detail"]';
+const CONVERT_FORM = '[data-testid="outlook-convert-form"]';
+const CONFIRM_ALL = '[data-testid="outlook-confirm-all"]';
+const CONFIRM_POPOVER = '[data-testid="outlook-confirm-all-popover"]';
 const CONVERT_ROUTE = '**/m365/organizations/*/meetings/time-entries';
 
 async function goToCalendar(page: Page) {
@@ -490,5 +498,264 @@ test.describe('Outlook meeting suggestions', () => {
         await expect(entry).toBeVisible();
         await expect(entry).toContainText('Acme Website');
         await expect(entry.locator('[data-testid="outlook-entry-badge"]')).toHaveCount(1);
+    });
+
+    test('bulk-confirms the pre-assigned meetings in view, skipping unticked ones and hidden weekends', async ({
+        page,
+        ctx,
+    }) => {
+        // Weekends hidden: written on every load after the beforeEach seed, so it always wins
+        await page.addInitScript(
+            ([settingsKey, migrationKey, settings]) => {
+                try {
+                    window.localStorage.setItem(migrationKey, '1');
+                    window.localStorage.setItem(settingsKey, settings);
+                } catch {
+                    // about:blank and other opaque origins have no localStorage
+                }
+            },
+            [
+                CALENDAR_SETTINGS_KEY,
+                WEEKENDS_HIDDEN_DEFAULT_MIGRATION_KEY,
+                JSON.stringify({
+                    snapMinutes: 15,
+                    startHour: 0,
+                    endHour: 24,
+                    slotMinutes: 15,
+                    showWeekends: false,
+                }),
+            ] as const
+        );
+        const project = await createProjectViaApi(ctx, { name: 'Retainer Project' });
+        const other = await createProjectViaApi(ctx, { name: 'Suggested Project' });
+
+        await goToCalendar(page);
+        const headerDates = await page
+            .locator('.fc-col-header-cell[data-date]')
+            .evaluateAll((cells) => cells.map((cell) => cell.getAttribute('data-date') ?? ''));
+        // The current week without Saturday and Sunday
+        expect(headerDates).toHaveLength(5);
+        for (const date of headerDates) {
+            expect([0, 6]).not.toContain(new Date(`${date}T00:00:00Z`).getUTCDay());
+        }
+        // The Saturday of the same week (Monday + 5, whatever the week start is)
+        const saturday = new Date(`${headerDates[0]}T00:00:00Z`);
+        while (saturday.getUTCDay() !== 6) saturday.setUTCDate(saturday.getUTCDate() + 1);
+        const saturdayDate = saturday.toISOString().slice(0, 10);
+        expect(headerDates).not.toContain(saturdayDate);
+
+        const [day1, day2, day3] = headerDates as [string, string, string];
+        const assignment = assignmentFor(project);
+        const meetings: InjectedMeeting[] = [
+            {
+                id: 'm-b1',
+                subject: 'Retainer one',
+                start: `${day1}T09:00:00Z`,
+                end: `${day1}T09:30:00Z`,
+                series_key: 's-b1',
+                assignment,
+            },
+            {
+                id: 'm-b2',
+                subject: 'Retainer two',
+                start: `${day2}T10:00:00Z`,
+                end: `${day2}T10:30:00Z`,
+                series_key: 's-b2',
+                assignment,
+            },
+            {
+                id: 'm-b3',
+                subject: 'Retainer three',
+                start: `${day3}T11:00:00Z`,
+                end: `${day3}T11:30:00Z`,
+                series_key: 's-b3',
+                assignment,
+            },
+            {
+                id: 'm-sat',
+                subject: 'Weekend retainer',
+                start: `${saturdayDate}T10:00:00Z`,
+                end: `${saturdayDate}T10:30:00Z`,
+                series_key: 's-sat',
+                assignment,
+            },
+            {
+                id: 'm-suggested',
+                subject: 'Suggested only',
+                start: `${day1}T14:00:00Z`,
+                end: `${day1}T14:30:00Z`,
+                suggestions: [
+                    {
+                        project_id: other.id,
+                        project_name: other.name,
+                        project_color: other.color,
+                        client_name: null,
+                        confident: true,
+                        reason: { kind: 'domain', count: 3, value: 'client.com' },
+                    },
+                ],
+            },
+        ];
+
+        await scrollCalendarToTime(page, '09:00:00');
+        const conversions = await routeConversions(page, ctx, meetings);
+        await injectMeetings(page, meetings, { convertUrl: convertUrl(ctx) });
+        await expect(page.locator('.m365-ghost')).toHaveCount(4);
+        await expect(ghost(page, 'm-sat')).toHaveCount(0);
+
+        // Only the three rendered pre-assigned meetings count
+        const button = page.locator(CONFIRM_ALL);
+        await expect(button).toBeVisible();
+        await expect(button).toHaveAttribute('aria-label', 'Confirm 3 pre-assigned meetings');
+        await button.click();
+
+        const popover = page.locator(CONFIRM_POPOVER);
+        await expect(popover).toBeVisible();
+        await expect(popover.locator('[data-testid="outlook-confirm-title"]')).toHaveText(
+            'Confirm 3 pre-assigned meetings'
+        );
+        const rows = popover.locator('[data-testid="outlook-confirm-row"]');
+        await expect(rows).toHaveCount(3);
+        await expect(rows.nth(0)).toContainText('Retainer one');
+        await expect(rows.nth(1)).toContainText('Retainer two');
+        await expect(rows.nth(2)).toContainText('Retainer three');
+        await expect(popover).not.toContainText('Weekend retainer');
+        await expect(popover).not.toContainText('Suggested only');
+        await expect(rows.first().locator('[data-testid="outlook-batch-row-project"]')).toHaveText(
+            /Retainer Project/
+        );
+
+        const two = rows.filter({ hasText: 'Retainer two' });
+        await two.locator('[data-testid="outlook-include-checkbox"]').uncheck();
+        const submit = popover.locator('[data-testid="outlook-confirm-submit"]');
+        await expect(submit).toHaveText('Confirm 2 meetings');
+
+        // Hold the answer to see the per-row state while the request runs
+        let release: () => void = () => {};
+        conversions.hold = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        await submit.click();
+
+        await expect.poll(() => conversions.bodies.length).toBe(1);
+        expect(conversions.bodies[0]).toEqual({
+            meeting_ids: ['m-b1', 'm-b3'],
+            use_series_assignment: true,
+        });
+        await expect(rows.filter({ hasText: 'Retainer one' })).toHaveAttribute(
+            'data-status',
+            'pending'
+        );
+        await expect(rows.filter({ hasText: 'Retainer three' })).toHaveAttribute(
+            'data-status',
+            'pending'
+        );
+        await expect(two).not.toHaveAttribute('data-status');
+        release();
+
+        // Everything sent was created: one toast for the whole confirm and the popover closes
+        await expect(page.getByText('2 time entries created successfully').first()).toBeVisible();
+        await expect(page.locator(CONFIRM_POPOVER)).toHaveCount(0);
+        expect(conversions.created.map((entry) => entry.meeting_id)).toEqual(['m-b1', 'm-b3']);
+        expect(conversions.created.every((entry) => entry.project_id === project.id)).toBe(true);
+        expect(conversions.bodies).toHaveLength(1);
+
+        await expect(ghost(page, 'm-b1')).toHaveCount(0);
+        await expect(ghost(page, 'm-b3')).toHaveCount(0);
+        await expect(ghost(page, 'm-b2')).toHaveCount(1);
+        await expect(ghost(page, 'm-suggested')).toHaveCount(1);
+        await expect(button).toHaveAttribute('aria-label', 'Confirm 1 pre-assigned meeting');
+
+        for (const subject of ['Retainer one', 'Retainer three']) {
+            const entry = page.locator('.fc-event').filter({ hasText: subject }).first();
+            await expect(entry).toBeVisible();
+            await expect(entry.locator('[data-testid="outlook-entry-badge"]')).toHaveCount(1);
+        }
+    });
+
+    test('opens the form with a confident suggestion and switches project with a quick pick', async ({
+        page,
+        ctx,
+    }) => {
+        const portal = await createProjectViaApi(ctx, { name: 'Client Portal' });
+        const internal = await createProjectViaApi(ctx, { name: 'Internal' });
+        const meetings: InjectedMeeting[] = [
+            {
+                id: 'm-suggest',
+                subject: 'Portal kickoff',
+                start: todayAt('14:00:00'),
+                end: todayAt('15:00:00'),
+                suggestions: [
+                    {
+                        project_id: portal.id,
+                        project_name: portal.name,
+                        project_color: portal.color,
+                        client_name: null,
+                        confident: true,
+                        reason: { kind: 'domain', count: 4, value: 'client.com' },
+                    },
+                    {
+                        project_id: internal.id,
+                        project_name: internal.name,
+                        project_color: internal.color,
+                        client_name: null,
+                        confident: false,
+                        reason: { kind: 'subject', count: 2, value: null },
+                    },
+                ],
+            },
+        ];
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '13:00:00');
+        const conversions = await routeConversions(page, ctx, meetings);
+        await injectMeetings(page, meetings, { convertUrl: convertUrl(ctx) });
+
+        const block = ghost(page, 'm-suggest');
+        await expect(block).toHaveCount(1);
+        // A suggestion is not a pre-assignment: no project line in the lane
+        await expect(block).not.toHaveAttribute('data-preassigned');
+        await block.click();
+        const panel = page.locator(DETAIL_PANEL);
+        await expect(panel).toBeVisible();
+        await panel.locator('[data-testid="outlook-detail-create"]').click();
+
+        const form = panel.locator(CONVERT_FORM);
+        await expect(form).toBeVisible();
+        const projectField = form.locator('[data-testid="outlook-convert-project"]');
+        await expect(projectField).toContainText('Client Portal');
+        await expect(form.locator('[data-testid="outlook-suggestion-reason"]')).toHaveText(
+            'Like 4 meetings with @client.com'
+        );
+        const picks = form.locator('[data-testid="outlook-suggestion-pick"]');
+        await expect(picks).toHaveCount(1);
+        await expect(picks.first()).toHaveText('Internal');
+        await expect(picks.first()).toHaveAttribute('data-project-id', internal.id);
+        await expect(picks.first()).toHaveAttribute('aria-label', 'Use Internal');
+
+        await picks.first().click();
+        await expect(projectField).toContainText('Internal');
+        await expect(projectField).not.toContainText('Client Portal');
+        // The reason follows the picked candidate, and the other one becomes the chip
+        await expect(form.locator('[data-testid="outlook-suggestion-reason"]')).toHaveText(
+            'Like 2 meetings with a similar subject'
+        );
+        await expect(picks).toHaveCount(1);
+        await expect(picks.first()).toHaveAttribute('data-project-id', portal.id);
+
+        await form.locator('[data-testid="outlook-convert-submit"]').click();
+
+        await expect.poll(() => conversions.bodies.length).toBe(1);
+        const body = conversions.bodies[0]!;
+        expect(body.meeting_ids).toEqual(['m-suggest']);
+        expect(body.use_series_assignment).toBeUndefined();
+        expect(body.project_id).toBe(internal.id);
+        expect(body.prefill_source).toBe('suggestion');
+        expect(body.prefill_project_id).toBe(portal.id);
+
+        await expect(block).toHaveCount(0);
+        const entry = page.locator('.fc-event').filter({ hasText: 'Portal kickoff' }).first();
+        await expect(entry).toBeVisible();
+        await expect(entry).toContainText('Internal');
     });
 });
