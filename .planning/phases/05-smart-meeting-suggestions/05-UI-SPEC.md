@@ -186,12 +186,12 @@ States interplay:
 
 ### 2. Hover card delta (RULE-01, RULE-05)
 
-For a pre-assigned meeting, between the summary rows and the hint, an `OutlookPreassignment` block, `variant="compact"`, `mt-3 space-y-1`:
+For a pre-assigned meeting, between the summary rows and the hint, an `OutlookPreassignment` block, `variant="compact"`, `mt-4 space-y-1`:
 1. Eyebrow (12px 400 `text-tertiary`, `flex items-center gap-1`): `Repeat` 12px + "Pre-assigned · Same series".
 2. Project line: `OutlookProjectDot` + project name (12px 600 `text-primary`) + " · Client" (12px 400 `text-tertiary`), one line, truncate.
 3. Detail line (12px 400 `text-secondary`, truncate), parts joined with " · ", empty parts omitted: task name, "2 Tags" (core tag count copy), "Billable" / "Non-Billable".
 
-Actions row (`mt-3 flex justify-end gap-2`): `SecondaryButton` `Pencil` "Edit" (opens the panel in form mode, prefilled, same channel as Phase 4 `openForm`), then `PrimaryButton` `Check` "Confirm". Test ids `outlook-hover-edit`, `outlook-hover-confirm`.
+Actions row (`mt-4 flex justify-end gap-2`): `SecondaryButton` `Pencil` "Edit" (opens the panel in form mode, prefilled, same channel as Phase 4 `openForm`), then `PrimaryButton` `Check` "Confirm". Test ids `outlook-hover-edit`, `outlook-hover-confirm`.
 
 Confirm from the hover card: the button shows its spinner; the card is allowed to close normally (pointer leave), the request carries on and its outcome is shown on the block (pending state) and by toast. Other meetings: unchanged Phase 4 card ("Create time entry").
 
