@@ -18,6 +18,9 @@ interface InjectedMeeting {
     organizer_name?: string | null;
 }
 
+// Hint line under the hover card details (English copy)
+const HOVER_HINT = 'Click for details';
+
 // Subset of the English copy that the ghost layer and its detail panel read (microsoft365.calendar.*)
 const LABELS = {
     no_subject: '(No subject)',
@@ -33,7 +36,7 @@ const LABELS = {
     opens_new_tab: '(opens in a new tab)',
     dismiss: 'Dismiss meeting',
     restore: 'Restore meeting',
-    hover_hint: 'Click for details',
+    hover_hint: HOVER_HINT,
 };
 
 async function goToCalendar(page: Page) {
@@ -93,6 +96,7 @@ async function headerTexts(page: Page): Promise<string[]> {
 
 const MEETING_MENU = '[data-testid="outlook-meeting-menu"]';
 const HOVER_CARD = '[data-testid="outlook-hover-card"]';
+const DETAIL_PANEL = '[data-testid="outlook-ghost-detail"]';
 
 // UI-SPEC 3.1 section 4 layering acceptance: the element the browser hit-tests at the centre of the
 // meeting menu belongs to that menu, so no hover card, panel or other layer sits above it.
@@ -281,7 +285,7 @@ test.describe('Outlook meeting hover card and context menu', () => {
         const card = page.locator(HOVER_CARD);
         await expect(card).toBeVisible();
         await expect(card).toContainText('Layering review');
-        await expect(card).toContainText(LABELS.hover_hint);
+        await expect(card).toContainText(HOVER_HINT);
 
         await ghost.click({ button: 'right' });
 
@@ -303,5 +307,217 @@ test.describe('Outlook meeting hover card and context menu', () => {
 
         await page.keyboard.press('Escape');
         await expect(page.locator(MEETING_MENU)).toHaveCount(0);
+    });
+
+    test('hovering shows the details; clicking swaps the card for the panel', async ({ page }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        await injectMeetings(page, [
+            {
+                id: 'm-hover',
+                subject: 'Design review',
+                start: todayAt('14:00:00'),
+                end: todayAt('15:00:00'),
+                is_online_meeting: true,
+            },
+        ]);
+        const ghost = page.locator('.m365-ghost');
+        await expect(ghost).toHaveCount(1);
+
+        await ghost.hover();
+        const card = page.locator(HOVER_CARD);
+        await expect(card).toBeVisible();
+        await expect(card).toContainText(LABELS.eyebrow);
+        await expect(card.locator('[data-testid="outlook-hover-subject"]')).toHaveText(
+            'Design review'
+        );
+        await expect(card.locator('[data-testid="outlook-hover-time"]')).toContainText('14:00');
+        await expect(card.locator('[data-testid="outlook-hover-online"]')).toHaveText(
+            LABELS.online
+        );
+        await expect(card).toContainText(HOVER_HINT);
+
+        await ghost.click();
+
+        await expect(page.locator(HOVER_CARD)).toHaveCount(0);
+        await expect(page.locator(DETAIL_PANEL)).toBeVisible();
+        await expect(page.locator(DETAIL_PANEL)).toContainText('Design review');
+    });
+
+    test('with the panel open, a right-click closes it and Open in Outlook is usable', async ({
+        page,
+    }) => {
+        // The Outlook link never leaves the test: the new tab gets a local stand-in page
+        await page
+            .context()
+            .route('https://outlook.example.test/**', (route) =>
+                route.fulfill({ status: 200, contentType: 'text/plain', body: 'Outlook stand-in' })
+            );
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        await injectMeetings(page, [
+            {
+                id: 'm-panel',
+                subject: 'Customer call',
+                start: todayAt('14:00:00'),
+                end: todayAt('15:00:00'),
+                web_link: 'https://outlook.example.test/meeting-1',
+            },
+        ]);
+        const ghost = page.locator('.m365-ghost');
+        await expect(ghost).toHaveCount(1);
+
+        await ghost.click();
+        await expect(page.locator(DETAIL_PANEL)).toBeVisible();
+
+        await ghost.click({ button: 'right' });
+
+        await expect(page.locator(DETAIL_PANEL)).toHaveCount(0);
+        await expect(page.locator(MEETING_MENU)).toBeVisible();
+        expect(await menuCentreHitsMenu(page)).toBe(true);
+
+        // Playwright hit-tests the item before clicking it, so nothing may cover it
+        const popupPromise = page.context().waitForEvent('page');
+        await page.locator('[data-testid="outlook-menu-open"]').click();
+        const popup = await popupPromise;
+        await expect(popup).toHaveURL(/^https:\/\/outlook\.example\.test\/meeting-1/);
+        // noopener: the Outlook tab cannot reach back into the app (reverse tabnabbing, T-03.1-16)
+        expect(await popup.evaluate(() => window.opener)).toBeNull();
+        await popup.close();
+        await expect(page.locator(MEETING_MENU)).toHaveCount(0);
+    });
+
+    test('right-click on empty lane space opens the empty-slot menu', async ({ page }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        await injectMeetings(page, [
+            {
+                id: 'm-lane',
+                subject: 'Short sync',
+                start: todayAt('14:00:00'),
+                end: todayAt('14:30:00'),
+            },
+        ]);
+        await expect(page.locator('.m365-ghost')).toHaveCount(1);
+        const lane = page.locator('[data-testid="outlook-lane"]');
+        await expect(lane).toHaveCount(1);
+
+        // A point in the Outlook lane well after the meeting: the lane itself lets the pointer through
+        await page.evaluate(() => {
+            document
+                .querySelector('.fc-timegrid-slot-lane[data-time="16:00:00"]')
+                ?.scrollIntoView({ block: 'center' });
+        });
+        await page.waitForTimeout(300);
+        const laneBox = await lane.boundingBox();
+        const rowBox = await page
+            .locator('.fc-timegrid-slot-lane[data-time="16:00:00"]')
+            .first()
+            .boundingBox();
+        expect(laneBox).not.toBeNull();
+        expect(rowBox).not.toBeNull();
+        const x = laneBox!.x + laneBox!.width / 2;
+        const y = rowBox!.y + rowBox!.height / 2;
+        const onMeeting = await page.evaluate(
+            ({ px, py }) => document.elementFromPoint(px, py)?.closest('.m365-ghost') != null,
+            { px: x, py: y }
+        );
+        expect(onMeeting).toBe(false);
+
+        await page.mouse.click(x, y, { button: 'right' });
+
+        await expect(page.getByRole('menuitem', { name: 'Create Time Entry' })).toBeVisible();
+        await expect(page.locator(MEETING_MENU)).toHaveCount(0);
+        await page.keyboard.press('Escape');
+        await expect(page.getByRole('menu')).toHaveCount(0);
+    });
+
+    test('right-click on an entry still opens the entry menu', async ({ page, ctx }) => {
+        const entry = await createBareTimeEntryViaApi(ctx, 'Menu entry', '1h');
+        await goToCalendar(page);
+        const entryBlock = page.locator('.fc-event').filter({ hasText: 'Menu entry' }).first();
+        await entryBlock.scrollIntoViewIfNeeded();
+        await expect(entryBlock).toBeVisible();
+        // A meeting at the same time, so the Outlook layer and its menu slot are active
+        await injectMeetings(page, [
+            { id: 'm-entry', subject: 'Beside the entry', start: entry.start, end: entry.end },
+        ]);
+        await expect(page.locator('.m365-ghost')).toHaveCount(1);
+
+        await entryBlock.click({ button: 'right' });
+
+        await expect(page.getByRole('menuitem', { name: 'Edit' })).toBeVisible();
+        await expect(page.locator(MEETING_MENU)).toHaveCount(0);
+        await page.keyboard.press('Escape');
+        await expect(page.getByRole('menu')).toHaveCount(0);
+    });
+
+    test('no hover card opens while the menu is open', async ({ page }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        await injectMeetings(page, [
+            {
+                id: 'm-first',
+                subject: 'First meeting',
+                start: todayAt('14:00:00'),
+                end: todayAt('14:30:00'),
+            },
+            {
+                id: 'm-second',
+                subject: 'Second meeting',
+                start: todayAt('15:00:00'),
+                end: todayAt('15:30:00'),
+            },
+        ]);
+        await expect(page.locator('.m365-ghost')).toHaveCount(2);
+        const first = page.locator('.m365-ghost[data-ghost-id="m-first"]');
+        const second = page.locator('.m365-ghost[data-ghost-id="m-second"]');
+        const secondBox = await second.boundingBox();
+        expect(secondBox).not.toBeNull();
+
+        await first.click({ button: 'right' });
+        await expect(page.locator(MEETING_MENU)).toBeVisible();
+
+        // Left part of the second block: the menu opens to the right of the first block's centre
+        await page.mouse.move(
+            secondBox!.x + secondBox!.width / 4,
+            secondBox!.y + secondBox!.height / 2,
+            { steps: 5 }
+        );
+        await page.waitForTimeout(700);
+
+        await expect(page.locator(HOVER_CARD)).toHaveCount(0);
+        await expect(page.locator(MEETING_MENU)).toBeVisible();
+        await page.keyboard.press('Escape');
+        await expect(page.locator(MEETING_MENU)).toHaveCount(0);
+    });
+});
+
+test.describe('Outlook meetings on touch', () => {
+    test.use({ hasTouch: true });
+    test.skip(
+        ({ browserName }) => browserName === 'firefox',
+        'touch emulation is Chromium-only in this suite'
+    );
+
+    test('a tap opens the panel and never the hover card', async ({ page }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        await injectMeetings(page, [
+            {
+                id: 'm-touch',
+                subject: 'Tap meeting',
+                start: todayAt('14:00:00'),
+                end: todayAt('15:00:00'),
+            },
+        ]);
+        const ghost = page.locator('.m365-ghost');
+        await expect(ghost).toHaveCount(1);
+
+        await ghost.tap();
+
+        await expect(page.locator(DETAIL_PANEL)).toBeVisible();
+        await page.waitForTimeout(700);
+        await expect(page.locator(HOVER_CARD)).toHaveCount(0);
     });
 });
