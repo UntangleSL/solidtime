@@ -1,31 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import chroma from 'chroma-js';
-import { readShippedCss } from './shippedCss';
+import { readShippedCss } from './sourceFiles';
 import { ACCENT_IDS, ACCENT_PRESETS, DEFAULT_ACCENT, isAccentId } from './accentPresets';
+import { parseCssBlocks } from './contrast';
 
 const themeCss = readShippedCss('untangle-theme.css');
 const presetsCss = readShippedCss('accent-presets.css');
 const appCss = readShippedCss('app.css');
 
-type Blocks = Map<string, Record<string, string>>;
-
-/** Minimal block parser (selector -> custom properties); comments stripped. */
-function parseBlocks(css: string): Blocks {
-    const blocks: Blocks = new Map();
-    const clean = css.replace(/\/\*[\s\S]*?\*\//g, '');
-    for (const match of clean.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-        const selector = match[1]!.trim().replace(/\s+/g, ' ');
-        const props: Record<string, string> = {};
-        for (const decl of match[2]!.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
-            props[decl[1]!] = decl[2]!.trim().replace(/\s+/g, ' ');
-        }
-        if (Object.keys(props).length === 0) continue;
-        blocks.set(selector, { ...(blocks.get(selector) ?? {}), ...props });
-    }
-    return blocks;
-}
-
-const blocks = parseBlocks(themeCss);
+const blocks = parseCssBlocks(themeCss);
 const dark = blocks.get('html:root.dark') ?? {};
 const light = blocks.get('html:root.light') ?? {};
 const STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
@@ -161,7 +144,7 @@ describe('untangle-theme.css (BRAND-01)', () => {
     });
 });
 
-const presetBlocks = parseBlocks(presetsCss);
+const presetBlocks = parseCssBlocks(presetsCss);
 const NON_BASELINE = ['azure', 'indigo', 'violet', 'ember', 'graphite'];
 
 function scaleOf(mode: 'light' | 'dark', id: string): Record<string, string> {
