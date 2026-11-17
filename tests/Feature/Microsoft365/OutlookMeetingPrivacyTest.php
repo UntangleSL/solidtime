@@ -13,11 +13,13 @@ use App\Microsoft365\Graph\OutlookMeetingEligibility;
 use App\Microsoft365\Graph\OutlookMeetingSyncService;
 use App\Microsoft365\Graph\SyncOutcome;
 use App\Microsoft365\Graph\SyncStatus;
+use App\Microsoft365\Http\Controllers\MeetingConversionController;
 use App\Microsoft365\Http\Controllers\MicrosoftAccountController;
 use App\Microsoft365\Http\Controllers\MicrosoftAuthController;
 use App\Microsoft365\Http\Controllers\OutlookMeetingController;
 use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
 use App\Microsoft365\Http\Middleware\ShareMicrosoftInertiaData;
+use App\Microsoft365\Http\Requests\MeetingConversionRequest;
 use App\Microsoft365\Http\Requests\MeetingRangeRequest;
 use App\Microsoft365\Http\Resources\OutlookMeetingResource;
 use App\Microsoft365\Microsoft365ServiceProvider;
@@ -26,6 +28,7 @@ use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookMeetingLink;
 use App\Microsoft365\Models\OutlookSyncWindow;
+use App\Microsoft365\TimeEntries\CoreTimeEntryCreator;
 use App\Models\Member;
 use App\Models\Project;
 use App\Models\TimeEntry;
@@ -74,6 +77,10 @@ use TiMacDonald\Log\LogEntry;
 #[UsesClass(EnsureMicrosoftIsEnabled::class)]
 #[UsesClass(MicrosoftConfig::class)]
 #[UsesClass(Microsoft365ServiceProvider::class)]
+#[UsesClass(MeetingConversionController::class)]
+#[UsesClass(MeetingConversionRequest::class)]
+#[UsesClass(CoreTimeEntryCreator::class)]
+#[UsesClass(OutlookMeetingLink::class)]
 class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
 {
     use InteractsWithGraphFixtures;
@@ -603,6 +610,72 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
         }
     }
 
+    public function test_impersonation_cannot_convert(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $data = $this->createUserWithRole(Role::Employee);
+        $data->user->save();
+        $this->connectedAccount($data->user);
+        $project = Project::factory()->forOrganization($data->organization)->isPublic()->create();
+        $meeting = $this->meeting($data->user, 'impersonated-convert');
+        $this->actingAs($data->user);
+        $this->startImpersonation();
+
+        // Act
+        $response = $this->postJson(route('microsoft.meetings.convert', ['organization' => $data->organization->getKey()], false), [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert: the same 404 as an unknown meeting, nothing created (D-13)
+        $response->assertNotFound();
+        $this->assertSame(0, TimeEntry::query()->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+        $this->assertNull($meeting->refresh()->dismissed_at);
+    }
+
+    public function test_converting_does_not_change_other_entries(): void
+    {
+        // Arrange: entries of the user and of another member that the conversion must not touch
+        $this->configureMicrosoft365();
+        $data = $this->createUserWithRole(Role::Employee);
+        $data->user->save();
+        $this->connectedAccount($data->user);
+        $project = Project::factory()->forOrganization($data->organization)->isPublic()->create();
+        foreach (['2026-10-20 07:00:00', '2026-10-20 11:00:00', '2026-10-21 09:00:00'] as $start) {
+            TimeEntry::factory()
+                ->forOrganization($data->organization)
+                ->forMember($data->member)
+                ->forProject($project)
+                ->startWithDuration(Carbon::parse($start, 'UTC'), 1800)
+                ->create();
+        }
+        TimeEntry::factory()->forOrganization($data->organization)->forMember($data->ownerMember)->count(2)->create();
+        $meeting = $this->meeting($data->user, 'snapshot');
+        $before = $this->timeEntrySnapshot();
+        $this->actingAs($data->user);
+
+        // Act
+        $response = $this->postJson(route('microsoft.meetings.convert', ['organization' => $data->organization->getKey()], false), [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert: exactly one new entry, every other entry identical
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        $newId = $response->json('results.0.time_entry_id');
+        $after = array_values(array_filter(
+            $this->timeEntrySnapshot(),
+            fn (array $row): bool => $row['id'] !== $newId,
+        ));
+        $this->assertCount(count($before) + 1, $this->timeEntrySnapshot());
+        $this->assertSame($before, $after);
+    }
+
     public function test_models_are_not_audited_and_not_in_filament(): void
     {
         // Arrange
@@ -615,7 +688,7 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
         $this->assertNotEmpty($filamentFiles);
         foreach ($filamentFiles as $file) {
             $contents = $file->getContents();
-            foreach (['OutlookMeeting', 'OutlookSyncWindow', 'outlook_meetings', 'outlook_sync_windows', 'outlook_meeting_links'] as $needle) {
+            foreach (['OutlookMeeting', 'OutlookMeetingLink', 'OutlookSyncWindow', 'outlook_meetings', 'outlook_sync_windows', 'outlook_meeting_links'] as $needle) {
                 $this->assertStringNotContainsString($needle, $contents, $file->getPathname());
             }
         }

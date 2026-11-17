@@ -884,6 +884,129 @@ class OutlookMeetingConversionTest extends TestCaseWithDatabase
         $this->assertSame('stale', $link->graph_id);
     }
 
+    public function test_batch_reports_each_meeting(): void
+    {
+        // Arrange: a fresh meeting, another user's meeting and an already converted meeting
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $fresh = $this->meeting($data->user, 'batch-fresh', [
+            'subject' => 'Fresh review',
+            'starts_at' => '2026-10-23 11:00:00',
+            'ends_at' => '2026-10-23 11:45:00',
+        ]);
+        $foreign = $this->meeting($data->owner, 'batch-foreign');
+        $converted = $this->meeting($data->user, 'batch-converted');
+        $convertedEntryId = $this->convert($data->organization, [
+            'meeting_ids' => [$converted->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ])->json('results.0.time_entry_id');
+        $foreignBefore = OutlookMeeting::query()->findOrFail($foreign->id)->getAttributes();
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$fresh->id, $foreign->id, $converted->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert: three results in request order, each on its own (ASGN-04, D-08)
+        $response->assertOk();
+        $response->assertJsonCount(3, 'results');
+        $response->assertJsonPath('results.0.meeting_id', $fresh->id);
+        $response->assertJsonPath('results.0.status', 'created');
+        $response->assertJsonPath('results.0.error', null);
+        $response->assertJsonPath('results.1.meeting_id', $foreign->id);
+        $response->assertJsonPath('results.1.status', 'failed');
+        $response->assertJsonPath('results.1.time_entry_id', null);
+        $response->assertJsonPath('results.1.error.key', 'meeting_not_found');
+        $response->assertJsonPath('results.2.meeting_id', $converted->id);
+        $response->assertJsonPath('results.2.status', 'existing');
+        $response->assertJsonPath('results.2.time_entry_id', $convertedEntryId);
+        $response->assertJsonPath('results.2.error', null);
+        $entry = TimeEntry::query()->findOrFail($response->json('results.0.time_entry_id'));
+        $this->assertSame('Fresh review', $entry->description);
+        $this->assertSame('2026-10-23 11:00:00', $entry->start->utc()->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-23 11:45:00', $entry->end?->utc()->format('Y-m-d H:i:s'));
+        $this->assertSame(2, TimeEntry::query()->count());
+        $this->assertSame(2, OutlookMeetingLink::query()->count());
+        $this->assertSame(0, TimeEntry::query()->where('user_id', '=', $data->owner->getKey())->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->where('user_id', '=', $data->owner->getKey())->count());
+        $this->assertSame($foreignBefore, OutlookMeeting::query()->findOrFail($foreign->id)->getAttributes());
+    }
+
+    public function test_batch_failure_does_not_roll_back_the_others(): void
+    {
+        // Arrange: the organization forbids overlaps and the second meeting overlaps a manual entry
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $first = $this->meeting($data->user, 'batch-ok');
+        $second = $this->meeting($data->user, 'batch-overlap', [
+            'starts_at' => '2026-10-21 09:00:00',
+            'ends_at' => '2026-10-21 10:00:00',
+        ]);
+        $manual = TimeEntry::factory()->forOrganization($data->organization)->forMember($data->member)->create([
+            'start' => Carbon::parse('2026-10-21 09:30:00', 'UTC'),
+            'end' => Carbon::parse('2026-10-21 10:30:00', 'UTC'),
+        ]);
+        $data->organization->prevent_overlapping_time_entries = true;
+        $data->organization->save();
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$first->id, $second->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert: the first is created and kept, the second fails with nothing of its own
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        $response->assertJsonPath('results.1.status', 'failed');
+        $response->assertJsonPath('results.1.time_entry_id', null);
+        $response->assertJsonPath('results.1.error.key', 'overlapping_time_entry');
+        $firstEntryId = $response->json('results.0.time_entry_id');
+        $this->assertNotNull(TimeEntry::query()->find($firstEntryId));
+        $this->assertSame(2, TimeEntry::query()->count());
+        $this->assertNotNull(TimeEntry::query()->find($manual->getKey()));
+        $link = OutlookMeetingLink::query()->sole();
+        $this->assertSame($firstEntryId, $link->time_entry_id);
+        $this->assertSame('batch-ok', $link->graph_id);
+    }
+
+    public function test_batch_uses_each_subject_and_time(): void
+    {
+        // Arrange: three meetings with different subjects and times (fresh input bags per meeting)
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meetings = [
+            $this->meeting($data->user, 'each-a', ['subject' => 'Alpha', 'starts_at' => '2026-10-20 08:00:00', 'ends_at' => '2026-10-20 08:30:00']),
+            $this->meeting($data->user, 'each-b', ['subject' => 'Beta', 'starts_at' => '2026-10-21 12:00:00', 'ends_at' => '2026-10-21 13:15:00']),
+            $this->meeting($data->user, 'each-c', ['subject' => 'Gamma', 'starts_at' => '2026-10-22 16:00:00', 'ends_at' => '2026-10-22 16:20:00']),
+        ];
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => array_map(fn (OutlookMeeting $meeting): string => $meeting->id, $meetings),
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonCount(3, 'results');
+        foreach ($meetings as $index => $meeting) {
+            $response->assertJsonPath('results.'.$index.'.meeting_id', $meeting->id);
+            $response->assertJsonPath('results.'.$index.'.status', 'created');
+            $entry = TimeEntry::query()->findOrFail($response->json('results.'.$index.'.time_entry_id'));
+            $this->assertSame($meeting->subject, $entry->description);
+            $this->assertTrue($meeting->starts_at->equalTo($entry->start), $meeting->graph_id);
+            $this->assertNotNull($entry->end);
+            $this->assertTrue($meeting->ends_at->equalTo($entry->end), $meeting->graph_id);
+        }
+        $this->assertSame(3, OutlookMeetingLink::query()->count());
+    }
+
     /**
      * @param  array<string, mixed>  $extra
      */
