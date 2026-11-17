@@ -63,7 +63,7 @@ return [
         'sync_cooldown_hint' => 'Acabas de sincronizar. Podrás volver a sincronizar en :seconds.',
         'sync_backoff_hint' => 'Outlook nos pidió esperar. Podrás volver a sincronizar en :seconds.',
         // Phase 4: assigning meetings to projects
-        'create_entry' => 'Crear registro de tiempo',
+        'create_entry' => 'Crear registro',
         'create_submit' => 'Crear entrada',
         'form_context' => 'De Outlook · :when',
         'field_description' => 'Descripción',

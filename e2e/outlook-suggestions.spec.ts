@@ -237,7 +237,7 @@ const LABELS_ES = {
     hover_hint: 'Haz clic para ver los detalles',
     hover_hint_select: 'Haz clic para ver los detalles. Ctrl+clic para seleccionar varias.',
     hover_hint_select_mac: 'Haz clic para ver los detalles. ⌘+clic para seleccionar varias.',
-    create_entry: 'Crear registro de tiempo',
+    create_entry: 'Crear registro',
     preassigned_suffix: ', preasignada a :project',
     preassigned_eyebrow: 'Preasignada · Misma serie',
     why_series: 'Registraste esta serie en :project el :date.',
@@ -1114,16 +1114,13 @@ test.describe('Outlook suggestion panel checks', () => {
         ]);
     });
 
-    // Known overflow, reported for 05-10 (OutlookGhostDetail footer): a recurring meeting without
-    // an assignment gets [More actions] … [Descartar reunión] [Crear registro de tiempo], which
-    // needs about 395px in a 350px content box (local Chromium probe with Inter), so the primary
-    // button's label wraps inside its fixed height. Marked as an expected failure: when the footer
-    // is fixed, this test starts passing and Playwright reports it, so the marker comes off then.
+    // A recurring meeting without an assignment shows [More actions] … [Descartar reunión]
+    // [Crear registro]; the shorter Spanish label (was "Crear registro de tiempo", ~395px in a
+    // 350px box) keeps the footer inside the w-96 panel.
     test('the Spanish footer of a recurring meeting without assignment fits', async ({
         page,
         ctx,
     }, testInfo) => {
-        test.fail(true, 'Spanish recurring footer overflows the w-96 panel (reported to 05-10)');
         await goToCalendar(page);
         await scrollCalendarToTime(page, '09:00:00');
         await injectMeetings(
@@ -1143,7 +1140,7 @@ test.describe('Outlook suggestion panel checks', () => {
         const panel = page.locator(DETAIL_PANEL);
         await expect(panel).toBeVisible();
         await expect(panel.locator('[data-testid="outlook-detail-create"]')).toHaveText(
-            'Crear registro de tiempo'
+            'Crear registro'
         );
         await testInfo.attach('es-recurring-panel', {
             body: await panel.screenshot(),
