@@ -382,7 +382,7 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $item['start']);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $item['end']);
         $this->assertFalse($item['dismissed']);
-        $this->assertSame(['data', 'sync'], array_keys($response->json()));
+        $this->assertSame(['data', 'sync', 'linked_time_entry_ids'], array_keys($response->json()));
     }
 
     public function test_meetings_routes_are_not_under_api_and_use_the_web_group(): void
