@@ -74,7 +74,7 @@ class ShareMicrosoftInertiaData
     }
 
     /**
-     * @return array{state: string, urls: array{meetings: string, sync: string}, connect_url: string, notice: array{level: string, message: string}|null, labels: array<string, string>}
+     * @return array{state: string, urls: array{meetings: string, sync: string, convert: string|null}, connect_url: string, notice: array{level: string, message: string}|null, labels: array<string, string>}
      */
     private function calendar(Request $request, User $user): array
     {
@@ -85,6 +85,10 @@ class ShareMicrosoftInertiaData
             'urls' => [
                 'meetings' => route('microsoft.meetings.index'),
                 'sync' => route('microsoft.meetings.sync'),
+                // Conversions go to the organization the user is working in (Phase 4); none without one
+                'convert' => $user->current_team_id === null
+                    ? null
+                    : route('microsoft.meetings.convert', ['organization' => $user->current_team_id]),
             ],
             // Connect and Reconnect start the Phase 2 connect flow and come back to the calendar; the
             // only return value the server accepts is the word `calendar`.

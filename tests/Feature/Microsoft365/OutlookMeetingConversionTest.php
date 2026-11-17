@@ -13,13 +13,17 @@ use App\Jobs\RecalculateSpentTimeForProject;
 use App\Jobs\RecalculateSpentTimeForTask;
 use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Microsoft365\Http\Controllers\MeetingConversionController;
+use App\Microsoft365\Http\Controllers\OutlookMeetingController;
 use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
 use App\Microsoft365\Http\Requests\MeetingConversionRequest;
+use App\Microsoft365\Http\Requests\MeetingRangeRequest;
+use App\Microsoft365\Http\Resources\OutlookMeetingResource;
 use App\Microsoft365\Microsoft365ServiceProvider;
 use App\Microsoft365\MicrosoftConfig;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookMeetingLink;
+use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Microsoft365\TimeEntries\CoreTimeEntryCreator;
 use App\Models\Member;
 use App\Models\Organization;
@@ -38,6 +42,7 @@ use Laravel\Passport\Passport;
 use Mockery\MockInterface;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use STS\FilamentImpersonate\ImpersonateManager;
 use Tests\Feature\Microsoft365\Support\InteractsWithGraphFixtures;
 use Tests\Feature\Microsoft365\Support\InteractsWithMicrosoft365;
 use Tests\TestCaseWithDatabase;
@@ -56,6 +61,10 @@ use Tests\TestCaseWithDatabase;
 #[UsesClass(TimeEntryStoreRequest::class)]
 #[UsesClass(CheckOrganizationBlocked::class)]
 #[UsesClass(ApiException::class)]
+#[UsesClass(OutlookMeetingController::class)]
+#[UsesClass(MeetingRangeRequest::class)]
+#[UsesClass(OutlookMeetingResource::class)]
+#[UsesClass(OutlookSyncWindow::class)]
 class OutlookMeetingConversionTest extends TestCaseWithDatabase
 {
     use InteractsWithGraphFixtures;
@@ -635,5 +644,110 @@ class OutlookMeetingConversionTest extends TestCaseWithDatabase
         // Assert
         $response->assertForbidden();
         $this->assertSame(0, TimeEntry::query()->count());
+    }
+
+    public function test_impersonating_admin_converts_nothing(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'impersonated');
+        session()->put(ImpersonateManager::SESSION_KEY, 1);
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert
+        $response->assertNotFound();
+        $this->assertSame(0, TimeEntry::query()->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_converted_meeting_is_no_longer_listed(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $converted = $this->meeting($data->user, 'converted');
+        $open = $this->meeting($data->user, 'open', [
+            'starts_at' => '2026-10-21 09:00:00',
+            'ends_at' => '2026-10-21 10:00:00',
+        ]);
+        $this->convert($data->organization, [
+            'meeting_ids' => [$converted->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ])->assertJsonPath('results.0.status', 'created');
+
+        // Act
+        $visible = $this->listMeetings();
+        $withDismissed = $this->listMeetings(['include_dismissed' => 1]);
+
+        // Assert
+        $visible->assertOk();
+        $this->assertSame([$open->id], $visible->json('data.*.id'));
+        $withDismissed->assertOk();
+        $this->assertSame([$open->id], $withDismissed->json('data.*.id'));
+    }
+
+    public function test_meeting_whose_entry_belongs_to_another_user_is_listed_again(): void
+    {
+        // Arrange: the linked entry is reassigned in bulk, as core's member services do
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'reassigned');
+        $entryId = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ])->json('results.0.time_entry_id');
+        TimeEntry::query()->whereKey($entryId)->update([
+            'user_id' => $data->owner->getKey(),
+            'member_id' => $data->ownerMember->getKey(),
+        ]);
+
+        // Act
+        $response = $this->listMeetings();
+
+        // Assert
+        $response->assertOk();
+        $this->assertSame([$meeting->id], $response->json('data.*.id'));
+    }
+
+    public function test_deleting_the_entry_brings_the_meeting_back(): void
+    {
+        // Arrange: a query-builder delete, the way core deletes entries in bulk
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'deleted');
+        $entryId = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ])->json('results.0.time_entry_id');
+        TimeEntry::query()->whereKey($entryId)->delete();
+
+        // Act
+        $response = $this->listMeetings();
+
+        // Assert: the link went with the entry (database cascade)
+        $response->assertOk();
+        $this->assertSame([$meeting->id], $response->json('data.*.id'));
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    /**
+     * @param  array<string, mixed>  $extra
+     */
+    private function listMeetings(array $extra = []): TestResponse
+    {
+        return $this->getJson(route('microsoft.meetings.index', [
+            'start' => '2026-10-19T00:00:00Z',
+            'end' => '2026-10-26T00:00:00Z',
+        ] + $extra, false));
     }
 }

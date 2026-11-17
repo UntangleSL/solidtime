@@ -15,6 +15,7 @@ use App\Models\User;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -24,6 +25,7 @@ use Illuminate\Routing\Controller;
  * The calendar's two Outlook endpoints. Both answer only for the session user: there is no user id
  * input and every query is scoped by the authenticated user (CAL-03, D-16). While an admin impersonates
  * the user nothing is served (D-22): an empty list, no sync, and a 404 for dismiss and restore.
+ * A meeting converted into a time entry is not listed while that entry exists (Phase 4 D-04).
  */
 class OutlookMeetingController extends Controller
 {
@@ -55,6 +57,17 @@ class OutlookMeetingController extends Controller
             // Dismissed meetings only come back when asked for (include_dismissed); gone ones never do
             ->when(! $request->includeDismissed(), fn (Builder $query): Builder => $query->whereNull('dismissed_at'))
             ->whereNull('gone_at')
+            // Converted meetings leave the suggestions while their entry exists and still belongs to the
+            // user (Phase 4 D-04). An entry deleted anywhere drops its link (cascade); an entry moved to
+            // another user no longer hides the meeting.
+            ->whereNotExists(function (QueryBuilder $query): void {
+                $query->selectRaw('1')
+                    ->from('outlook_meeting_links')
+                    ->join('time_entries', 'time_entries.id', '=', 'outlook_meeting_links.time_entry_id')
+                    ->whereColumn('outlook_meeting_links.user_id', 'outlook_meetings.user_id')
+                    ->whereColumn('outlook_meeting_links.graph_id', 'outlook_meetings.graph_id')
+                    ->whereColumn('time_entries.user_id', 'outlook_meeting_links.user_id');
+            })
             ->orderBy('starts_at')
             ->orderBy('ends_at')
             ->orderBy('graph_id')

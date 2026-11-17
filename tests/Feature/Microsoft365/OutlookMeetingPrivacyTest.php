@@ -24,6 +24,7 @@ use App\Microsoft365\Microsoft365ServiceProvider;
 use App\Microsoft365\MicrosoftConfig;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
+use App\Microsoft365\Models\OutlookMeetingLink;
 use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Models\Member;
 use App\Models\Project;
@@ -610,10 +611,11 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
         // Assert
         $this->assertNotContains(Auditable::class, class_implements(OutlookMeeting::class) ?: []);
         $this->assertNotContains(Auditable::class, class_implements(OutlookSyncWindow::class) ?: []);
+        $this->assertNotContains(Auditable::class, class_implements(OutlookMeetingLink::class) ?: []);
         $this->assertNotEmpty($filamentFiles);
         foreach ($filamentFiles as $file) {
             $contents = $file->getContents();
-            foreach (['OutlookMeeting', 'OutlookSyncWindow', 'outlook_meetings', 'outlook_sync_windows'] as $needle) {
+            foreach (['OutlookMeeting', 'OutlookSyncWindow', 'outlook_meetings', 'outlook_sync_windows', 'outlook_meeting_links'] as $needle) {
                 $this->assertStringNotContainsString($needle, $contents, $file->getPathname());
             }
         }
@@ -628,9 +630,11 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
         );
 
         // Assert
-        $this->assertCount(4, $routes);
+        // index, sync, dismiss, restore and (Phase 4) convert: the convert route names the organization the
+        // entry goes to, never a user or a member
+        $this->assertCount(5, $routes);
         foreach ($routes as $route) {
-            $this->assertEmpty(array_diff($route->parameterNames(), ['meeting']), (string) $route->getName());
+            $this->assertEmpty(array_diff($route->parameterNames(), ['meeting', 'organization']), (string) $route->getName());
             $this->assertStringNotContainsString('user', $route->uri());
             $this->assertStringNotContainsString('member', $route->uri());
         }

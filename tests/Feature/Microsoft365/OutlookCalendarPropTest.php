@@ -44,20 +44,22 @@ class OutlookCalendarPropTest extends TestCaseWithDatabase
         $response = $this->get(route('calendar', [], false));
 
         // Assert
+        $this->assertNotNull($user->current_team_id);
         $response->assertStatus(200);
         $response->assertInertia(fn (AssertableInertia $page) => $page
             ->where('microsoft.enabled', true)
             ->where('microsoft.calendar.state', 'connected')
             ->where('microsoft.calendar.urls.meetings', route('microsoft.meetings.index'))
             ->where('microsoft.calendar.urls.sync', route('microsoft.meetings.sync'))
-            ->has('microsoft.calendar.labels', 40)
+            ->where('microsoft.calendar.urls.convert', route('microsoft.meetings.convert', ['organization' => $user->current_team_id]))
+            ->has('microsoft.calendar.labels', 84)
             ->where('microsoft.calendar.labels.no_subject', '(No subject)')
             ->where('microsoft.calendar.labels.last_synced', 'Last synced :time')
             ->where('microsoft.calendar.labels.sync', 'Sync Outlook')
             ->has('microsoft', fn (AssertableJson $microsoft) => $microsoft
                 ->has('calendar', fn (AssertableJson $calendar) => $calendar
                     ->hasAll(['state', 'urls', 'connect_url', 'notice', 'labels'])
-                    ->has('urls', fn (AssertableJson $urls) => $urls->hasAll(['meetings', 'sync'])))
+                    ->has('urls', fn (AssertableJson $urls) => $urls->hasAll(['meetings', 'sync', 'convert'])))
                 ->etc())
             ->etc());
     }
@@ -160,7 +162,7 @@ class OutlookCalendarPropTest extends TestCaseWithDatabase
         $response->assertStatus(200);
         $response->assertInertia(fn (AssertableInertia $page) => $page
             ->where('microsoft.calendar.state', 'not_connected')
-            ->has('microsoft.calendar.labels', 40)
+            ->has('microsoft.calendar.labels', 84)
             ->etc());
     }
 
@@ -286,7 +288,7 @@ class OutlookCalendarPropTest extends TestCaseWithDatabase
         foreach ([$first, $second] as $response) {
             $response->assertInertia(fn (AssertableInertia $page) => $page
                 ->where('microsoft.calendar.state', 'connected')
-                ->has('microsoft.calendar.labels', 40)
+                ->has('microsoft.calendar.labels', 84)
                 ->etc());
         }
     }
