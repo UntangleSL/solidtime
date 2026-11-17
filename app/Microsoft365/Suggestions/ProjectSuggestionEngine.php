@@ -17,10 +17,19 @@ namespace App\Microsoft365\Suggestions;
  * Only the first suggestion may be confident: score >= MIN_SCORE, score >= MARGIN x the second, and
  * backed by two or more links or by an organizer, person or domain match (RESEARCH Pitfall 8).
  *
+ * Broadcast guard: when the target or a past link has more than BROADCAST_LIMIT attendees (all-hands),
+ * that pair matches only on the organizer and subject words; attendees and domains are ignored.
+ * Forgotten series (RESEARCH Pitfall 9): rows of $excludeSeries flagged forgotten (links created before
+ * the forget) never score, otherwise "forget" would be undone at once by the same history.
+ *
+ * All weights and thresholds below are starting values to tune after owner UAT (RESEARCH A1).
+ *
  * Pure: arrays in, value objects out; no database, no framework state (Octane safe).
  */
 final class ProjectSuggestionEngine
 {
+    public const int BROADCAST_LIMIT = 25;
+
     public const float W_ORGANIZER_EXTERNAL = 4.0;
 
     public const float W_ORGANIZER_INTERNAL = 2.0;
@@ -61,18 +70,25 @@ final class ProjectSuggestionEngine
             return [];
         }
 
-        $features = self::targetFeatures(self::signals($target));
+        $targetSignals = self::signals($target);
+        $targetBroadcast = $targetSignals['n'] > self::BROADCAST_LIMIT;
+        $features = self::targetFeatures($targetSignals);
         if ($features === []) {
             return [];
         }
 
-        /** @var list<array{project_id: string, decay: float, sets: array<string, array<string, true>>}> $rows */
         $rows = [];
         foreach ($history as $row) {
+            if ($excludeSeries !== null && $row['series'] === $excludeSeries && $row['forgotten']) {
+                continue;
+            }
+            $signals = self::signals($row['signals']);
             $rows[] = [
                 'project_id' => $row['project_id'],
                 'decay' => 0.5 ** (max(0.0, (float) $row['age_days']) / self::HALF_LIFE_DAYS),
-                'sets' => self::rowSets(self::signals($row['signals'])),
+                'broadcast' => $signals['n'] > self::BROADCAST_LIMIT,
+                'organizer' => $signals['o'] === null ? [] : [$signals['o'] => true],
+                'sets' => self::rowSets($signals),
             ];
         }
         if ($rows === []) {
@@ -96,8 +112,20 @@ final class ProjectSuggestionEngine
         foreach ($rows as $row) {
             $rowScore = 0.0;
             $shared = [];
+            $guarded = $targetBroadcast || $row['broadcast'];
             foreach ($features as $key => $feature) {
-                if ($idf[$key] <= 0.0 || ! isset($row['sets'][$feature['field']][$feature['hash']])) {
+                if ($idf[$key] <= 0.0) {
+                    continue;
+                }
+                // Broadcast guard: only the organizer and subject words count for this pair, and a
+                // broadcast link offers only its own organizer as a person.
+                if ($guarded && $feature['kind'] !== Reason::KIND_ORGANIZER && $feature['kind'] !== Reason::KIND_SUBJECT) {
+                    continue;
+                }
+                $set = $feature['field'] === self::FIELD_PERSON && $row['broadcast']
+                    ? $row['organizer']
+                    : $row['sets'][$feature['field']];
+                if (! isset($set[$feature['hash']])) {
                     continue;
                 }
                 $contribution = $feature['weight'] * $idf[$key] * $row['decay'];
@@ -126,8 +154,9 @@ final class ProjectSuggestionEngine
             $projects[$projectId] = $project;
         }
 
-        uksort($projects, static function (string $a, string $b) use ($projects): int {
-            return [$projects[$b]['score'], $a] <=> [$projects[$a]['score'], $b];
+        // score desc, then project id; keys may be ints when an id is numeric
+        uksort($projects, static function (int|string $a, int|string $b) use ($projects): int {
+            return [$projects[$b]['score'], (string) $a] <=> [$projects[$a]['score'], (string) $b];
         });
 
         $suggestions = [];
@@ -135,6 +164,9 @@ final class ProjectSuggestionEngine
         $second = $scores[1] ?? null;
         foreach ($projects as $projectId => $project) {
             $ordered = self::orderFeatures($project['features']);
+            if ($ordered === []) {
+                continue;
+            }
             $confident = $suggestions === []
                 && $project['score'] >= self::MIN_SCORE
                 && ($second === null || $project['score'] >= self::MARGIN * $second)
@@ -208,7 +240,7 @@ final class ProjectSuggestionEngine
      * Strongest feature first: contribution desc, then kind (organizer, person, domain, subject), then hash.
      *
      * @param  array<string, array{kind: string, hash: string, contribution: float, rows: int}>  $features
-     * @return non-empty-list<array{kind: string, hash: string, contribution: float, rows: int}>
+     * @return list<array{kind: string, hash: string, contribution: float, rows: int}>
      */
     private static function orderFeatures(array $features): array
     {
@@ -216,20 +248,44 @@ final class ProjectSuggestionEngine
         $ordered = array_values($features);
         usort($ordered, static fn (array $x, array $y): int => [$y['contribution'], $priority[$x['kind']] ?? 9, $x['hash']]
             <=> [$x['contribution'], $priority[$y['kind']] ?? 9, $y['hash']]);
-        assert($ordered !== []);
 
         return $ordered;
     }
 
     /**
+     * The strongest feature with a readable value from the target meeting. Values are display names or
+     * bare domains only, never a full address: a person without a display name falls back to the
+     * strongest shared domain of the project (normally that person's domain), then to the next feature.
+     * Subject reasons carry no value.
+     *
      * @param  non-empty-list<array{kind: string, hash: string, contribution: float, rows: int}>  $ordered
      * @param  array<string, ?string>  $labels
      */
     private static function reason(array $ordered, array $labels): Reason
     {
+        foreach ($ordered as $index => $feature) {
+            $kind = self::kind($feature['kind']);
+            if ($kind === Reason::KIND_SUBJECT) {
+                return new Reason($kind, $feature['rows'], null);
+            }
+            $label = $labels[$feature['hash']] ?? null;
+            // a display name that is itself an address is not shown
+            if ($label !== null && $label !== '' && ($kind === Reason::KIND_DOMAIN || ! str_contains($label, '@'))) {
+                return new Reason($kind, $feature['rows'], $label);
+            }
+            if ($index === 0 && $kind !== Reason::KIND_DOMAIN) {
+                foreach ($ordered as $candidate) {
+                    $domain = $labels[$candidate['hash']] ?? null;
+                    if ($candidate['kind'] === Reason::KIND_DOMAIN && $domain !== null && $domain !== '') {
+                        return new Reason(Reason::KIND_DOMAIN, $candidate['rows'], $domain);
+                    }
+                }
+            }
+        }
+
         $strongest = $ordered[0];
 
-        return new Reason(self::kind($strongest['kind']), $strongest['rows'], $labels[$strongest['hash']] ?? null);
+        return new Reason(self::kind($strongest['kind']), $strongest['rows'], null);
     }
 
     /**
