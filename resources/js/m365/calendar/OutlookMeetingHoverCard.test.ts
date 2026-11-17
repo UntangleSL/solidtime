@@ -31,6 +31,12 @@ const labels = {
     create_entry: 'Create time entry',
     edit: 'Edit',
     confirm: 'Confirm',
+    preassigned_eyebrow: 'Pre-assigned · Same series',
+    why_series: 'You logged this series to :project on :date.',
+    tags_one: '1 Tag',
+    tags_many: ':count Tags',
+    billable: 'Billable',
+    non_billable: 'Non-Billable',
 } as OutlookCalendarLabels;
 
 const settings: CalendarSettings = { snapMinutes: 15, startHour: 0, endHour: 24, slotMinutes: 15 };
@@ -540,11 +546,36 @@ describe('Outlook meeting hover card, pre-assigned meeting', () => {
         expect(confirmOne).not.toHaveBeenCalled();
     });
 
+    it('shows the compact pre-assignment block between the summary and the hint', async () => {
+        mountCard(preassigned(), actingContext().context);
+        await nextTick();
+
+        const block = byTestId('outlook-preassignment');
+        expect(block).not.toBeNull();
+        expect(block?.className).toContain('mt-4');
+        expect(block?.textContent).toContain('Pre-assigned · Same series');
+        expect(
+            byTestId('outlook-preassignment-project')?.textContent?.replace(/\s+/g, ' ').trim()
+        ).toBe('Acme Website · Acme');
+        expect(byTestId('outlook-preassignment-detail')?.textContent?.trim()).toBe(
+            'Design · 2 Tags · Billable'
+        );
+        // Compact variant: no why line (the panel has it)
+        expect(byTestId('outlook-detail-why')).toBeNull();
+        const subject = byTestId('outlook-hover-subject') as HTMLElement;
+        const hint = byTestId('outlook-hover-hint') as HTMLElement;
+        expect(subject.compareDocumentPosition(block as Node)).toBe(
+            Node.DOCUMENT_POSITION_FOLLOWING
+        );
+        expect(block?.compareDocumentPosition(hint)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+
     it('a plain meeting keeps the Phase 4 "Create time entry"', async () => {
         mountCard(meeting(), actingContext().context);
         await nextTick();
 
         expect(byTestId('outlook-hover-create')?.textContent?.trim()).toBe('Create time entry');
+        expect(byTestId('outlook-preassignment')).toBeNull();
         expect(byTestId('outlook-hover-edit')).toBeNull();
         expect(byTestId('outlook-hover-confirm')).toBeNull();
     });
@@ -561,6 +592,7 @@ describe('Outlook meeting hover card, pre-assigned meeting', () => {
         mountCard(preassigned(), actingContext(false).context);
         await nextTick();
 
+        expect(byTestId('outlook-preassignment')).toBeNull();
         expect(byTestId('outlook-hover-edit')).toBeNull();
         expect(byTestId('outlook-hover-confirm')).toBeNull();
         expect(byTestId('outlook-hover-create')).toBeNull();

@@ -6,6 +6,7 @@ import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
 import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 import OutlookMeetingSummary from './OutlookMeetingSummary.vue';
+import OutlookPreassignment from './OutlookPreassignment.vue';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 import { isPreassigned } from './suggestions';
 
@@ -17,8 +18,9 @@ import { isPreassigned } from './suggestions';
 // When the Outlook context can act, the card offers "Create time entry": it asks the context for
 // the meeting's form, and the lane closes this card and opens the meeting's panel in form mode. The
 // card itself never hosts inputs (D-17). The hint then also names the multi-select modifier.
-// A pre-assigned meeting (Phase 5, D-03) offers Edit (the same form channel) and a one-click Confirm
-// instead; the card may close while the confirm runs, the block and the toast carry the outcome.
+// A pre-assigned meeting (Phase 5, D-03) shows its pre-assignment (series, project, client, task,
+// tags, billable) and offers Edit (the same form channel) and a one-click Confirm instead; the card
+// may close while the confirm runs, the block and the toast carry the outcome.
 //
 // `reference` anchors the card to the meeting block: the block's HoverCardTrigger sits inside the
 // panel's Popover, whose Popper context captures the trigger's anchor, so the card's own Popper root
@@ -79,6 +81,12 @@ function onConfirm(): void {
                     <slot name="meta" />
                 </template>
             </OutlookMeetingSummary>
+            <OutlookPreassignment
+                v-if="preassigned && meeting.assignment"
+                class="mt-4"
+                variant="compact"
+                :assignment="meeting.assignment"
+                :labels="labels" />
             <p class="mt-3 text-xs text-text-tertiary" data-testid="outlook-hover-hint">
                 {{ hint }}
             </p>
