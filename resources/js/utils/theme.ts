@@ -6,7 +6,6 @@ const themeSetting = useStorage<themeOption>('theme', 'system');
 const preferredColor = usePreferredColorScheme();
 const theme = computed(() => {
     if (themeSetting.value === 'system') {
-        console.log(preferredColor.value);
         if (preferredColor.value === 'no-preference') {
             return 'dark';
         }

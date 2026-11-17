@@ -1,13 +1,20 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import FormSection from '@/Components/FormSection.vue';
 import { Field, FieldLabel, FieldDescription } from '@/packages/ui/src/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/packages/ui/src';
 import { Checkbox } from '@/packages/ui/src';
-import { usePreferredColorScheme } from '@vueuse/core';
-import { themeSetting } from '@/utils/theme';
+import { theme, themeSetting } from '@/utils/theme';
 import { groupSimilarTimeEntriesSetting } from '@/utils/timeEntryGrouping';
+import AccentPicker from '@/branding/AccentPicker.vue';
+import { formatLabel, useAppearanceProps } from '@/branding/appearanceProps';
 
-const preferredColor = usePreferredColorScheme();
+const appearance = useAppearanceProps();
+const themeHelper = computed(() => {
+    const labels = appearance.value.labels;
+    const mode = theme.value === 'dark' ? labels.mode_dark : labels.mode_light;
+    return formatLabel(labels.theme_helper, { mode });
+});
 </script>
 
 <template>
@@ -31,9 +38,11 @@ const preferredColor = usePreferredColorScheme();
                     </SelectContent>
                 </Select>
                 <FieldDescription v-if="themeSetting === 'system'">
-                    System default: {{ preferredColor }}
+                    {{ themeHelper }}
                 </FieldDescription>
             </Field>
+
+            <AccentPicker />
 
             <!-- Group similar time entries -->
             <Field class="col-span-6 sm:col-span-4" orientation="horizontal">
