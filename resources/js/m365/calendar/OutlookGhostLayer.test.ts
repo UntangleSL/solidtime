@@ -9,6 +9,7 @@ import type { CalendarSettings } from '@/packages/ui/src/FullCalendar/calendarSe
 import OutlookGhostLayer from './OutlookGhostLayer.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
 import { ghostLaneWidth } from './ghostLayout';
+import { resetHoverCardDelay } from './hoverCardDelay';
 import { useCalendarEvents } from '@/packages/ui/src/FullCalendar/useCalendarEvents';
 import type { DayEvent } from '@/packages/ui/src/FullCalendar/calendarTypes';
 import type { TimeEntry } from '@/packages/api/src';
@@ -1146,5 +1147,222 @@ describe('OutlookGhostLayer dismissed variant', () => {
         const remaining = ghostElements();
         expect(remaining).toHaveLength(1);
         expect(document.activeElement).toBe(remaining[0]);
+    });
+});
+
+// Hover card and detail panel against the context menu and calendar interactions (UX-03 / UX-04,
+// D-05 / D-06). The layer is mounted inside a stand-in calendar root (.fc) with the optional props
+// the core day-overlay slot passes from 03.1-04.
+describe('OutlookGhostLayer close and suppress rules', () => {
+    let wrapper: VueWrapper | null = null;
+
+    function mountGated(
+        initial: OutlookMeeting[] = [meeting()],
+        extra: { contextMenuOpen?: boolean; interacting?: boolean } = {}
+    ) {
+        const root = document.createElement('div');
+        root.className = 'fc';
+        document.body.appendChild(root);
+        const context = {
+            canAct: ref(true),
+            includeDismissed: ref(false),
+            dismiss: vi.fn(),
+            restore: vi.fn(),
+        } as unknown as OutlookMeetingsContext;
+        wrapper = mount(OutlookGhostLayer, {
+            attachTo: root,
+            props: {
+                meetings: initial,
+                labels: { ...labels, hover_hint: 'Click for details' },
+                dayStr: DAY,
+                isDayView: false,
+                minutesToPixels,
+                settings,
+                ...extra,
+            },
+            global: {
+                provide: {
+                    [OUTLOOK_MEETINGS_KEY as symbol]: context,
+                    organization: computed(() => ({ time_format: '24-hours' })),
+                },
+            },
+        });
+        return wrapper;
+    }
+
+    function block(id = 'm-1'): HTMLElement {
+        return document.body.querySelector<HTMLElement>(`[data-ghost-id="${id}"]`)!;
+    }
+
+    function card(): HTMLElement | null {
+        return document.body.querySelector('[data-testid="outlook-hover-card"]');
+    }
+
+    function panel(): HTMLElement | null {
+        return document.body.querySelector('[data-testid="outlook-ghost-detail"]');
+    }
+
+    function hover(el: Element) {
+        el.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true, pointerType: 'mouse' }));
+    }
+
+    // reka handles a trigger leave on the next task, so let it run before the pointer comes back
+    async function unhover(el: Element) {
+        el.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, pointerType: 'mouse' }));
+        await advance(200);
+    }
+
+    async function advance(ms: number) {
+        await vi.advanceTimersByTimeAsync(ms);
+        await nextTick();
+    }
+
+    async function openCard(id = 'm-1') {
+        hover(block(id));
+        await advance(400);
+        expect(card()).not.toBeNull();
+    }
+
+    async function openPanel(id = 'm-1') {
+        block(id).click();
+        await advance(20);
+        expect(panel()).not.toBeNull();
+    }
+
+    const second = () =>
+        meeting({
+            id: 'b',
+            subject: 'Second',
+            start: '2026-10-20T10:00:00Z',
+            end: '2026-10-20T11:00:00Z',
+        });
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        resetHoverCardDelay();
+    });
+
+    afterEach(() => {
+        wrapper?.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+        resetHoverCardDelay();
+        vi.useRealTimers();
+    });
+
+    it('closes the panel and the card when contextMenuOpen turns true', async () => {
+        const w = mountGated([meeting({ id: 'a', subject: 'First' }), second()]);
+
+        await openPanel('a');
+        await w.setProps({ contextMenuOpen: true });
+        await advance(0);
+        expect(panel()).toBeNull();
+        expect(block('a').hasAttribute('data-panel-open')).toBe(false);
+
+        await w.setProps({ contextMenuOpen: false });
+        await openCard('b');
+        await w.setProps({ contextMenuOpen: true });
+        await advance(0);
+        expect(card()).toBeNull();
+    });
+
+    it('a contextmenu event on a block closes the open panel and card before the menu opens', async () => {
+        mountGated();
+
+        await openPanel();
+        const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+        block().dispatchEvent(event);
+        // Closed synchronously in the capture phase, before reka's menu handler (which waits a tick)
+        await nextTick();
+        expect(block().hasAttribute('data-panel-open')).toBe(false);
+        expect(block().getAttribute('aria-expanded')).toBe('false');
+        expect(event.defaultPrevented).toBe(false);
+        await advance(0);
+        expect(panel()).toBeNull();
+
+        await unhover(block());
+        await openCard();
+        block().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        await nextTick();
+        expect(card()?.getAttribute('data-state') ?? 'closed').toBe('closed');
+        await advance(0);
+        expect(card()).toBeNull();
+    });
+
+    it('opens neither a card nor a panel while contextMenuOpen is true', async () => {
+        const w = mountGated([meeting()], { contextMenuOpen: true });
+
+        hover(block());
+        await advance(1000);
+        expect(card()).toBeNull();
+
+        block().click();
+        await advance(20);
+        expect(panel()).toBeNull();
+        expect(block().hasAttribute('data-panel-open')).toBe(false);
+
+        // Once the menu is closed both open again
+        await w.setProps({ contextMenuOpen: false });
+        await unhover(block());
+        await openCard();
+        await openPanel();
+    });
+
+    it('closes the card and blocks new ones while interacting', async () => {
+        const w = mountGated([meeting({ id: 'a', subject: 'First' }), second()]);
+        await openCard('a');
+
+        await w.setProps({ interacting: true });
+        await advance(0);
+        expect(card()).toBeNull();
+
+        await unhover(block('a'));
+        hover(block('b'));
+        await advance(1000);
+        expect(card()).toBeNull();
+
+        await w.setProps({ interacting: false });
+        await unhover(block('b'));
+        await openCard('b');
+    });
+
+    it('closes the card on a zoom step', async () => {
+        const w = mountGated();
+        await openCard();
+
+        // A zoom step changes the height of an hour
+        await w.setProps({ minutesToPixels: (minutes: number) => minutes * 2 });
+        await advance(0);
+
+        expect(card()).toBeNull();
+    });
+
+    it('closes the card on a wheel inside the calendar', async () => {
+        mountGated();
+        await openCard();
+
+        // A wheel outside the calendar leaves it alone
+        document.body.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 40 }));
+        await advance(0);
+        expect(card()).not.toBeNull();
+
+        block().dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 40 }));
+        await advance(0);
+        expect(card()).toBeNull();
+    });
+
+    it('keeps the panel ring on data-panel-open with the hover trigger on the same element', async () => {
+        mountGated();
+        await openCard();
+
+        // The hover trigger marks the block open; the panel ring must not follow it
+        expect(block().hasAttribute('data-panel-open')).toBe(false);
+        expect(block().className).not.toContain('data-[state=open]');
+
+        await openPanel();
+        expect(card()).toBeNull();
+        expect(block().hasAttribute('data-panel-open')).toBe(true);
+        expect(block().className).toContain('data-[panel-open]:ring-2');
+        expect(block().getAttribute('aria-expanded')).toBe('true');
     });
 });

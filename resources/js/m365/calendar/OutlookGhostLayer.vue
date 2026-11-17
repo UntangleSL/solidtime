@@ -1,13 +1,21 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, ref, type ComputedRef } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch, type ComputedRef } from 'vue';
 import { CalendarDays, EyeOff, User, Video } from '@lucide/vue';
+import { HoverCardRoot, HoverCardTrigger } from 'reka-ui';
 import type { Organization } from '@/packages/api/src';
 import { formatTime, getLocalizedDayJsFromMinutes } from '@/packages/ui/src/utils/time';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 import { fillLabel } from './labels';
 import OutlookGhostDetail from './OutlookGhostDetail.vue';
+import OutlookMeetingHoverCard from './OutlookMeetingHoverCard.vue';
+import {
+    HOVER_CLOSE_DELAY_MS,
+    hoverOpenDelay,
+    noteHoverCardClosed,
+    noteHoverCardOpened,
+} from './hoverCardDelay';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
-import { useResizeObserver } from '@vueuse/core';
+import { useEventListener, useResizeObserver } from '@vueuse/core';
 import {
     GHOST_MAX_COLUMNS_DAY,
     GHOST_MAX_COLUMNS_WEEK,
@@ -35,6 +43,10 @@ const props = defineProps<{
     minutesToPixels: (minutes: number) => number;
     settings: GhostVisibleSettings;
     overlayLaneWidth?: string | null;
+    // From the core day-overlay slot (03.1-04): the calendar context menu is open, or a drag, resize
+    // or slot selection is in progress. Undefined (older core) means neither.
+    contextMenuOpen?: boolean;
+    interacting?: boolean;
 }>();
 
 const organization = inject<ComputedRef<Organization | undefined> | undefined>(
@@ -51,9 +63,106 @@ const canAct = computed(() => context?.canAct.value === true);
 const openId = ref<string | null>(null);
 
 function setOpen(id: string, value: boolean): void {
-    if (value) openId.value = id;
-    else if (openId.value === id) openId.value = null;
+    if (value) {
+        // No panel may open while the context menu is open (D-06 layering rule)
+        if (props.contextMenuOpen) return;
+        // The panel replaces the hover card of the same meeting
+        closeHover();
+        openId.value = id;
+    } else if (openId.value === id) openId.value = null;
 }
+
+// Hover card (UX-03, D-05): at most one per layer (the id of the meeting whose card is shown). Each
+// block's HoverCardRoot is controlled: reka requests open/close after its delays and the layer
+// decides. An open request is accepted only while a non-touch pointer rests on that block, so the
+// focus-triggered open of HoverCardTrigger (keyboard focus, or the focus that follows a click) never
+// shows a card (03.1-RESEARCH Pitfall 6).
+const hoverId = ref<string | null>(null);
+const hoverAnchor = ref<HTMLElement | null>(null);
+let pointerOverId: string | null = null;
+const openDelay = computed(() => hoverOpenDelay.value);
+
+function onBlockPointerEnter(id: string, event: PointerEvent): void {
+    if (event.pointerType !== 'touch') pointerOverId = id;
+}
+
+function onBlockPointerLeave(id: string): void {
+    if (pointerOverId === id) pointerOverId = null;
+}
+
+function closeHover(): void {
+    if (hoverId.value === null) return;
+    hoverId.value = null;
+    hoverAnchor.value = null;
+    noteHoverCardClosed();
+}
+
+function onHoverOpenChange(id: string, value: boolean): void {
+    if (!value) {
+        if (hoverId.value === id) closeHover();
+        return;
+    }
+    // Already shown (e.g. the pointer moved from the block into the card itself)
+    if (hoverId.value === id) return;
+    if (pointerOverId !== id || openId.value === id) return;
+    if (props.contextMenuOpen || props.interacting) return;
+    hoverAnchor.value = ghostElement(id);
+    hoverId.value = id;
+    noteHoverCardOpened();
+}
+
+// UI-SPEC 3.1 section 2 "Suppress while": this meeting's panel, the context menu, a drag, resize or
+// slot selection.
+function hoverCardOpen(id: string): boolean {
+    return (
+        hoverId.value === id && openId.value !== id && !props.contextMenuOpen && !props.interacting
+    );
+}
+
+// Layering rule (D-06, UX-04): the context menu never opens under a card or panel. A right click
+// on this layer closes both in the capture phase, before the core menu mounts (reka opens it after
+// a nextTick). The watcher is the safety net for right clicks elsewhere (entries, empty slots, other
+// days) and for a right click on the block that owns the open panel.
+function closeAllForContextMenu(): void {
+    openId.value = null;
+    closeHover();
+}
+
+watch(
+    () => props.contextMenuOpen,
+    (open) => {
+        if (open) closeAllForContextMenu();
+    }
+);
+
+watch(
+    () => props.interacting,
+    (active) => {
+        if (active) closeHover();
+    }
+);
+
+// A zoom step changes the pixel height of an hour: the block moves under the card
+watch(
+    () => props.minutesToPixels(60),
+    () => closeHover()
+);
+
+// A wheel inside the calendar (scroll or zoom gesture) closes the card; reka already dismisses it on
+// Escape, a pointerdown elsewhere and a scroll of an ancestor of the block. Day and week changes
+// unmount the layer.
+useEventListener(
+    document,
+    'wheel',
+    (event: WheelEvent) => {
+        if (hoverId.value === null) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest('.fc')) closeHover();
+    },
+    { capture: true, passive: true }
+);
+
+onBeforeUnmount(closeHover);
 
 const layerEl = ref<HTMLElement | null>(null);
 
@@ -213,92 +322,112 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
         :aria-label="layerLabel"
         data-testid="outlook-lane"
         class="m365-lane absolute inset-y-0 right-0.5 pointer-events-none"
-        :style="{ width: laneWidth }">
-        <OutlookGhostDetail
+        :style="{ width: laneWidth }"
+        @contextmenu.capture="closeAllForContextMenu">
+        <HoverCardRoot
             v-for="box in boxes"
             :key="box.meeting.id"
-            :meeting="box.meeting"
-            :labels="labels"
-            :can-act="canAct"
-            :open="openId === box.meeting.id"
-            @update:open="(value: boolean) => setOpen(box.meeting.id, value)"
-            @dismiss="onDismiss(box.meeting)"
-            @restore="onRestore(box.meeting)">
-            <div
-                class="m365-ghost m365-meeting absolute pointer-events-auto select-none cursor-pointer rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"
-                :class="{
-                    'm365-meeting--dismissed': box.meeting.dismissed,
-                    'm365-meeting--cascaded': box.cascade > 0,
-                    'rounded-t-none': box.isClippedStart,
-                    'rounded-b-none': box.isClippedEnd,
-                }"
-                data-calendar-overlay
-                :data-ghost-id="box.meeting.id"
-                :data-panel-open="openId === box.meeting.id ? '' : undefined"
-                role="button"
-                tabindex="0"
-                :aria-label="ariaLabelOf(box.meeting)"
-                :style="blockStyle(box)"
-                @keydown.enter.prevent="($event.currentTarget as HTMLElement).click()"
-                @keydown.space.prevent="($event.currentTarget as HTMLElement).click()">
-                <div
-                    class="flex h-full min-w-0 flex-col overflow-hidden px-1.5 text-xs leading-[14px]"
-                    :class="tierOf(box) === 1 ? 'py-0' : 'py-0.5'"
-                    :data-ghost-tier="tierOf(box)">
-                    <div v-if="tierOf(box) <= 2" class="flex min-w-0 items-center gap-1">
-                        <span
-                            class="m365-meeting__subject min-w-0 truncate"
-                            :class="{ 'font-semibold': !box.meeting.dismissed }"
-                            data-ghost-subject>
-                            {{ subjectOf(box.meeting) }}
-                        </span>
-                        <span
-                            v-if="showsInlineTime(box)"
-                            class="m365-meeting__meta shrink-0 whitespace-nowrap"
-                            data-ghost-time-inline>
-                            {{ timeRangeOf(box.meeting) }}
-                        </span>
-                        <Video
-                            v-if="box.meeting.is_online_meeting"
-                            class="m365-meeting__meta ml-auto size-3 shrink-0"
-                            aria-hidden="true" />
+            :open="hoverCardOpen(box.meeting.id)"
+            :open-delay="openDelay"
+            :close-delay="HOVER_CLOSE_DELAY_MS"
+            @update:open="(value: boolean) => onHoverOpenChange(box.meeting.id, value)">
+            <OutlookGhostDetail
+                :meeting="box.meeting"
+                :labels="labels"
+                :can-act="canAct"
+                :open="openId === box.meeting.id"
+                @update:open="(value: boolean) => setOpen(box.meeting.id, value)"
+                @dismiss="onDismiss(box.meeting)"
+                @restore="onRestore(box.meeting)">
+                <HoverCardTrigger as-child>
+                    <div
+                        class="m365-ghost m365-meeting absolute pointer-events-auto select-none cursor-pointer rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"
+                        :class="{
+                            'm365-meeting--dismissed': box.meeting.dismissed,
+                            'm365-meeting--cascaded': box.cascade > 0,
+                            'rounded-t-none': box.isClippedStart,
+                            'rounded-b-none': box.isClippedEnd,
+                        }"
+                        data-calendar-overlay
+                        :data-ghost-id="box.meeting.id"
+                        :data-panel-open="openId === box.meeting.id ? '' : undefined"
+                        role="button"
+                        tabindex="0"
+                        :aria-label="ariaLabelOf(box.meeting)"
+                        :style="blockStyle(box)"
+                        @keydown.enter.prevent="($event.currentTarget as HTMLElement).click()"
+                        @keydown.space.prevent="($event.currentTarget as HTMLElement).click()"
+                        @pointerenter="onBlockPointerEnter(box.meeting.id, $event)"
+                        @pointerleave="onBlockPointerLeave(box.meeting.id)">
+                        <div
+                            class="flex h-full min-w-0 flex-col overflow-hidden px-1.5 text-xs leading-[14px]"
+                            :class="tierOf(box) === 1 ? 'py-0' : 'py-0.5'"
+                            :data-ghost-tier="tierOf(box)">
+                            <div v-if="tierOf(box) <= 2" class="flex min-w-0 items-center gap-1">
+                                <span
+                                    class="m365-meeting__subject min-w-0 truncate"
+                                    :class="{ 'font-semibold': !box.meeting.dismissed }"
+                                    data-ghost-subject>
+                                    {{ subjectOf(box.meeting) }}
+                                </span>
+                                <span
+                                    v-if="showsInlineTime(box)"
+                                    class="m365-meeting__meta shrink-0 whitespace-nowrap"
+                                    data-ghost-time-inline>
+                                    {{ timeRangeOf(box.meeting) }}
+                                </span>
+                                <Video
+                                    v-if="box.meeting.is_online_meeting"
+                                    class="m365-meeting__meta ml-auto size-3 shrink-0"
+                                    aria-hidden="true" />
+                            </div>
+                            <template v-else>
+                                <span
+                                    class="m365-meeting__subject min-w-0 break-words"
+                                    :class="{
+                                        'font-semibold': !box.meeting.dismissed,
+                                        truncate: tierOf(box) === 3,
+                                        'line-clamp-2': tierOf(box) >= 4,
+                                    }"
+                                    data-ghost-subject>
+                                    {{ subjectOf(box.meeting) }}
+                                </span>
+                                <div
+                                    class="m365-meeting__meta flex min-w-0 items-center gap-1"
+                                    data-ghost-time>
+                                    <EyeOff
+                                        v-if="box.meeting.dismissed"
+                                        class="size-3 shrink-0"
+                                        aria-hidden="true" />
+                                    <CalendarDays
+                                        v-else
+                                        class="size-3 shrink-0"
+                                        aria-hidden="true" />
+                                    <span class="min-w-0 truncate">{{ timeLineOf(box) }}</span>
+                                    <Video
+                                        v-if="box.meeting.is_online_meeting"
+                                        class="ml-auto size-3 shrink-0"
+                                        aria-hidden="true" />
+                                </div>
+                                <div
+                                    v-if="tierOf(box) === 5 && organizerOf(box.meeting)"
+                                    class="m365-meeting__meta flex min-w-0 items-center gap-1"
+                                    data-ghost-organizer>
+                                    <User class="size-3 shrink-0" aria-hidden="true" />
+                                    <span class="min-w-0 truncate">{{
+                                        organizerOf(box.meeting)
+                                    }}</span>
+                                </div>
+                            </template>
+                        </div>
                     </div>
-                    <template v-else>
-                        <span
-                            class="m365-meeting__subject min-w-0 break-words"
-                            :class="{
-                                'font-semibold': !box.meeting.dismissed,
-                                truncate: tierOf(box) === 3,
-                                'line-clamp-2': tierOf(box) >= 4,
-                            }"
-                            data-ghost-subject>
-                            {{ subjectOf(box.meeting) }}
-                        </span>
-                        <div
-                            class="m365-meeting__meta flex min-w-0 items-center gap-1"
-                            data-ghost-time>
-                            <EyeOff
-                                v-if="box.meeting.dismissed"
-                                class="size-3 shrink-0"
-                                aria-hidden="true" />
-                            <CalendarDays v-else class="size-3 shrink-0" aria-hidden="true" />
-                            <span class="min-w-0 truncate">{{ timeLineOf(box) }}</span>
-                            <Video
-                                v-if="box.meeting.is_online_meeting"
-                                class="ml-auto size-3 shrink-0"
-                                aria-hidden="true" />
-                        </div>
-                        <div
-                            v-if="tierOf(box) === 5 && organizerOf(box.meeting)"
-                            class="m365-meeting__meta flex min-w-0 items-center gap-1"
-                            data-ghost-organizer>
-                            <User class="size-3 shrink-0" aria-hidden="true" />
-                            <span class="min-w-0 truncate">{{ organizerOf(box.meeting) }}</span>
-                        </div>
-                    </template>
-                </div>
-            </div>
-        </OutlookGhostDetail>
+                </HoverCardTrigger>
+            </OutlookGhostDetail>
+            <OutlookMeetingHoverCard
+                :meeting="box.meeting"
+                :labels="labels"
+                :reference="hoverId === box.meeting.id ? hoverAnchor : null" />
+        </HoverCardRoot>
     </div>
 </template>
 
