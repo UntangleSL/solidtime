@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature\Appearance;
 
 use App\Appearance\AccentPreset;
+use App\Appearance\AppearanceResolver;
 use App\Appearance\AppearanceServiceProvider;
 use App\Appearance\Http\Controllers\AppearanceController;
+use App\Appearance\Http\Middleware\ShareAppearanceInertiaData;
 use App\Appearance\Http\Requests\AppearanceUpdateRequest;
 use App\Appearance\Models\UserAppearanceSetting;
 use App\Events\BeforeOrganizationDeletion;
@@ -14,11 +16,14 @@ use App\Models\User;
 use App\Service\DeletionService;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
+use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\TestCaseWithDatabase;
 
 #[CoversClass(AppearanceController::class)]
+#[CoversClass(AppearanceResolver::class)]
+#[CoversClass(ShareAppearanceInertiaData::class)]
 #[UsesClass(AppearanceUpdateRequest::class)]
 #[UsesClass(UserAppearanceSetting::class)]
 #[UsesClass(AccentPreset::class)]
@@ -212,6 +217,97 @@ class UserAppearanceTest extends TestCaseWithDatabase
         $this->assertContains('verified', $middleware);
         $this->assertContains('throttle:60,1,appearance:', $middleware);
         $this->assertSame([], $route->parameterNames());
+    }
+
+    public function test_appearance_prop_carries_saved_values_presets_labels_and_update_url(): void
+    {
+        // Arrange
+        $user = $this->createUser();
+        UserAppearanceSetting::query()->create(['user_id' => $user->getKey(), 'theme' => 'dark', 'accent' => 'violet']);
+        $this->actingAs($user);
+
+        // Act
+        $response = $this->get(route('dashboard', [], false));
+
+        // Assert
+        $response->assertStatus(200);
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('appearance.theme', 'dark')
+            ->where('appearance.accent', 'violet')
+            ->where('appearance.accents', AccentPreset::values())
+            ->where('appearance.update_url', route('appearance.update'))
+            ->where('appearance.labels.accent_label', 'Accent color')
+            ->where('appearance.labels.theme_helper', 'Follows your device setting. Currently: :mode.')
+            ->has('appearance.labels', 23)
+            ->where('appearance.presets.ember', 'Ember')
+            ->has('appearance.presets', 6)
+            ->etc());
+    }
+
+    public function test_user_without_settings_gets_null_values(): void
+    {
+        // Arrange
+        $this->actingAs($this->createUser());
+
+        // Act
+        $response = $this->get(route('dashboard', [], false));
+
+        // Assert
+        $response->assertStatus(200);
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('appearance.theme', null)
+            ->where('appearance.accent', null)
+            ->where('appearance.update_url', route('appearance.update'))
+            ->etc());
+    }
+
+    public function test_guest_prop_has_no_update_url(): void
+    {
+        // Act
+        $response = $this->get(route('login', [], false));
+
+        // Assert
+        $response->assertStatus(200);
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('appearance.theme', null)
+            ->where('appearance.accent', null)
+            ->where('appearance.update_url', null)
+            ->where('appearance.accents', AccentPreset::values())
+            ->etc());
+    }
+
+    public function test_unknown_stored_values_are_not_shared(): void
+    {
+        // Arrange
+        $user = $this->createUser();
+        UserAppearanceSetting::query()->create(['user_id' => $user->getKey(), 'theme' => 'blue', 'accent' => 'sky']);
+        $this->actingAs($user);
+
+        // Act
+        $response = $this->get(route('dashboard', [], false));
+
+        // Assert
+        $response->assertStatus(200);
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('appearance.theme', null)
+            ->where('appearance.accent', null)
+            ->etc());
+    }
+
+    public function test_boot_payload_matches_the_session_user(): void
+    {
+        // Arrange
+        $user = $this->createUser();
+        UserAppearanceSetting::query()->create(['user_id' => $user->getKey(), 'theme' => 'light', 'accent' => 'ember']);
+
+        // Act
+        $guestPayload = app(AppearanceResolver::class)->bootPayload();
+        $this->actingAs($user);
+        $userPayload = app(AppearanceResolver::class)->bootPayload();
+
+        // Assert
+        $this->assertSame(['theme' => null, 'accent' => null, 'accents' => AccentPreset::values()], $guestPayload);
+        $this->assertSame(['theme' => 'light', 'accent' => 'ember', 'accents' => AccentPreset::values()], $userPayload);
     }
 
     public function test_accent_preset_values_are_the_six_presets_in_order(): void
