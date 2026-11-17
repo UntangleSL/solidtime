@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, ref, useId, watch, type ComputedRef } from 'vue';
-import { CalendarDays, CircleX } from '@lucide/vue';
+import { CalendarDays, CircleX, Repeat } from '@lucide/vue';
 import { TagIcon } from '@heroicons/vue/20/solid';
 import type { Organization } from '@/packages/api/src';
 import { Button } from '@/packages/ui/src/Buttons';
@@ -36,10 +36,25 @@ import { useTagsStore } from '@/utils/useTags';
 import { useTasksQuery } from '@/utils/useTasksQuery';
 import { useTimeEntriesInfiniteQuery } from '@/utils/useTimeEntriesInfiniteQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
-import type { OutlookCalendarLabels, OutlookConversionResult, OutlookMeeting } from '@/m365/types';
+import type {
+    OutlookCalendarLabels,
+    OutlookConversionResult,
+    OutlookMeeting,
+    OutlookSuggestion,
+} from '@/m365/types';
 import OutlookAssignResults from './OutlookAssignResults.vue';
+import OutlookSuggestionPicks from './OutlookSuggestionPicks.vue';
 import { fillLabel } from './labels';
 import { readLastProject, rememberLastProject, resolvePrefillProject } from './lastProject';
+import { type PrefillReason, reasonIcon, reasonLabel } from './suggestionReason';
+import {
+    batchSeriesNote,
+    type Prefill,
+    quickPicks,
+    resolveBatchPrefill,
+    resolveSinglePrefill,
+    seriesNote,
+} from './suggestions';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
 // Mini form that turns Outlook meetings into time entries (Phase 4). Single mode (UI-SPEC section
@@ -111,7 +126,10 @@ const projectError = ref(false);
 const timeError = ref(false);
 const serverError = ref<string | null>(null);
 
-// --- Prefill (D-02): last project used for a meeting conversion, else the latest entry's project.
+// --- Prefill. Phase 4 (D-02): last project used for a meeting conversion, else the latest entry's
+// project. Phase 5 puts the series pre-assignment and a confident learned suggestion before it
+// (resolveSinglePrefill; batch: a shared assignment, else the majority candidate, D-08). The
+// meeting payload carries both, so the prefill never waits on a lookup.
 const storedProjectId = organizationId ? readLastProject(organizationId) : null;
 const recentProjectId = computed(() => {
     const entries = timeEntriesQuery.data.value?.pages.flatMap((page) => page.data) ?? [];
@@ -120,33 +138,159 @@ const recentProjectId = computed(() => {
 const prefillProjectId = computed(() =>
     resolvePrefillProject(storedProjectId, projects.value, recentProjectId.value)
 );
+const prefill = computed<Prefill>(() =>
+    isBatch
+        ? resolveBatchPrefill(batchMeetings, projects.value, prefillProjectId.value)
+        : resolveSinglePrefill(meeting.value, projects.value, prefillProjectId.value)
+);
+
+const NO_PREFILL: Prefill = {
+    source: 'none',
+    projectId: null,
+    taskId: null,
+    tags: [],
+    billable: null,
+    reason: null,
+};
+const PREFILL_RANK: Record<Prefill['source'], number> = {
+    none: 0,
+    last_used: 1,
+    suggestion: 2,
+    series: 3,
+};
+// The prefill the form applied, sent with the conversion (D-16) so the server can tell whether the
+// user kept it. It stays the same after the user picks another project.
+const appliedPrefill = ref<Prefill>(NO_PREFILL);
 // Once the user picked something, a late prefill (data still loading) never overrides it.
 let projectTouched = false;
 
-watch(
-    prefillProjectId,
-    (id) => {
-        if (projectTouched || projectId.value !== null || id === null) return;
-        projectId.value = id;
-        // The prefill arrived after the focus went to the picker: a repeat conversion is Enter.
-        if (rootEl.value && document.activeElement === pickerTrigger()) {
-            void nextTick(focusSubmit);
-        }
-    },
-    { immediate: true }
-);
+// A later prefill replaces an untouched one only when it is better (series > suggestion > last
+// used): the Phase 4 rule kept the first last-used project, and so does this.
+function applyPrefill(next: Prefill): void {
+    if (projectTouched || next.projectId === null) return;
+    const current = appliedPrefill.value;
+    if (current.source !== 'none' && PREFILL_RANK[next.source] <= PREFILL_RANK[current.source]) {
+        return;
+    }
+    appliedPrefill.value = next;
+    projectId.value = next.projectId;
+    taskId.value = next.taskId;
+    if (next.source === 'series') selectedTags.value = [...next.tags];
+    // The prefill arrived after the focus went to the picker: a repeat conversion is Enter.
+    if (rootEl.value && document.activeElement === pickerTrigger()) {
+        void nextTick(focusSubmit);
+    }
+}
+
+watch(prefill, applyPrefill, { immediate: true });
 
 // Billable follows the selected project's default (same rule as the core create modal), never
-// turned on while billable rates are locked.
+// turned on while billable rates are locked. A prefill that carries its own billable (the series
+// assignment) keeps it while its project is selected, even when the projects refetch (RESEARCH
+// Pitfall 4).
 watch(
-    [projectId, projects],
+    [projectId, projects, appliedPrefill],
     ([id]) => {
         if (!id) return;
+        const applied = appliedPrefill.value;
+        if (applied.billable !== null && applied.projectId === id) {
+            billable.value = applied.billable && !billableRatesLocked.value;
+            return;
+        }
         const project = projects.value.find((item) => item.id === id);
         if (project) billable.value = project.is_billable && !billableRatesLocked.value;
     },
     { immediate: true }
 );
+
+// --- Quick picks (D-07): the candidates the user can switch to in one click. Only projects the
+// picker can show (loaded, not archived).
+type PickCandidate = Pick<
+    OutlookSuggestion,
+    'project_id' | 'project_name' | 'project_color' | 'client_name'
+> & { reason: PrefillReason };
+
+function usableProject(id: string): boolean {
+    return projects.value.some((project) => project.id === id && !project.is_archived);
+}
+
+const singleCandidates = computed<OutlookSuggestion[]>(() =>
+    isBatch
+        ? []
+        : (meeting.value.suggestions ?? []).filter((item) => usableProject(item.project_id))
+);
+
+// Batch (UI-SPEC section 7): each meeting's top candidate, its series assignment counting as top,
+// most common first, ties to the earliest meeting (resolveBatchPrefill's order). Assignments are
+// candidates too (reason 'series'), so a project only named by some meetings' series can still be
+// picked in one click.
+const batchCandidates = computed<PickCandidate[]>(() => {
+    if (!isBatch) return [];
+    const tallies = new Map<string, { candidate: PickCandidate; count: number; first: number }>();
+    batchMeetings.forEach((item, index) => {
+        const top: PickCandidate | undefined = item.assignment
+            ? {
+                  project_id: item.assignment.project_id,
+                  project_name: item.assignment.project_name,
+                  project_color: item.assignment.project_color,
+                  client_name: item.assignment.client_name,
+                  reason: { kind: 'series' },
+              }
+            : item.suggestions?.[0];
+        if (top === undefined || !usableProject(top.project_id)) return;
+        const tally = tallies.get(top.project_id);
+        if (tally) tally.count++;
+        else tallies.set(top.project_id, { candidate: top, count: 1, first: index });
+    });
+    return [...tallies.values()]
+        .sort((a, b) => b.count - a.count || a.first - b.first)
+        .map((tally) => tally.candidate);
+});
+
+const candidates = computed<PickCandidate[]>(() =>
+    isBatch ? batchCandidates.value : singleCandidates.value
+);
+const picks = computed<PickCandidate[]>(() =>
+    isBatch
+        ? batchCandidates.value.filter((item) => item.project_id !== projectId.value).slice(0, 2)
+        : quickPicks(singleCandidates.value, projectId.value)
+);
+
+function onSuggestionPicked(id: string): void {
+    projectTouched = true;
+    projectId.value = id;
+    taskId.value = null;
+    void nextTick(focusSubmit);
+}
+
+// Why the project in the picker is there (RULE-05): the reason of the prefill while its project is
+// selected, else the reason of the candidate it is. A project picked by hand that is not a
+// candidate has no reason line.
+const currentReason = computed<PrefillReason | null>(() => {
+    const id = projectId.value;
+    if (!id) return null;
+    const applied = appliedPrefill.value;
+    if (applied.projectId === id) return applied.reason;
+    return candidates.value.find((item) => item.project_id === id)?.reason ?? null;
+});
+const currentReasonLabel = computed(() =>
+    currentReason.value ? reasonLabel(currentReason.value, props.labels) : ''
+);
+const currentReasonIcon = computed(() =>
+    currentReason.value ? reasonIcon(currentReason.value.kind) : null
+);
+
+// What the conversion will do to the series (D-05): the first conversion of a recurring meeting
+// pre-assigns its series; a different project moves a pre-assigned series from now on.
+const seriesNoteText = computed<string | null>(() => {
+    const id = projectId.value;
+    if (!id) return null;
+    if (isBatch) return batchSeriesNote(batchMeetings) ? props.labels.batch_series_note : null;
+    const kind = seriesNote(meeting.value, id);
+    if (kind === 'new') return props.labels.series_note_new;
+    if (kind === 'change') return props.labels.series_note_change;
+    return null;
+});
 
 watch(projectId, (id) => {
     if (id) projectError.value = false;
@@ -272,6 +416,8 @@ async function submitSingle(): Promise<void> {
             description: description.value,
             start,
             end,
+            prefill_source: appliedPrefill.value.source,
+            prefill_project_id: appliedPrefill.value.projectId,
         });
     } finally {
         saving.value = false;
@@ -385,6 +531,8 @@ async function submitBatch(): Promise<void> {
                 task_id: taskId.value,
                 tags: [...selectedTags.value],
                 billable: billable.value,
+                prefill_source: appliedPrefill.value.source,
+                prefill_project_id: appliedPrefill.value.projectId,
             });
         } finally {
             saving.value = false;
@@ -503,24 +651,49 @@ onMounted(() => {
 
             <Field :data-invalid="projectError ? 'true' : undefined" class="gap-2">
                 <FieldLabel class="text-sm font-normal">{{ labels.field_project }}</FieldLabel>
-                <div class="min-w-0" data-testid="outlook-convert-project">
-                    <TimeTrackerProjectTaskDropdown
-                        v-model:project="projectId"
-                        v-model:task="taskId"
-                        variant="input"
-                        size="default"
-                        align="start"
-                        :no-project-value="null"
-                        :projects="projects"
-                        :tasks="tasks"
-                        :clients="clients"
-                        :create-project="noCreate"
-                        :create-client="noCreate"
-                        :can-create-project="false"
-                        :currency="currency"
-                        :enable-estimated-time="enableEstimatedTime"
-                        :organization-billable-rate="organization?.billable_rate ?? null"
-                        @changed="onProjectPicked" />
+                <div class="min-w-0">
+                    <div class="min-w-0" data-testid="outlook-convert-project">
+                        <TimeTrackerProjectTaskDropdown
+                            v-model:project="projectId"
+                            v-model:task="taskId"
+                            variant="input"
+                            size="default"
+                            align="start"
+                            :no-project-value="null"
+                            :projects="projects"
+                            :tasks="tasks"
+                            :clients="clients"
+                            :create-project="noCreate"
+                            :create-client="noCreate"
+                            :can-create-project="false"
+                            :currency="currency"
+                            :enable-estimated-time="enableEstimatedTime"
+                            :organization-billable-rate="organization?.billable_rate ?? null"
+                            @changed="onProjectPicked" />
+                    </div>
+                    <p
+                        v-if="currentReason"
+                        class="mt-1 flex min-w-0 items-center gap-1 text-xs text-text-tertiary"
+                        data-testid="outlook-suggestion-reason">
+                        <component
+                            :is="currentReasonIcon"
+                            class="size-3 shrink-0"
+                            aria-hidden="true" />
+                        <span class="min-w-0 truncate" :title="currentReasonLabel">
+                            {{ currentReasonLabel }}
+                        </span>
+                    </p>
+                    <OutlookSuggestionPicks
+                        :candidates="picks"
+                        :labels="labels"
+                        @pick="onSuggestionPicked" />
+                    <p
+                        v-if="seriesNoteText"
+                        class="mt-2 flex items-start gap-1 text-xs text-text-tertiary"
+                        data-testid="outlook-series-note">
+                        <Repeat class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+                        <span>{{ seriesNoteText }}</span>
+                    </p>
                 </div>
                 <FieldError v-if="projectError" class="text-xs">
                     {{ labels.error_project_required }}

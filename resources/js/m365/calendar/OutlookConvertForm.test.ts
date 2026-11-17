@@ -3,7 +3,13 @@ import { computed, nextTick, ref } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import type { Project } from '@/packages/api/src';
 import { billableRatesLockKey } from '@/packages/ui/src/utils/useBillableRatesLock';
-import type { OutlookCalendarLabels, OutlookConversionResult, OutlookMeeting } from '@/m365/types';
+import type {
+    OutlookAssignment,
+    OutlookCalendarLabels,
+    OutlookConversionResult,
+    OutlookMeeting,
+    OutlookSuggestion,
+} from '@/m365/types';
 import OutlookConvertForm from './OutlookConvertForm.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
 
@@ -72,6 +78,24 @@ const labels = {
     billable: 'Billable',
     non_billable: 'Non-Billable',
     created_success: 'Time entry created successfully',
+    reason_series: 'Same series',
+    reason_last_used: 'Last used',
+    reason_domain_one: 'Like 1 meeting with @:domain',
+    reason_domain_many: 'Like :count meetings with @:domain',
+    reason_person_one: 'Like 1 meeting with :name',
+    reason_person_many: 'Like :count meetings with :name',
+    reason_organizer_one: 'Like 1 meeting organized by :name',
+    reason_organizer_many: 'Like :count meetings organized by :name',
+    reason_subject_one: 'Like 1 meeting with a similar subject',
+    reason_subject_many: 'Like :count meetings with a similar subject',
+    reason_batch: 'Suggested for :count of :total meetings',
+    other_suggestions: 'Other suggestions',
+    use_suggestion: 'Use :project',
+    series_note_new: 'Other meetings in this series will come pre-assigned to this project.',
+    series_note_change:
+        'This series will use the new project from now on. Entries already created stay as they are.',
+    batch_series_note:
+        'Recurring meetings here will use this project for their series from now on.',
 } as OutlookCalendarLabels;
 
 const STORAGE_KEY = 'solidtime:m365-last-meeting-project:org-1';
@@ -105,6 +129,62 @@ function meeting(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
         dismissed: false,
         ...overrides,
     };
+}
+
+function assignment(overrides: Partial<OutlookAssignment> = {}): OutlookAssignment {
+    return {
+        project_id: 'p-1',
+        project_name: 'Project p-1',
+        project_color: '#ef5350',
+        client_name: null,
+        task_id: 'task-1',
+        task_name: 'Task 1',
+        tags: ['t-1'],
+        billable: false,
+        converted_at: '2026-10-20T10:00:00Z',
+        ...overrides,
+    };
+}
+
+function suggestion(
+    projectId: string,
+    overrides: Partial<OutlookSuggestion> = {}
+): OutlookSuggestion {
+    return {
+        project_id: projectId,
+        project_name: 'Project ' + projectId,
+        project_color: '#42a5f5',
+        client_name: null,
+        confident: false,
+        reason: { kind: 'subject', count: 2, value: null },
+        ...overrides,
+    };
+}
+
+function chips(): HTMLElement[] {
+    return Array.from(
+        document.body.querySelectorAll<HTMLElement>('[data-testid="outlook-suggestion-pick"]')
+    );
+}
+
+function chipIds(): (string | null)[] {
+    return chips().map((chip) => chip.getAttribute('data-project-id'));
+}
+
+function seriesNoteText(): string | null {
+    const note = document.body.querySelector('[data-testid="outlook-series-note"]');
+    return note ? (note.textContent?.trim() ?? '') : null;
+}
+
+function reasonText(): string | null {
+    const line = document.body.querySelector('[data-testid="outlook-suggestion-reason"]');
+    return line ? (line.textContent?.trim() ?? '') : null;
+}
+
+function pickProject(w: VueWrapper, id: string) {
+    const dropdown = w.findComponent({ name: 'TimeTrackerProjectTaskDropdown' });
+    dropdown.vm.$emit('update:project', id);
+    dropdown.vm.$emit('changed');
 }
 
 function deferred<T>() {
@@ -326,6 +406,8 @@ describe('OutlookConvertForm (single)', () => {
             description: 'Weekly sync',
             start: '2026-10-27T09:15:00Z',
             end: '2026-10-27T10:00:00Z',
+            prefill_source: 'last_used',
+            prefill_project_id: 'p-1',
         });
     });
 
@@ -519,12 +601,305 @@ describe('OutlookConvertForm (single)', () => {
         expect(billableOption!.hasAttribute('data-disabled')).toBe(true);
     });
 
+    it('shows "Last used" under a last-used prefill and no reason line without a prefill', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+        mountForm();
+        await settle();
+        expect(reasonText()).toBe('Last used');
+        wrapper!.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+
+        localStorage.clear();
+        mountForm();
+        await settle();
+        expect(reasonText()).toBeNull();
+    });
+
+    it('sends prefill_source none and no prefill project when nothing was prefilled', async () => {
+        const w = mountForm();
+        await settle();
+        pickProject(w, 'p-2');
+        await settle();
+
+        el('outlook-convert-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![1]).toMatchObject({
+            project_id: 'p-2',
+            prefill_source: 'none',
+            prefill_project_id: null,
+        });
+        expect(reasonText()).toBeNull();
+    });
+
     it('renders the subject as literal text', async () => {
         mountForm(meeting({ subject: '<img src=x onerror=alert(1)>' }));
         await settle();
 
         expect(el('outlook-convert-form').querySelector('img')).toBeNull();
         expect(input('outlook-convert-description').value).toBe('<img src=x onerror=alert(1)>');
+    });
+});
+
+describe('OutlookConvertForm (series pre-assignment)', () => {
+    it('opens with the series project, task, tags and billable and says "Same series"', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-2');
+        mountForm(meeting({ series_key: 's-1', assignment: assignment() }));
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-1');
+        // p-1 is billable by default, the series was logged non-billable: the series wins.
+        expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
+        expect(el('outlook-convert-tags').textContent?.trim()).toBe('1 Tag');
+        expect(reasonText()).toBe('Same series');
+        expect(document.activeElement).toBe(el('outlook-convert-submit'));
+
+        el('outlook-convert-submit').click();
+        await settle();
+
+        expect(convert).toHaveBeenCalledWith(['m-1'], {
+            project_id: 'p-1',
+            task_id: 'task-1',
+            tags: ['t-1'],
+            billable: false,
+            description: 'Weekly sync',
+            start: '2026-10-27T09:00:00Z',
+            end: '2026-10-27T10:00:00Z',
+            prefill_source: 'series',
+            prefill_project_id: 'p-1',
+        });
+    });
+
+    it('follows a project picked by hand: its billable default, no reason line, prefill still reported', async () => {
+        state.projects = [...state.projects, project('p-3', { is_billable: true })];
+        const w = mountForm(
+            meeting({
+                series_key: 's-1',
+                assignment: assignment({ project_id: 'p-2', billable: true }),
+            })
+        );
+        await settle();
+        expect(el('outlook-convert-billable').textContent).not.toContain('Non-Billable');
+        expect(reasonText()).toBe('Same series');
+
+        pickProject(w, 'p-3');
+        await settle();
+
+        expect(reasonText()).toBeNull();
+        expect(el('outlook-convert-billable').textContent).not.toContain('Non-Billable');
+
+        pickProject(w, 'p-1');
+        await settle();
+        pickProject(w, 'p-3');
+        await settle();
+        el('outlook-convert-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![1]).toMatchObject({
+            project_id: 'p-3',
+            billable: true,
+            prefill_source: 'series',
+            prefill_project_id: 'p-2',
+        });
+    });
+
+    it('lets billable follow the picked project after leaving the series project', async () => {
+        state.projects = [...state.projects, project('p-3', { is_billable: true })];
+        const w = mountForm(
+            meeting({
+                series_key: 's-1',
+                assignment: assignment({ project_id: 'p-1', billable: false }),
+            })
+        );
+        await settle();
+        expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
+
+        // p-1 is billable by default but the series said non-billable; p-3 is billable by default.
+        pickProject(w, 'p-3');
+        await settle();
+        expect(el('outlook-convert-billable').textContent).not.toContain('Non-Billable');
+        expect(reasonText()).toBeNull();
+    });
+
+    it('says the series will come pre-assigned on the first conversion of a recurring meeting', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+        mountForm(meeting({ series_key: 's-1' }));
+        await settle();
+
+        expect(seriesNoteText()).toBe(
+            'Other meetings in this series will come pre-assigned to this project.'
+        );
+    });
+
+    it('shows no series note for a one-off meeting or without a project', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+        mountForm(meeting({ series_key: null }));
+        await settle();
+        expect(seriesNoteText()).toBeNull();
+        wrapper!.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+
+        localStorage.clear();
+        mountForm(meeting({ series_key: 's-1' }));
+        await settle();
+        expect(seriesNoteText()).toBeNull();
+    });
+
+    it('warns that the series moves when Edit changes the pre-assigned project', async () => {
+        const w = mountForm(meeting({ series_key: 's-1', assignment: assignment() }));
+        await settle();
+        expect(seriesNoteText()).toBeNull();
+
+        pickProject(w, 'p-2');
+        await settle();
+        expect(seriesNoteText()).toBe(
+            'This series will use the new project from now on. Entries already created stay as they are.'
+        );
+
+        pickProject(w, 'p-1');
+        await settle();
+        expect(seriesNoteText()).toBeNull();
+    });
+
+    it('keeps the series billable off under the billable-rates lock', async () => {
+        locked.value = true;
+        mountForm(meeting({ series_key: 's-1', assignment: assignment({ billable: true }) }));
+        await settle();
+
+        expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
+    });
+});
+
+describe('OutlookConvertForm (learned suggestions)', () => {
+    beforeEach(() => {
+        state.projects = [
+            project('p-1', { is_billable: true }),
+            project('p-2'),
+            project('p-3'),
+            project('p-4', { is_billable: true }),
+            project('p-old', { is_archived: true }),
+        ];
+    });
+
+    function learned(): OutlookMeeting {
+        return meeting({
+            suggestions: [
+                suggestion('p-1', {
+                    confident: true,
+                    reason: { kind: 'domain', count: 4, value: 'client.com' },
+                }),
+                suggestion('p-3', { reason: { kind: 'person', count: 2, value: 'Ana López' } }),
+                suggestion('p-4'),
+            ],
+        });
+    }
+
+    it('opens with the confident top suggestion, its reason and the next two as chips', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-2');
+        mountForm(learned());
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-1');
+        expect(el('outlook-convert-billable').textContent).not.toContain('Non-Billable');
+        expect(el('outlook-convert-tags').textContent?.trim()).toBe('Tags');
+        expect(reasonText()).toBe('Like 4 meetings with @client.com');
+        expect(el('outlook-suggestion-picks').getAttribute('aria-label')).toBe('Other suggestions');
+        expect(chipIds()).toEqual(['p-3', 'p-4']);
+        expect(document.activeElement).toBe(el('outlook-convert-submit'));
+
+        el('outlook-convert-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![1]).toMatchObject({
+            project_id: 'p-1',
+            task_id: null,
+            tags: [],
+            billable: true,
+            prefill_source: 'suggestion',
+            prefill_project_id: 'p-1',
+        });
+    });
+
+    it('keeps the last-used project when the top is not confident and offers the best others', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-2');
+        mountForm(
+            meeting({ suggestions: [suggestion('p-1'), suggestion('p-2'), suggestion('p-3')] })
+        );
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-2');
+        expect(reasonText()).toBe('Last used');
+        expect(chipIds()).toEqual(['p-1', 'p-3']);
+    });
+
+    it('a chip sets its project, clears the task, keeps the tags, follows billable and focuses Create', async () => {
+        const w = mountForm(learned());
+        await settle();
+        const dropdown = w.findComponent({ name: 'TimeTrackerProjectTaskDropdown' });
+        dropdown.vm.$emit('update:task', 'task-9');
+        w.findComponent({ name: 'TagDropdown' }).vm.$emit('update:modelValue', ['t-1']);
+        await settle();
+
+        chips()[0]!.click();
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-3');
+        expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
+        expect(el('outlook-convert-tags').textContent?.trim()).toBe('1 Tag');
+        expect(document.activeElement).toBe(el('outlook-convert-submit'));
+        expect(reasonText()).toBe('Like 2 meetings with Ana López');
+        expect(chipIds()).toEqual(['p-1', 'p-4']);
+
+        el('outlook-convert-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![1]).toMatchObject({
+            project_id: 'p-3',
+            task_id: null,
+            tags: ['t-1'],
+            billable: false,
+            prefill_source: 'suggestion',
+            prefill_project_id: 'p-1',
+        });
+    });
+
+    it('hides the reason line for a project picked by hand that is not a candidate', async () => {
+        const w = mountForm(learned());
+        await settle();
+
+        pickProject(w, 'p-2');
+        await settle();
+
+        expect(reasonText()).toBeNull();
+        expect(chipIds()).toEqual(['p-1', 'p-3']);
+    });
+
+    it('shows no reason line and no chip group without history', async () => {
+        mountForm(meeting({ suggestions: [] }));
+        await settle();
+
+        expect(reasonText()).toBeNull();
+        expect(document.body.querySelector('[data-testid="outlook-suggestion-picks"]')).toBeNull();
+        expect(chips()).toHaveLength(0);
+    });
+
+    it('never offers an archived or unknown project and never prefills it', async () => {
+        mountForm(
+            meeting({
+                suggestions: [
+                    suggestion('p-old', { confident: true }),
+                    suggestion('p-gone'),
+                    suggestion('p-2'),
+                ],
+            })
+        );
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('No Project');
+        expect(reasonText()).toBeNull();
+        expect(chipIds()).toEqual(['p-2']);
     });
 });
 
@@ -634,6 +1009,8 @@ describe('OutlookConvertForm (batch)', () => {
             task_id: null,
             tags: [],
             billable: true,
+            prefill_source: 'last_used',
+            prefill_project_id: 'p-1',
         });
         for (const row of batchRows()) {
             expect(row.getAttribute('data-status')).toBe('pending');
@@ -723,7 +1100,14 @@ describe('OutlookConvertForm (batch)', () => {
         expect(convert).toHaveBeenCalledTimes(2);
         expect(convert.mock.calls[1]).toEqual([
             ['m-3'],
-            { project_id: 'p-2', task_id: null, tags: [], billable: false },
+            {
+                project_id: 'p-2',
+                task_id: null,
+                tags: [],
+                billable: false,
+                prefill_source: 'last_used',
+                prefill_project_id: 'p-1',
+            },
         ]);
         expect(w.emitted('done')).toHaveLength(1);
         expect((w.emitted('done')![0]![0] as OutlookConversionResult[]).length).toBe(3);
@@ -823,5 +1207,189 @@ describe('OutlookConvertForm (batch)', () => {
             'success',
             '20 time entries created successfully'
         );
+    });
+});
+
+describe('OutlookConvertForm (batch prefill)', () => {
+    beforeEach(() => {
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+        state.projects = [
+            project('p-1', { is_billable: true }),
+            project('p-2', { is_billable: true }),
+            project('p-3'),
+            project('p-4'),
+        ];
+    });
+
+    function three(
+        overrides: [Partial<OutlookMeeting>, Partial<OutlookMeeting>, Partial<OutlookMeeting>]
+    ): OutlookMeeting[] {
+        return [
+            meeting({ id: 'm-1', ...overrides[0] }),
+            meeting({
+                id: 'm-2',
+                start: '2026-10-27T13:00:00Z',
+                end: '2026-10-27T14:00:00Z',
+                ...overrides[1],
+            }),
+            meeting({
+                id: 'm-3',
+                start: '2026-10-28T09:00:00Z',
+                end: '2026-10-28T10:00:00Z',
+                ...overrides[2],
+            }),
+        ];
+    }
+
+    it('prefills every series value from a shared assignment and says "Same series"', async () => {
+        const shared = { series_key: 's-1' };
+        mountBatch(
+            three([
+                { ...shared, assignment: assignment({ project_id: 'p-2' }) },
+                { ...shared, assignment: assignment({ project_id: 'p-2', tags: [] }) },
+                { ...shared, assignment: assignment({ project_id: 'p-2', tags: [] }) },
+            ])
+        );
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-2');
+        expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
+        expect(el('outlook-convert-tags').textContent?.trim()).toBe('1 Tag');
+        expect(reasonText()).toBe('Same series');
+        expect(chips()).toHaveLength(0);
+        expect(seriesNoteText()).toBe(
+            'Recurring meetings here will use this project for their series from now on.'
+        );
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(convert).toHaveBeenCalledWith(['m-1', 'm-2', 'm-3'], {
+            project_id: 'p-2',
+            task_id: 'task-1',
+            tags: ['t-1'],
+            billable: false,
+            prefill_source: 'series',
+            prefill_project_id: 'p-2',
+        });
+    });
+
+    it('prefills the candidate of at least half of the meetings with "Suggested for 2 of 3 meetings"', async () => {
+        mountBatch(
+            three([
+                { series_key: 's-1', assignment: assignment({ project_id: 'p-2' }) },
+                {
+                    suggestions: [
+                        suggestion('p-2', {
+                            confident: true,
+                            reason: { kind: 'domain', count: 3, value: 'client.com' },
+                        }),
+                    ],
+                },
+                { suggestions: [suggestion('p-3')] },
+            ])
+        );
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-2');
+        // A suggestion prefills the project only: billable follows p-2, no task, no tags.
+        expect(el('outlook-convert-billable').textContent).not.toContain('Non-Billable');
+        expect(el('outlook-convert-tags').textContent?.trim()).toBe('Tags');
+        expect(reasonText()).toBe('Suggested for 2 of 3 meetings');
+        expect(chipIds()).toEqual(['p-3']);
+        expect(seriesNoteText()).toBe(
+            'Recurring meetings here will use this project for their series from now on.'
+        );
+    });
+
+    it('falls back to last used below half and offers the two most common candidates', async () => {
+        const meetings = [
+            ...three([
+                { series_key: 's-1', assignment: assignment({ project_id: 'p-2' }) },
+                {
+                    suggestions: [
+                        suggestion('p-3', {
+                            reason: { kind: 'person', count: 2, value: 'Ana López' },
+                        }),
+                    ],
+                },
+                { suggestions: [suggestion('p-3')] },
+            ]),
+            meeting({
+                id: 'm-4',
+                start: '2026-10-29T09:00:00Z',
+                end: '2026-10-29T10:00:00Z',
+                suggestions: [suggestion('p-4')],
+            }),
+        ];
+        mountBatch(meetings);
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-1');
+        expect(reasonText()).toBe('Last used');
+        expect(chipIds()).toEqual(['p-3', 'p-2']);
+        expect(chips()[1]!.getAttribute('title')).toBe('Same series');
+
+        chips()[0]!.click();
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-3');
+        expect(reasonText()).toBe('Like 2 meetings with Ana López');
+        expect(chipIds()).toEqual(['p-2', 'p-4']);
+        expect(document.activeElement).toBe(el('outlook-batch-submit'));
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![1]).toEqual({
+            project_id: 'p-3',
+            task_id: null,
+            tags: [],
+            billable: false,
+            prefill_source: 'last_used',
+            prefill_project_id: 'p-1',
+        });
+    });
+
+    it('shows no batch series note when no meeting is recurring', async () => {
+        mountBatch();
+        await settle();
+
+        expect(seriesNoteText()).toBeNull();
+    });
+
+    it('keeps sending the prefill fields on retry', async () => {
+        convert.mockResolvedValueOnce([
+            outcome('m-1', 'created'),
+            outcome('m-2', 'failed'),
+            outcome('m-3', 'created'),
+        ]);
+        mountBatch(
+            three([
+                { suggestions: [suggestion('p-2', { confident: true })] },
+                { suggestions: [suggestion('p-2', { confident: true })] },
+                {},
+            ])
+        );
+        await settle();
+        el('outlook-batch-submit').click();
+        await settle();
+
+        convert.mockResolvedValueOnce([outcome('m-2', 'created')]);
+        el('outlook-batch-retry').click();
+        await settle();
+
+        expect(convert.mock.calls[1]).toEqual([
+            ['m-2'],
+            {
+                project_id: 'p-2',
+                task_id: null,
+                tags: [],
+                billable: true,
+                prefill_source: 'suggestion',
+                prefill_project_id: 'p-2',
+            },
+        ]);
     });
 });
