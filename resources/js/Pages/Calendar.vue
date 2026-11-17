@@ -171,7 +171,7 @@ function onRefresh() {
             <template v-if="outlook.labels.value" #event-extra="{ timeEntry }">
                 <OutlookEntryBadge :time-entry-id="timeEntry.id" />
             </template>
-            <template v-if="outlook.calendar.value" #toolbar-extra>
+            <template v-if="outlook.calendar.value || outlook.canAct.value" #toolbar-extra>
                 <OutlookCalendarControls />
             </template>
             <template
