@@ -154,6 +154,10 @@ export interface OutlookSyncInfo {
 export interface OutlookMeetingsResponse {
     data: OutlookMeeting[];
     sync: OutlookSyncInfo;
+    // Ids of the user's time entries created from a meeting (the Outlook icon on entries, D-04).
+    // fetchMeetings always sets it (empty when absent or malformed); optional so cache entries and
+    // fixtures written without it stay valid, readers treat a missing list as empty.
+    linked_time_entry_ids?: string[];
 }
 
 export type OutlookSyncStatus =

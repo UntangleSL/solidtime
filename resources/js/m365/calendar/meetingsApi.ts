@@ -13,6 +13,14 @@ function numberOrNull(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+// Anything other than an array of strings becomes an empty list (the ids only decide whether the
+// Outlook icon renders on an entry).
+function stringList(value: unknown): string[] {
+    return Array.isArray(value) && value.every((item) => typeof item === 'string')
+        ? [...value]
+        : [];
+}
+
 export interface MeetingsReadOptions {
     // Also returns the meetings the user dismissed (flagged dismissed: true)
     include_dismissed?: boolean;
@@ -38,6 +46,7 @@ export async function fetchMeetings(
             last_synced_at: body?.sync?.last_synced_at ?? null,
             retry_after: numberOrNull(body?.sync?.retry_after),
         },
+        linked_time_entry_ids: stringList(body?.linked_time_entry_ids),
     };
 }
 

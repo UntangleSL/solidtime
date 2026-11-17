@@ -52,6 +52,8 @@ const SHOW_DISMISSED_STORAGE_KEY = 'solidtime:m365-show-dismissed';
 // The Sync button stays unavailable this long after a settled manual sync (a throttled or
 // unavailable answer with a larger retry_after wins). Automatic syncs never start it (D-08).
 const SYNC_COOLDOWN_MS = 10_000;
+// Delay of the meetings refresh that follows time-entry refetches (bursts collapse into one read).
+const ENTRIES_REFRESH_DEBOUNCE_MS = 500;
 
 // Why the Sync button is cooling down: right after a manual sync, or a back-off the server asked for.
 export type OutlookCooldownKind = 'manual' | 'backoff';
@@ -81,7 +83,12 @@ export interface OutlookMeetingsContext {
     cooldownKind: Readonly<Ref<OutlookCooldownKind | null>>;
     requestSync: (force?: boolean) => void;
     // False in test-hook mode (injected meetings are not server rows): the panel then offers no action.
+    // Browser tests opt in with the hook's third argument ({ actions: true }).
     canAct: Readonly<Ref<boolean>>;
+    // Ids of the user's time entries created from a meeting (the Outlook icon on entries, D-04): the
+    // linked_time_entry_ids of the current read, or the injected list plus the ids converted since
+    // in test-hook mode. Empty when absent.
+    linkedTimeEntryIds: Readonly<Ref<string[]>>;
     // Optimistic: the meeting leaves the cache at once (or turns into the dismissed variant while
     // dismissed meetings are shown), the request follows.
     dismiss: (id: string) => Promise<void>;
@@ -127,7 +134,21 @@ interface SyncRequest {
     force: boolean;
 }
 
-type TestHook = (meetings: OutlookMeeting[], labels?: Partial<OutlookCalendarLabels>) => void;
+// Third argument of the test hook. Without it (or with actions false) the injected meetings are
+// display only, as before. With actions true they can be selected and converted: conversions post to
+// convertUrl (the hook itself never contacts the server, and the endpoint stays authenticated), a
+// converted meeting leaves the injected list and its entry id joins linkedTimeEntryIds.
+export interface OutlookTestHookOptions {
+    actions?: boolean;
+    convertUrl?: string;
+    linkedTimeEntryIds?: string[];
+}
+
+type TestHook = (
+    meetings: OutlookMeeting[],
+    labels?: Partial<OutlookCalendarLabels>,
+    options?: OutlookTestHookOptions
+) => void;
 
 // Test hook on window while the composable is mounted (same contract as
 // __TEST_SET_ACTIVITY_PERIODS__): a no-op in production unless test code calls it.
@@ -170,6 +191,9 @@ export function useOutlookMeetings(
 
     const testMeetings = ref<OutlookMeeting[] | null>(null);
     const testLabels = ref<Partial<OutlookCalendarLabels> | null>(null);
+    const testActions = ref(false);
+    const testConvertUrl = ref<string | null>(null);
+    const testLinkedIds = ref<string[]>([]);
 
     const lastSync = ref<OutlookSyncResponse | null>(null);
     const isSyncing = ref(false);
@@ -263,6 +287,14 @@ export function useOutlookMeetings(
 
     const meetings = computed<OutlookMeeting[]>(
         () => testMeetings.value ?? meetingsQuery.data.value?.data ?? []
+    );
+
+    // Placeholder data of the previous week is kept like the meetings: the ids name entries, so a
+    // stale id only matters for an entry that is not on screen.
+    const linkedTimeEntryIds = computed<string[]>(() =>
+        testMeetings.value !== null
+            ? testLinkedIds.value
+            : (meetingsQuery.data.value?.linked_time_entry_ids ?? [])
     );
 
     const labels = computed<OutlookCalendarLabels | null>(() => {
@@ -440,7 +472,11 @@ export function useOutlookMeetings(
         { immediate: true }
     );
 
-    const canAct = computed(() => calendar.value !== null && testMeetings.value === null);
+    // Injected meetings can act only when the test asked for it; the CI calendar has no microsoft
+    // calendar prop (integration off), so that case does not depend on it.
+    const canAct = computed(() =>
+        testMeetings.value !== null ? testActions.value : calendar.value !== null
+    );
 
     // --- Multi-select (D-07): the methods are wrapped so nothing can be selected while !canAct.
     const baseSelection = useOutlookSelection();
@@ -559,24 +595,44 @@ export function useOutlookMeetings(
 
     const convertsInFlight = new Set<string>();
 
-    // Every cached read (each week, with and without dismissed meetings) loses the given meetings.
-    function removeFromCache(ids: string[]): void {
+    function withLinked(list: string[], entryIds: string[]): string[] {
+        const added = entryIds.filter((id) => !list.includes(id));
+        return added.length > 0 ? [...list, ...added] : list;
+    }
+
+    // Every cached read (each week, with and without dismissed meetings) loses the given meetings
+    // and lists the new entry ids as linked (the refetch confirms both).
+    function removeFromCache(ids: string[], entryIds: string[]): void {
         if (ids.length === 0) return;
         const gone = new Set(ids);
         queryClient.setQueriesData<OutlookMeetingsResponse>(
             { queryKey: MEETINGS_QUERY_KEY },
             (old) => {
                 if (!old || !Array.isArray(old.data)) return old;
-                return { ...old, data: old.data.filter((meeting) => !gone.has(meeting.id)) };
+                return {
+                    ...old,
+                    data: old.data.filter((meeting) => !gone.has(meeting.id)),
+                    linked_time_entry_ids: withLinked(old.linked_time_entry_ids ?? [], entryIds),
+                };
             }
         );
+    }
+
+    // Test-hook mode: the injected list plays the cache (the real reads are left alone).
+    function removeFromInjected(ids: string[], entryIds: string[]): void {
+        const gone = new Set(ids);
+        if (testMeetings.value !== null) {
+            testMeetings.value = testMeetings.value.filter((meeting) => !gone.has(meeting.id));
+        }
+        testLinkedIds.value = withLinked(testLinkedIds.value, entryIds);
     }
 
     async function convert(
         ids: string[],
         fields: OutlookConversionFields
     ): Promise<OutlookConversionResult[]> {
-        const url = calendar.value?.urls.convert;
+        const injected = testMeetings.value !== null;
+        const url = injected ? testConvertUrl.value : calendar.value?.urls.convert;
         const current = labels.value;
         const fallback = current?.error_generic ?? '';
         if (!url || !current || ids.length === 0) return failedResults(ids, fallback);
@@ -594,20 +650,55 @@ export function useOutlookMeetings(
             ids.forEach((id) => convertsInFlight.delete(id));
         }
 
-        const done = results
-            .filter((result) => result.status === 'created' || result.status === 'existing')
-            .map((result) => result.meeting_id);
+        const succeeded = results.filter(
+            (result) => result.status === 'created' || result.status === 'existing'
+        );
+        const done = succeeded.map((result) => result.meeting_id);
+        const entryIds = succeeded
+            .map((result) => result.time_entry_id)
+            .filter((id): id is string => id !== null);
         if (done.length > 0) {
-            void queryClient.cancelQueries({ queryKey: MEETINGS_QUERY_KEY });
-            removeFromCache(done);
+            if (injected) {
+                removeFromInjected(done, entryIds);
+            } else {
+                void queryClient.cancelQueries({ queryKey: MEETINGS_QUERY_KEY });
+                removeFromCache(done, entryIds);
+            }
             baseSelection.remove(done);
             void queryClient.invalidateQueries({ queryKey: ['timeEntries'] });
             void queryClient.invalidateQueries({ queryKey: ['goals'] });
-            void queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
+            if (!injected) void queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
             if (ids.length === 1) announce(current.created_announcement);
         }
         return results;
     }
+
+    // Core time-entry mutations (create, edit, move, delete, bulk) only invalidate ['timeEntries'] and
+    // ['goals']. Deleting an entry created from a meeting must bring the meeting back without a
+    // reload (ASGN-05), so a successful refetch of an already loaded time-entries query refreshes the
+    // meetings read once, debounced: drags and bulk edits fire bursts and the read is throttled at
+    // 60 per minute. The first load of a week (dataUpdateCount 1, navigation), failed fetches and
+    // direct cache writes (setQueryData) never trigger it; injected test meetings are not server rows.
+    let entriesRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function refreshAllowed(): boolean {
+        return !unmounted && calendar.value !== null && testMeetings.value === null;
+    }
+
+    const unsubscribeEntries = queryClient.getQueryCache().subscribe((event) => {
+        if (event.type !== 'updated' || event.action.type !== 'success') return;
+        if (event.action.manual === true) return;
+        if (event.query.queryKey[0] !== 'timeEntries') return;
+        if (event.query.state.dataUpdateCount < 2 || !refreshAllowed()) return;
+
+        if (entriesRefreshTimer !== undefined) clearTimeout(entriesRefreshTimer);
+        entriesRefreshTimer = setTimeout(() => {
+            entriesRefreshTimer = undefined;
+            if (refreshAllowed()) {
+                void queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
+            }
+        }, ENTRIES_REFRESH_DEBOUNCE_MS);
+    });
 
     // Local days that hold at least one meeting get the reserved Outlook lane (D-23). The overlap is
     // half-open like the ghost layout: a zero-length meeting belongs to the day containing it.
@@ -641,10 +732,14 @@ export function useOutlookMeetings(
     onMounted(() => {
         (window as unknown as TestWindow).__TEST_SET_OUTLOOK_MEETINGS__ = (
             injected,
-            injectedLabels
+            injectedLabels,
+            options
         ) => {
             testMeetings.value = injected;
             testLabels.value = injectedLabels ?? null;
+            testActions.value = options?.actions === true;
+            testConvertUrl.value = options?.convertUrl ?? null;
+            testLinkedIds.value = [...(options?.linkedTimeEntryIds ?? [])];
         };
     });
 
@@ -655,6 +750,9 @@ export function useOutlookMeetings(
         if (cooldownTimer !== undefined) clearTimeout(cooldownTimer);
         cooldownTimer = undefined;
         pending = null;
+        unsubscribeEntries();
+        if (entriesRefreshTimer !== undefined) clearTimeout(entriesRefreshTimer);
+        entriesRefreshTimer = undefined;
         delete (window as unknown as TestWindow).__TEST_SET_OUTLOOK_MEETINGS__;
     });
 
@@ -676,6 +774,7 @@ export function useOutlookMeetings(
         cooldownKind,
         requestSync,
         canAct,
+        linkedTimeEntryIds,
         dismiss,
         restore,
         announcement,
