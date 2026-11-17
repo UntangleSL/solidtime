@@ -28,7 +28,14 @@ import BillableIcon from '@/packages/ui/src/Icons/BillableIcon.vue';
 import type { Organization } from '@/types/models';
 
 export type CommandGroup =
-    'timer' | 'active-timer' | 'navigation' | 'create' | 'theme' | 'organization' | 'entity';
+    | 'timer'
+    | 'active-timer'
+    | 'navigation'
+    | 'create'
+    | 'theme'
+    | 'accent'
+    | 'organization'
+    | 'entity';
 
 export interface Command {
     id: string;
@@ -50,6 +57,7 @@ export const GROUP_PRIORITIES: Record<CommandGroup, number> = {
     create: 400,
     organization: 300,
     theme: 200,
+    accent: 150,
     entity: 100,
 };
 

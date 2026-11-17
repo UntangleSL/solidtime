@@ -4,6 +4,8 @@ import { storeToRefs } from 'pinia';
 import { getDayJsInstance } from '@/packages/ui/src/utils/time';
 import { useCurrentTimeEntryStore } from '@/utils/useCurrentTimeEntry';
 import { themeSetting, type themeOption } from '@/utils/theme';
+import { createAccentCommands } from '@/branding/accentCommands';
+import { setAccent } from '@/branding/accent';
 import {
     canViewProjects,
     canViewClients,
@@ -85,6 +87,7 @@ const GROUP_CONFIG: { id: CommandGroupType; heading: string }[] = [
     { id: 'create', heading: 'Create' },
     { id: 'organization', heading: 'Organization' },
     { id: 'theme', heading: 'Theme' },
+    { id: 'accent', heading: 'Accent color' },
 ];
 
 // Entity badge classes
@@ -318,6 +321,7 @@ export function useCommandPalette() {
     );
 
     const themeCommands = computed(() => createThemeCommands(setTheme));
+    const accentCommands = computed(() => createAccentCommands(setAccent));
 
     const createCommands = computed(() =>
         createCreateCommands(
@@ -357,6 +361,7 @@ export function useCommandPalette() {
             ...createCommands.value,
             ...organizationCommands.value,
             ...themeCommands.value,
+            ...accentCommands.value,
         ];
 
         const grouped: Record<string, Command[]> = {};
