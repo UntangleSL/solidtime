@@ -340,9 +340,10 @@ Production `$select` for Phase 3, the exact string used by the successful produc
 `id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting`
 
 `originalStart` is required for the secondary occurrence key: it is returned only when selected (the
-full-shape pass without `$select` has no `originalStart` on any event). Add no `body`, no `attendees`
-and no `lastModifiedDateTime`: eligibility and the keys do not need them, and `lastModifiedDateTime`
-works against the documentation, so nothing may depend on it. If Phase 3 ever wants change detection,
+full-shape pass without `$select` has no `originalStart` on any event). Add no `body` and no
+`lastModifiedDateTime`: eligibility and the keys do not need them, and `lastModifiedDateTime` works against
+the documentation, so nothing may depend on it. `attendees` stayed out in Phase 3 for the same reason and was
+added in Phase 5 for suggestions (D-09, see the Phase 5 subsection below). If Phase 3 ever wants change detection,
 compare stored fields with the fetched ones instead.
 
 Request settings: `GET /me/calendarView?startDateTime=...&endDateTime=...&$select=...&$orderby=start/dateTime&$top=100`,
@@ -359,6 +360,33 @@ Claim: experiments.select_prod.attendees_returned = false
 Claim: experiments.select_experiment.status = 200
 Claim: experiments.select_experiment.lastModifiedDateTime_returned = true
 Claim: experiments.select_experiment.attendees_returned = true
+
+### Phase 5: attendees for suggestions (D-09)
+
+Production `$select` from Phase 5 on, the Phase 3 string followed by `attendees`:
+
+`id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting,attendees`
+
+Why: learned project suggestions score a meeting by who organizes and attends it (owner decision of
+2026-11-17, Phase 5 D-09). The scopes do not change: the experiment-select pass of 2026-10-19 above returned
+`attendees` with status 200 under `Calendars.Read` in this tenant (claim
+`experiments.select_experiment.attendees_returned`, fixture
+`tests/Fixtures/M365/calendarview/roundA.experiment-select.requests.json`). `body` and
+`lastModifiedDateTime` stay out.
+
+Storage rules:
+
+- Stored per meeting owner only, in the owner's `outlook_meetings` rows: the organizer address (lower case)
+  and at most 50 attendee entries of address, name and type. No response status is kept, rooms and
+  equipment (type `resource`) are skipped, and the real attendee count is kept beside the capped list.
+- An ineligible sighting (cancelled, private, all-day) scrubs the organizer address, the attendee list and
+  the count together with the subject, organizer name and link.
+- Disconnect deletes them with the meeting rows (Phase 3 D-21); deleting the user removes them through the
+  existing cascade.
+- The meetings read never serves them: the resource is an allow-list without attendee fields, and no log
+  line carries an address, a name or a subject (Phase 3 D-15).
+- Learned links keep only keyed HMAC hashes of people, domains and subject words, never the plain values.
+  Rotating `APP_KEY` resets the learning; the stored signals carry a version so a later change can re-hash.
 
 ## Owner-reported observations (not fixture-backed)
 
