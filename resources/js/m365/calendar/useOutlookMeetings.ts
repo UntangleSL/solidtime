@@ -32,9 +32,18 @@ import type {
     OutlookSyncResponse,
 } from '@/m365/types';
 import { dismissMeeting, fetchMeetings, postSync, restoreMeeting } from './meetingsApi';
-import { conversionErrorMessage, failedResults, postConversion } from './conversionApi';
+import {
+    conversionErrorMessage,
+    failedResults,
+    forgetSeries as deleteSeriesAssignment,
+    ignoreSeries as postSeriesIgnore,
+    postConversion,
+    unignoreSeries as deleteSeriesIgnore,
+    type OutlookConversionBody,
+} from './conversionApi';
 import { useOutlookSelection, type OutlookSelection } from './useOutlookSelection';
 import { ghostLaneWidth } from './ghostLayout';
+import { isFaded, isPreassigned, isRecurring } from './suggestions';
 
 export interface WeekBucket {
     start: string;
@@ -54,6 +63,9 @@ const SHOW_DISMISSED_STORAGE_KEY = 'solidtime:m365-show-dismissed';
 const SYNC_COOLDOWN_MS = 10_000;
 // Delay of the meetings refresh that follows time-entry refetches (bursts collapse into one read).
 const ENTRIES_REFRESH_DEBOUNCE_MS = 500;
+// Meetings per confirm request: mirrors MeetingConversionRequest::MAX_MEETINGS on the server (a
+// longer list is sent as several requests, one after the other).
+export const MAX_CONFIRM_BATCH = 50;
 
 // Why the Sync button is cooling down: right after a manual sync, or a back-off the server asked for.
 export type OutlookCooldownKind = 'manual' | 'backoff';
@@ -73,7 +85,8 @@ export interface OutlookMeetingsContext {
     // "Show dismissed meetings" (remembered in localStorage). Toggling refetches the read with
     // include_dismissed and never triggers a sync.
     includeDismissed: Ref<boolean>;
-    // Meetings overlapping the visible range, dismissed ones excluded unless they are shown.
+    // Meetings overlapping the visible range, dismissed ones and occurrences of an ignored series
+    // excluded unless they are shown.
     visibleCount: Readonly<Ref<number>>;
     // False while syncing, during the cooldown / retry_after window, or without a connection.
     canSync: Readonly<Ref<boolean>>;
@@ -103,6 +116,28 @@ export interface OutlookMeetingsContext {
     // back as one failed result per id.
     // An id already in flight makes the call return [] without a request (double activation).
     convert: (ids: string[], fields: OutlookConversionFields) => Promise<OutlookConversionResult[]>;
+    // Confirms pre-assigned meetings with their own series assignment (Phase 5, D-03 / D-04):
+    // {meeting_ids, use_series_assignment: true}, chunks of MAX_CONFIRM_BATCH sent in order, results
+    // merged in request order. Same cache rules as convert; never rejects. Returns [] without a
+    // request while the context cannot act or when one of the ids is already in flight.
+    confirmPreassigned: (ids: string[]) => Promise<OutlookConversionResult[]>;
+    // One-click Confirm of one meeting (hover card, panel, menu): confirmPreassigned plus the
+    // feedback (success toast and announcement, or the "Could not confirm" toast with the reason).
+    // null when nothing was sent (cannot act, or already pending).
+    confirmOne: (id: string) => Promise<OutlookConversionResult | null>;
+    // True while a confirm of meeting `id` runs (the block's pending state, the button spinner).
+    isConfirmPending: (id: string) => boolean;
+    // Pre-assigned meetings overlapping the visible range, not faded (dismissed / series ignored)
+    // and not pending, in start order (the "Confirm N" toolbar count and its list, D-04).
+    preassignedInRange: Readonly<Ref<OutlookMeeting[]>>;
+    // Series actions keyed by any occurrence (D-10, D-11, RULE-04 / RULE-05). Optimistic over every
+    // cached occurrence with the same series_key: ignore hides them (or fades them while dismissed
+    // meetings are shown), stop ignoring un-fades them, forget drops their pre-assignment. A failure
+    // reverts the occurrences and says "Could not update this series". Nothing is sent for a
+    // meeting without a series or while the context cannot act.
+    ignoreSeries: (id: string) => Promise<void>;
+    unignoreSeries: (id: string) => Promise<void>;
+    forgetSeries: (id: string) => Promise<void>;
     // Asks the lane that renders meeting `id` to open its panel in form mode (hover card and context
     // menu actions). Each request gets a new seq so the same id can be asked for twice. Ignored while
     // the context cannot act; clears the selection (a panel and a selection never coexist).
@@ -137,10 +172,13 @@ interface SyncRequest {
 // Third argument of the test hook. Without it (or with actions false) the injected meetings are
 // display only, as before. With actions true they can be selected and converted: conversions post to
 // convertUrl (the hook itself never contacts the server, and the endpoint stays authenticated), a
-// converted meeting leaves the injected list and its entry id joins linkedTimeEntryIds.
+// converted meeting leaves the injected list and its entry id joins linkedTimeEntryIds. Series
+// actions (Phase 5) request `${seriesUrl}/{id}/series/...` and update the injected list; without
+// seriesUrl they send nothing.
 export interface OutlookTestHookOptions {
     actions?: boolean;
     convertUrl?: string;
+    seriesUrl?: string;
     linkedTimeEntryIds?: string[];
 }
 
@@ -193,6 +231,7 @@ export function useOutlookMeetings(
     const testLabels = ref<Partial<OutlookCalendarLabels> | null>(null);
     const testActions = ref(false);
     const testConvertUrl = ref<string | null>(null);
+    const testSeriesUrl = ref<string | null>(null);
     const testLinkedIds = ref<string[]>([]);
 
     const lastSync = ref<OutlookSyncResponse | null>(null);
@@ -285,9 +324,16 @@ export function useOutlookMeetings(
         onSettled: () => queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY }),
     });
 
-    const meetings = computed<OutlookMeeting[]>(
-        () => testMeetings.value ?? meetingsQuery.data.value?.data ?? []
-    );
+    // Occurrences of an ignored series are hidden like dismissed meetings unless those are shown (the
+    // server leaves them out of a read without include_dismissed; this covers the optimistic window
+    // and injected meetings).
+    const meetings = computed<OutlookMeeting[]>(() => {
+        const list = testMeetings.value ?? meetingsQuery.data.value?.data ?? [];
+        if (includeDismissed.value || !list.some((meeting) => meeting.series_ignored === true)) {
+            return list;
+        }
+        return list.filter((meeting) => meeting.series_ignored !== true);
+    });
 
     // Placeholder data of the previous week is kept like the meetings: the ids name entries, so a
     // stale id only matters for an entry that is not on screen.
@@ -322,21 +368,28 @@ export function useOutlookMeetings(
         return fromAnswer ?? fromRead;
     });
 
-    // Overlap with the visible range [start, end) of the calendar (the week or the day), dismissed
-    // meetings excluded unless they are shown; the status line shows "no meetings" from this count.
-    const visibleCount = computed(() => {
+    // Overlap with the visible range [start, end) of the calendar (the week or the day); a
+    // zero-length meeting counts when it starts inside the range.
+    function inVisibleRange(meeting: OutlookMeeting): boolean {
         const start = calendarStart.value;
         const end = calendarEnd.value;
-        if (!start || !end) return 0;
-        return meetings.value.filter((meeting) => {
-            if (meeting.dismissed && !includeDismissed.value) return false;
-            const from = getLocalizedDayJs(meeting.start);
-            const to = getLocalizedDayJs(meeting.end);
-            return to.isAfter(from)
-                ? from.isBefore(end) && to.isAfter(start)
-                : !from.isBefore(start) && from.isBefore(end);
-        }).length;
-    });
+        if (!start || !end) return false;
+        const from = getLocalizedDayJs(meeting.start);
+        const to = getLocalizedDayJs(meeting.end);
+        return to.isAfter(from)
+            ? from.isBefore(end) && to.isAfter(start)
+            : !from.isBefore(start) && from.isBefore(end);
+    }
+
+    // Dismissed meetings and occurrences of an ignored series are excluded unless they are shown;
+    // the status line shows "no meetings" from this count.
+    const visibleCount = computed(
+        () =>
+            meetings.value.filter(
+                (meeting) =>
+                    (includeDismissed.value || !isFaded(meeting)) && inVisibleRange(meeting)
+            ).length
+    );
 
     const canSync = computed(
         () =>
@@ -594,6 +647,160 @@ export function useOutlookMeetings(
     const restore = (id: string): Promise<void> => changeDismissal(id, false);
 
     const convertsInFlight = new Set<string>();
+    // Ids of the confirms that run (reactive: blocks and buttons show their pending state).
+    const pendingConfirmIds = ref<string[]>([]);
+
+    function isConfirmPending(id: string): boolean {
+        return pendingConfirmIds.value.includes(id);
+    }
+
+    const preassignedInRange = computed<OutlookMeeting[]>(() =>
+        meetings.value
+            .filter(
+                (meeting) =>
+                    isPreassigned(meeting) &&
+                    !isConfirmPending(meeting.id) &&
+                    inVisibleRange(meeting)
+            )
+            .sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
+    );
+
+    // --- Series actions (Phase 5). The request is keyed by the meeting the user acted on; the
+    // optimistic change covers every occurrence with the same series_key in every cached read
+    // (each week, with and without dismissed meetings) or in the injected list.
+    type SeriesAction = 'ignore' | 'unignore' | 'forget';
+
+    function findMeeting(id: string): OutlookMeeting | null {
+        if (testMeetings.value !== null) {
+            return testMeetings.value.find((meeting) => meeting.id === id) ?? null;
+        }
+        for (const [, data] of queryClient.getQueriesData<OutlookMeetingsResponse>({
+            queryKey: MEETINGS_QUERY_KEY,
+        })) {
+            const found = data?.data?.find((meeting) => meeting.id === id);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    // `include` is whether the list is a read with dismissed meetings (an ignored occurrence stays
+    // there, flagged; a regular read drops it).
+    function applySeriesAction(
+        list: OutlookMeeting[],
+        seriesKey: string,
+        action: SeriesAction,
+        include: boolean
+    ): OutlookMeeting[] {
+        const inSeries = (meeting: OutlookMeeting) => meeting.series_key === seriesKey;
+        if (action === 'ignore' && !include) {
+            return list.filter((meeting) => !inSeries(meeting));
+        }
+        return list.map((meeting) => {
+            if (!inSeries(meeting)) return meeting;
+            if (action === 'forget') return { ...meeting, assignment: null };
+            return { ...meeting, series_ignored: action === 'ignore' };
+        });
+    }
+
+    // Puts the series' occurrences of `before` back into `current`, in their previous order; other
+    // meetings keep their current state (a conversion or dismiss meanwhile is not undone).
+    function revertSeries(
+        current: OutlookMeeting[],
+        before: OutlookMeeting[],
+        seriesKey: string
+    ): OutlookMeeting[] {
+        const currentById = new Map(current.map((meeting) => [meeting.id, meeting]));
+        const known = new Set(before.map((meeting) => meeting.id));
+        const restored = before.flatMap((meeting) => {
+            if (meeting.series_key === seriesKey) return [meeting];
+            const now = currentById.get(meeting.id);
+            return now ? [now] : [];
+        });
+        return [...restored, ...current.filter((meeting) => !known.has(meeting.id))];
+    }
+
+    function isIncludeKey(key: readonly unknown[]): boolean {
+        return key[3] === true;
+    }
+
+    async function changeSeries(id: string, action: SeriesAction): Promise<void> {
+        const current = labels.value;
+        if (!canAct.value || !current) return;
+        const injected = testMeetings.value !== null;
+        const url = injected ? testSeriesUrl.value : (calendar.value?.urls.meetings ?? null);
+        const target = findMeeting(id);
+        if (!url || !target || !isRecurring(target)) return;
+        const seriesKey = target.series_key as string;
+
+        let revert: () => void;
+        if (injected) {
+            const before = testMeetings.value ?? [];
+            testMeetings.value = applySeriesAction(before, seriesKey, action, true);
+            revert = () => {
+                if (testMeetings.value !== null) {
+                    testMeetings.value = revertSeries(testMeetings.value, before, seriesKey);
+                }
+            };
+        } else {
+            // Stops in-flight reads from overwriting the optimistic change
+            void queryClient.cancelQueries({ queryKey: MEETINGS_QUERY_KEY });
+            const snapshot = queryClient.getQueriesData<OutlookMeetingsResponse>({
+                queryKey: MEETINGS_QUERY_KEY,
+            });
+            for (const [key, data] of snapshot) {
+                if (!data || !Array.isArray(data.data)) continue;
+                queryClient.setQueryData<OutlookMeetingsResponse>(key, {
+                    ...data,
+                    data: applySeriesAction(data.data, seriesKey, action, isIncludeKey(key)),
+                });
+            }
+            revert = () => {
+                for (const [key, before] of snapshot) {
+                    if (!before || !Array.isArray(before.data)) continue;
+                    queryClient.setQueryData<OutlookMeetingsResponse>(key, (old) =>
+                        old && Array.isArray(old.data)
+                            ? { ...old, data: revertSeries(old.data, before.data, seriesKey) }
+                            : old
+                    );
+                }
+            };
+        }
+
+        try {
+            if (action === 'ignore') {
+                await postSeriesIgnore(url, id);
+                useNotificationsStore().addNotification(
+                    'success',
+                    current.series_ignored,
+                    current.series_ignored_help
+                );
+                announce(current.series_ignored);
+            } else if (action === 'unignore') {
+                await deleteSeriesIgnore(url, id);
+                announce(current.series_unignored);
+            } else {
+                await deleteSeriesAssignment(url, id);
+                useNotificationsStore().addNotification(
+                    'success',
+                    current.series_forgotten,
+                    current.series_forgotten_help
+                );
+                announce(current.series_forgotten);
+            }
+        } catch {
+            revert();
+            useNotificationsStore().addNotification(
+                'error',
+                current.series_action_failed,
+                current.retry_body
+            );
+        }
+        if (!injected) await queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
+    }
+
+    const ignoreSeries = (id: string): Promise<void> => changeSeries(id, 'ignore');
+    const unignoreSeries = (id: string): Promise<void> => changeSeries(id, 'unignore');
+    const forgetSeries = (id: string): Promise<void> => changeSeries(id, 'forget');
 
     function withLinked(list: string[], entryIds: string[]): string[] {
         const added = entryIds.filter((id) => !list.includes(id));
@@ -627,27 +834,34 @@ export function useOutlookMeetings(
         testLinkedIds.value = withLinked(testLinkedIds.value, entryIds);
     }
 
-    async function convert(
-        ids: string[],
-        fields: OutlookConversionFields
-    ): Promise<OutlookConversionResult[]> {
-        const injected = testMeetings.value !== null;
-        const url = injected ? testConvertUrl.value : calendar.value?.urls.convert;
-        const current = labels.value;
-        const fallback = current?.error_generic ?? '';
-        if (!url || !current || ids.length === 0) return failedResults(ids, fallback);
-        // A second activation for a meeting whose conversion still runs sends nothing (ASGN-03
-        // client side; the server's unique link is the real guard).
-        if (ids.some((id) => convertsInFlight.has(id))) return [];
-
-        let results: OutlookConversionResult[];
+    // A second activation for a meeting whose conversion still runs sends nothing (ASGN-03 client
+    // side; the server's unique link is the real guard).
+    function claim(ids: string[]): boolean {
+        if (ids.some((id) => convertsInFlight.has(id))) return false;
         ids.forEach((id) => convertsInFlight.add(id));
+        return true;
+    }
+
+    function release(ids: string[]): void {
+        ids.forEach((id) => convertsInFlight.delete(id));
+    }
+
+    // Posts one conversion request (the caller claimed the ids). Pessimistic: the meetings leave the
+    // cache (or the injected list) only after the server answered created or existing for them.
+    async function send(
+        url: string,
+        body: OutlookConversionBody,
+        fallback: string
+    ): Promise<{ results: OutlookConversionResult[]; done: string[] }> {
+        const injected = testMeetings.value !== null;
+        let results: OutlookConversionResult[];
         try {
-            results = await postConversion(url, { meeting_ids: ids, ...fields });
+            results = await postConversion(url, body);
         } catch (error) {
-            return failedResults(ids, conversionErrorMessage(error, fallback));
-        } finally {
-            ids.forEach((id) => convertsInFlight.delete(id));
+            return {
+                results: failedResults(body.meeting_ids, conversionErrorMessage(error, fallback)),
+                done: [],
+            };
         }
 
         const succeeded = results.filter(
@@ -668,9 +882,81 @@ export function useOutlookMeetings(
             void queryClient.invalidateQueries({ queryKey: ['timeEntries'] });
             void queryClient.invalidateQueries({ queryKey: ['goals'] });
             if (!injected) void queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
-            if (ids.length === 1) announce(current.created_announcement);
+        }
+        return { results, done };
+    }
+
+    function convertUrl(): string | null {
+        const url =
+            testMeetings.value !== null ? testConvertUrl.value : calendar.value?.urls.convert;
+        return url ?? null;
+    }
+
+    async function convert(
+        ids: string[],
+        fields: OutlookConversionFields
+    ): Promise<OutlookConversionResult[]> {
+        const url = convertUrl();
+        const current = labels.value;
+        const fallback = current?.error_generic ?? '';
+        if (!url || !current || ids.length === 0) return failedResults(ids, fallback);
+        if (!claim(ids)) return [];
+
+        try {
+            const { results, done } = await send(url, { meeting_ids: ids, ...fields }, fallback);
+            if (done.length > 0 && ids.length === 1) announce(current.created_announcement);
+            return results;
+        } finally {
+            release(ids);
+        }
+    }
+
+    async function confirmPreassigned(ids: string[]): Promise<OutlookConversionResult[]> {
+        if (!canAct.value || ids.length === 0) return [];
+        const url = convertUrl();
+        const current = labels.value;
+        const fallback = current?.error_generic ?? '';
+        if (!url || !current) return failedResults(ids, fallback);
+        if (!claim(ids)) return [];
+
+        pendingConfirmIds.value = [...pendingConfirmIds.value, ...ids];
+        const results: OutlookConversionResult[] = [];
+        for (let index = 0; index < ids.length; index += MAX_CONFIRM_BATCH) {
+            const chunk = ids.slice(index, index + MAX_CONFIRM_BATCH);
+            try {
+                const answer = await send(
+                    url,
+                    { meeting_ids: chunk, use_series_assignment: true },
+                    fallback
+                );
+                results.push(...answer.results);
+            } finally {
+                // A chunk's meetings stop being pending as soon as their own request settled.
+                release(chunk);
+                const settled = new Set(chunk);
+                pendingConfirmIds.value = pendingConfirmIds.value.filter((id) => !settled.has(id));
+            }
         }
         return results;
+    }
+
+    async function confirmOne(id: string): Promise<OutlookConversionResult | null> {
+        const current = labels.value;
+        if (!canAct.value || !current) return null;
+        const [result] = await confirmPreassigned([id]);
+        if (!result) return null;
+
+        if (result.status === 'created' || result.status === 'existing') {
+            useNotificationsStore().addNotification('success', current.created_success);
+            announce(current.created_announcement);
+        } else {
+            useNotificationsStore().addNotification(
+                'error',
+                current.confirm_failed,
+                result.error?.message || current.error_generic
+            );
+        }
+        return result;
     }
 
     // Core time-entry mutations (create, edit, move, delete, bulk) only invalidate ['timeEntries'] and
@@ -739,6 +1025,7 @@ export function useOutlookMeetings(
             testLabels.value = injectedLabels ?? null;
             testActions.value = options?.actions === true;
             testConvertUrl.value = options?.convertUrl ?? null;
+            testSeriesUrl.value = options?.seriesUrl ?? null;
             testLinkedIds.value = [...(options?.linkedTimeEntryIds ?? [])];
         };
     });
@@ -780,6 +1067,13 @@ export function useOutlookMeetings(
         announcement,
         announce,
         convert,
+        confirmPreassigned,
+        confirmOne,
+        isConfirmPending,
+        preassignedInRange,
+        ignoreSeries,
+        unignoreSeries,
+        forgetSeries,
         openForm,
         formRequest,
         selection,
