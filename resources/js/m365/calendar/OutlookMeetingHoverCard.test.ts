@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computed, defineComponent, h, nextTick } from 'vue';
+import { computed, defineComponent, h, nextTick, ref } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { HoverCardRoot, HoverCardTrigger } from 'reka-ui';
 import OutlookGhostLayer from './OutlookGhostLayer.vue';
@@ -7,7 +7,7 @@ import OutlookMeetingHoverCard from './OutlookMeetingHoverCard.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
 import { resetHoverCardDelay } from './hoverCardDelay';
 import type { CalendarSettings } from '@/packages/ui/src/FullCalendar/calendarSettings';
-import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
+import type { OutlookAssignment, OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 
 const DAY = '2026-10-20';
 
@@ -29,6 +29,8 @@ const labels = {
     hover_hint_select: 'Click for details. Ctrl+click to select several.',
     hover_hint_select_mac: 'Click for details. ⌘+click to select several.',
     create_entry: 'Create time entry',
+    edit: 'Edit',
+    confirm: 'Confirm',
 } as OutlookCalendarLabels;
 
 const settings: CalendarSettings = { snapMinutes: 15, startHour: 0, endHour: 24, slotMinutes: 15 };
@@ -276,6 +278,48 @@ describe('Outlook meeting hover card', () => {
 });
 
 // The card on its own, open, inside a HoverCardRoot as the lane supplies it.
+function mountStandaloneCard(
+    item: OutlookMeeting,
+    context: Partial<OutlookMeetingsContext> | null,
+    slots: { actions?: () => unknown } = {}
+): VueWrapper {
+    const Host = defineComponent({
+        setup() {
+            return () =>
+                h(
+                    HoverCardRoot,
+                    { open: true },
+                    {
+                        default: () => [
+                            h(
+                                HoverCardTrigger,
+                                { asChild: true },
+                                {
+                                    default: () =>
+                                        h('div', { 'data-testid': 'trigger' }, 'meeting'),
+                                }
+                            ),
+                            h(
+                                OutlookMeetingHoverCard,
+                                { meeting: item, labels },
+                                slots.actions ? { actions: slots.actions } : {}
+                            ),
+                        ],
+                    }
+                );
+        },
+    });
+    return mount(Host, {
+        attachTo: document.body,
+        global: {
+            provide: {
+                ...(context ? { [OUTLOOK_MEETINGS_KEY as symbol]: context } : {}),
+                organization: computed(() => ({ time_format: '24-hours' })),
+            },
+        },
+    });
+}
+
 describe('Outlook meeting hover card actions', () => {
     let standalone: VueWrapper | null = null;
     const platform = Object.getOwnPropertyDescriptor(navigator, 'platform');
@@ -288,41 +332,7 @@ describe('Outlook meeting hover card actions', () => {
         context: Partial<OutlookMeetingsContext> | null,
         slots: { actions?: () => unknown } = {}
     ) {
-        const Host = defineComponent({
-            setup() {
-                return () =>
-                    h(
-                        HoverCardRoot,
-                        { open: true },
-                        {
-                            default: () => [
-                                h(
-                                    HoverCardTrigger,
-                                    { asChild: true },
-                                    {
-                                        default: () =>
-                                            h('div', { 'data-testid': 'trigger' }, 'meeting'),
-                                    }
-                                ),
-                                h(
-                                    OutlookMeetingHoverCard,
-                                    { meeting: meeting(), labels },
-                                    slots.actions ? { actions: slots.actions } : {}
-                                ),
-                            ],
-                        }
-                    );
-            },
-        });
-        standalone = mount(Host, {
-            attachTo: document.body,
-            global: {
-                provide: {
-                    ...(context ? { [OUTLOOK_MEETINGS_KEY as symbol]: context } : {}),
-                    organization: computed(() => ({ time_format: '24-hours' })),
-                },
-            },
-        });
+        standalone = mountStandaloneCard(meeting(), context, slots);
         return standalone;
     }
 
@@ -426,5 +436,141 @@ describe('Outlook meeting hover card actions', () => {
 
         expect(document.body.querySelector('[data-testid="extra-action"]')).not.toBeNull();
         expect(createButton()).toBeNull();
+    });
+});
+
+// Phase 5: a pre-assigned meeting gets Edit and a one-click Confirm (D-03, RULE-02).
+describe('Outlook meeting hover card, pre-assigned meeting', () => {
+    let standalone: VueWrapper | null = null;
+
+    const assignment: OutlookAssignment = {
+        project_id: 'p-1',
+        project_name: 'Acme Website',
+        project_color: '#ef5350',
+        client_name: 'Acme',
+        task_id: 't-1',
+        task_name: 'Design',
+        tags: ['tag-1', 'tag-2'],
+        billable: true,
+        converted_at: '2026-11-10T09:00:00Z',
+    };
+
+    function preassigned(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
+        return meeting({ series_key: 'series-1', assignment, suggestions: [], ...overrides });
+    }
+
+    function mountCard(item: OutlookMeeting, context: Partial<OutlookMeetingsContext> | null) {
+        standalone = mountStandaloneCard(item, context);
+        return standalone;
+    }
+
+    function byTestId(id: string): HTMLElement | null {
+        return document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    }
+
+    function actingContext(canAct = true) {
+        const pending = ref<string[]>([]);
+        const openForm = vi.fn();
+        const confirmOne = vi.fn((id: string) => {
+            pending.value = [...pending.value, id];
+            return Promise.resolve(null);
+        });
+        const context = {
+            canAct: { value: canAct },
+            openForm,
+            confirmOne,
+            isConfirmPending: (id: string) => pending.value.includes(id),
+        } as unknown as OutlookMeetingsContext;
+        return { context, openForm, confirmOne, pending };
+    }
+
+    afterEach(() => {
+        standalone?.unmount();
+        standalone = null;
+    });
+
+    it('with canAct shows Edit and Confirm instead of "Create time entry"', async () => {
+        mountCard(preassigned(), actingContext().context);
+        await nextTick();
+
+        const edit = byTestId('outlook-hover-edit');
+        const confirm = byTestId('outlook-hover-confirm');
+        expect(edit?.textContent?.trim()).toBe('Edit');
+        expect(confirm?.textContent?.trim()).toBe('Confirm');
+        expect(edit?.getAttribute('type')).toBe('button');
+        expect(confirm?.getAttribute('type')).toBe('button');
+        expect(byTestId('outlook-hover-create')).toBeNull();
+        // Primary last
+        expect(edit?.parentElement?.lastElementChild).toBe(confirm);
+        expect(edit?.parentElement?.className).toContain('mt-4');
+    });
+
+    it('Confirm calls confirmOne once and shows the loading state while pending', async () => {
+        const { context, confirmOne, openForm } = actingContext();
+        mountCard(preassigned(), context);
+        await nextTick();
+
+        const confirm = byTestId('outlook-hover-confirm') as HTMLButtonElement;
+        expect(confirm.disabled).toBe(false);
+        confirm.click();
+        await nextTick();
+
+        expect(confirmOne).toHaveBeenCalledTimes(1);
+        expect(confirmOne).toHaveBeenCalledWith('m-1');
+        expect(openForm).not.toHaveBeenCalled();
+        const pendingButton = byTestId('outlook-hover-confirm') as HTMLButtonElement;
+        expect(pendingButton.disabled).toBe(true);
+        expect(pendingButton.querySelector('.animate-spin')).not.toBeNull();
+
+        pendingButton.click();
+        await nextTick();
+        expect(confirmOne).toHaveBeenCalledTimes(1);
+    });
+
+    it("Edit asks the context for the meeting's form", async () => {
+        const { context, confirmOne, openForm } = actingContext();
+        mountCard(preassigned(), context);
+        await nextTick();
+
+        byTestId('outlook-hover-edit')?.click();
+        await nextTick();
+
+        expect(openForm).toHaveBeenCalledTimes(1);
+        expect(openForm).toHaveBeenCalledWith('m-1');
+        expect(confirmOne).not.toHaveBeenCalled();
+    });
+
+    it('a plain meeting keeps the Phase 4 "Create time entry"', async () => {
+        mountCard(meeting(), actingContext().context);
+        await nextTick();
+
+        expect(byTestId('outlook-hover-create')?.textContent?.trim()).toBe('Create time entry');
+        expect(byTestId('outlook-hover-edit')).toBeNull();
+        expect(byTestId('outlook-hover-confirm')).toBeNull();
+    });
+
+    it('a dismissed or series-ignored meeting with an assignment is not offered Confirm', async () => {
+        mountCard(preassigned({ series_ignored: true }), actingContext().context);
+        await nextTick();
+
+        expect(byTestId('outlook-hover-confirm')).toBeNull();
+        expect(byTestId('outlook-hover-create')).not.toBeNull();
+    });
+
+    it('without canAct renders neither button', async () => {
+        mountCard(preassigned(), actingContext(false).context);
+        await nextTick();
+
+        expect(byTestId('outlook-hover-edit')).toBeNull();
+        expect(byTestId('outlook-hover-confirm')).toBeNull();
+        expect(byTestId('outlook-hover-create')).toBeNull();
+    });
+
+    it('without a provided context renders neither button', async () => {
+        mountCard(preassigned(), null);
+        await nextTick();
+
+        expect(byTestId('outlook-hover-edit')).toBeNull();
+        expect(byTestId('outlook-hover-confirm')).toBeNull();
     });
 });

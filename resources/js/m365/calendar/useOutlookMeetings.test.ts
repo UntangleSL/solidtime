@@ -75,6 +75,8 @@ function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
             restored_announcement: 'Meeting restored',
             created_announcement: 'Time entry created',
             error_generic: 'Could not create the time entry. Try again in a moment.',
+            created_success: 'Time entry created successfully',
+            confirm_failed: 'Could not confirm this meeting',
         } as never,
     };
 }
@@ -1055,6 +1057,204 @@ describe('useOutlookMeetings convert', () => {
 
         expect(convertCalls()).toHaveLength(0);
         expect(results[0]?.status).toBe('failed');
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings confirm pre-assigned', () => {
+    const first = meeting('m-1', '2026-11-03T09:00:00Z', '2026-11-03T10:00:00Z');
+    const second = meeting('m-2', '2026-11-03T11:00:00Z', '2026-11-03T12:00:00Z');
+
+    function created(id: string) {
+        return { meeting_id: id, status: 'created', time_entry_id: 'te-' + id, error: null };
+    }
+
+    function failed(id: string, message = 'No access.') {
+        return {
+            meeting_id: id,
+            status: 'failed',
+            time_entry_id: null,
+            error: { key: 'forbidden', message },
+        };
+    }
+
+    function convertCalls() {
+        return axiosPost.mock.calls.filter((call) => call[0] === CONVERT_URL);
+    }
+
+    async function mountWithMeetings(): Promise<Mounted> {
+        axiosGet.mockResolvedValue(readResponse([first, second]));
+        const mounted = mountComposable();
+        await advance(500);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        axiosPost.mockClear();
+        return mounted;
+    }
+
+    it('posts the ids with use_series_assignment alone, removes created meetings and invalidates', async () => {
+        const mounted = await mountWithMeetings();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosPost.mockResolvedValue({ data: { results: [created('m-1')] } });
+        axiosGet.mockResolvedValue(readResponse([second]));
+
+        const results = await mounted.api.confirmPreassigned(['m-1']);
+
+        expect(convertCalls()).toHaveLength(1);
+        expect(convertCalls()[0]![1]).toEqual({
+            meeting_ids: ['m-1'],
+            use_series_assignment: true,
+        });
+        expect(results).toEqual([created('m-1')]);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-2']);
+        const keys = invalidate.mock.calls.map(
+            (call) => (call[0] as { queryKey?: unknown } | undefined)?.queryKey
+        );
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        mounted.wrapper.unmount();
+    });
+
+    it('sends 120 ids as requests of 50, 50 and 20 in order and merges the results in order', async () => {
+        const mounted = await mountWithMeetings();
+        const ids = Array.from({ length: 120 }, (_, index) => `b-${index}`);
+        axiosPost.mockImplementation((_url, body) =>
+            Promise.resolve({
+                data: {
+                    results: (body as { meeting_ids: string[] }).meeting_ids.map((id) =>
+                        created(id)
+                    ),
+                },
+            })
+        );
+
+        const results = await mounted.api.confirmPreassigned(ids);
+
+        const sent = convertCalls().map(
+            (call) => (call[1] as { meeting_ids: string[] }).meeting_ids
+        );
+        expect(sent.map((chunk) => chunk.length)).toEqual([50, 50, 20]);
+        expect(sent.flat()).toEqual(ids);
+        expect(results.map((result) => result.meeting_id)).toEqual(ids);
+        expect(results.every((result) => result.status === 'created')).toBe(true);
+        mounted.wrapper.unmount();
+    });
+
+    it('a rejected chunk yields failed results for its ids only', async () => {
+        const mounted = await mountWithMeetings();
+        const ids = Array.from({ length: 120 }, (_, index) => `b-${index}`);
+        let call = 0;
+        axiosPost.mockImplementation((_url, body) => {
+            call += 1;
+            if (call === 2) return Promise.reject(httpError(500));
+            return Promise.resolve({
+                data: {
+                    results: (body as { meeting_ids: string[] }).meeting_ids.map((id) =>
+                        created(id)
+                    ),
+                },
+            });
+        });
+
+        const results = await mounted.api.confirmPreassigned(ids);
+
+        expect(results).toHaveLength(120);
+        expect(results.map((result) => result.meeting_id)).toEqual(ids);
+        expect(results.slice(0, 50).every((result) => result.status === 'created')).toBe(true);
+        expect(results.slice(50, 100).map((result) => result.status)).toEqual(
+            Array(50).fill('failed')
+        );
+        expect(results[50]?.error?.message).toBe(
+            'Could not create the time entry. Try again in a moment.'
+        );
+        expect(results.slice(100).every((result) => result.status === 'created')).toBe(true);
+        mounted.wrapper.unmount();
+    });
+
+    it('is pending while the request runs and a second confirm of a pending id sends nothing', async () => {
+        const mounted = await mountWithMeetings();
+        const request = deferred<{ data: { results: unknown[] } }>();
+        axiosPost.mockReturnValue(request.promise);
+
+        const done = mounted.api.confirmPreassigned(['m-1']);
+        expect(mounted.api.isConfirmPending('m-1')).toBe(true);
+        expect(mounted.api.isConfirmPending('m-2')).toBe(false);
+
+        const again = await mounted.api.confirmPreassigned(['m-1']);
+        expect(again).toEqual([]);
+        expect(await mounted.api.confirmOne('m-1')).toBeNull();
+        expect(convertCalls()).toHaveLength(1);
+
+        request.resolve({ data: { results: [failed('m-1')] } });
+        await done;
+
+        expect(mounted.api.isConfirmPending('m-1')).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('confirmOne notifies success and announces "Time entry created"', async () => {
+        const mounted = await mountWithMeetings();
+        axiosPost.mockResolvedValue({ data: { results: [created('m-1')] } });
+        axiosGet.mockResolvedValue(readResponse([second]));
+
+        const result = await mounted.api.confirmOne('m-1');
+        await advance(0);
+
+        expect(result?.status).toBe('created');
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith('success', 'Time entry created successfully');
+        expect(mounted.api.announcement.value).toBe('Time entry created');
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-2']);
+        mounted.wrapper.unmount();
+    });
+
+    it("confirmOne reports a failed result with the server's message and keeps the meeting", async () => {
+        const mounted = await mountWithMeetings();
+        axiosPost.mockResolvedValue({ data: { results: [failed('m-1', 'No access.')] } });
+
+        const result = await mounted.api.confirmOne('m-1');
+        await advance(0);
+
+        expect(result?.status).toBe('failed');
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not confirm this meeting',
+            'No access.'
+        );
+        expect(mounted.api.announcement.value).toBe('');
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        mounted.wrapper.unmount();
+    });
+
+    it('confirmOne falls back to error_generic when the failure carries no message', async () => {
+        const mounted = await mountWithMeetings();
+        axiosPost.mockRejectedValue(httpError(500));
+
+        await mounted.api.confirmOne('m-1');
+
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not confirm this meeting',
+            'Could not create the time entry. Try again in a moment.'
+        );
+        mounted.wrapper.unmount();
+    });
+
+    it('sends nothing and returns null while it cannot act', async () => {
+        const mounted = await mountWithMeetings();
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (list: OutlookMeeting[]) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__([first]);
+        await nextTick();
+        expect(mounted.api.canAct.value).toBe(false);
+
+        expect(await mounted.api.confirmOne('m-1')).toBeNull();
+        expect(await mounted.api.confirmPreassigned(['m-1'])).toEqual([]);
+
+        expect(axiosPost).not.toHaveBeenCalled();
+        expect(addNotification).not.toHaveBeenCalled();
         mounted.wrapper.unmount();
     });
 });

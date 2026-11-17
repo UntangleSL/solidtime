@@ -32,7 +32,12 @@ import type {
     OutlookSyncResponse,
 } from '@/m365/types';
 import { dismissMeeting, fetchMeetings, postSync, restoreMeeting } from './meetingsApi';
-import { conversionErrorMessage, failedResults, postConversion } from './conversionApi';
+import {
+    conversionErrorMessage,
+    failedResults,
+    postConversion,
+    type OutlookConversionBody,
+} from './conversionApi';
 import { useOutlookSelection, type OutlookSelection } from './useOutlookSelection';
 import { ghostLaneWidth } from './ghostLayout';
 
@@ -54,6 +59,9 @@ const SHOW_DISMISSED_STORAGE_KEY = 'solidtime:m365-show-dismissed';
 const SYNC_COOLDOWN_MS = 10_000;
 // Delay of the meetings refresh that follows time-entry refetches (bursts collapse into one read).
 const ENTRIES_REFRESH_DEBOUNCE_MS = 500;
+// Meetings per confirm request: mirrors MeetingConversionRequest::MAX_MEETINGS on the server (a
+// longer list is sent as several requests, one after the other).
+export const MAX_CONFIRM_BATCH = 50;
 
 // Why the Sync button is cooling down: right after a manual sync, or a back-off the server asked for.
 export type OutlookCooldownKind = 'manual' | 'backoff';
@@ -103,6 +111,17 @@ export interface OutlookMeetingsContext {
     // back as one failed result per id.
     // An id already in flight makes the call return [] without a request (double activation).
     convert: (ids: string[], fields: OutlookConversionFields) => Promise<OutlookConversionResult[]>;
+    // Confirms pre-assigned meetings with their own series assignment (Phase 5, D-03 / D-04):
+    // {meeting_ids, use_series_assignment: true}, chunks of MAX_CONFIRM_BATCH sent in order, results
+    // merged in request order. Same cache rules as convert; never rejects. Returns [] without a
+    // request while the context cannot act or when one of the ids is already in flight.
+    confirmPreassigned: (ids: string[]) => Promise<OutlookConversionResult[]>;
+    // One-click Confirm of one meeting (hover card, panel, menu): confirmPreassigned plus the
+    // feedback (success toast and announcement, or the "Could not confirm" toast with the reason).
+    // null when nothing was sent (cannot act, or already pending).
+    confirmOne: (id: string) => Promise<OutlookConversionResult | null>;
+    // True while a confirm of meeting `id` runs (the block's pending state, the button spinner).
+    isConfirmPending: (id: string) => boolean;
     // Asks the lane that renders meeting `id` to open its panel in form mode (hover card and context
     // menu actions). Each request gets a new seq so the same id can be asked for twice. Ignored while
     // the context cannot act; clears the selection (a panel and a selection never coexist).
@@ -594,6 +613,12 @@ export function useOutlookMeetings(
     const restore = (id: string): Promise<void> => changeDismissal(id, false);
 
     const convertsInFlight = new Set<string>();
+    // Ids of the confirms that run (reactive: blocks and buttons show their pending state).
+    const pendingConfirmIds = ref<string[]>([]);
+
+    function isConfirmPending(id: string): boolean {
+        return pendingConfirmIds.value.includes(id);
+    }
 
     function withLinked(list: string[], entryIds: string[]): string[] {
         const added = entryIds.filter((id) => !list.includes(id));
@@ -627,27 +652,34 @@ export function useOutlookMeetings(
         testLinkedIds.value = withLinked(testLinkedIds.value, entryIds);
     }
 
-    async function convert(
-        ids: string[],
-        fields: OutlookConversionFields
-    ): Promise<OutlookConversionResult[]> {
-        const injected = testMeetings.value !== null;
-        const url = injected ? testConvertUrl.value : calendar.value?.urls.convert;
-        const current = labels.value;
-        const fallback = current?.error_generic ?? '';
-        if (!url || !current || ids.length === 0) return failedResults(ids, fallback);
-        // A second activation for a meeting whose conversion still runs sends nothing (ASGN-03
-        // client side; the server's unique link is the real guard).
-        if (ids.some((id) => convertsInFlight.has(id))) return [];
-
-        let results: OutlookConversionResult[];
+    // A second activation for a meeting whose conversion still runs sends nothing (ASGN-03 client
+    // side; the server's unique link is the real guard).
+    function claim(ids: string[]): boolean {
+        if (ids.some((id) => convertsInFlight.has(id))) return false;
         ids.forEach((id) => convertsInFlight.add(id));
+        return true;
+    }
+
+    function release(ids: string[]): void {
+        ids.forEach((id) => convertsInFlight.delete(id));
+    }
+
+    // Posts one conversion request (the caller claimed the ids). Pessimistic: the meetings leave the
+    // cache (or the injected list) only after the server answered created or existing for them.
+    async function send(
+        url: string,
+        body: OutlookConversionBody,
+        fallback: string
+    ): Promise<{ results: OutlookConversionResult[]; done: string[] }> {
+        const injected = testMeetings.value !== null;
+        let results: OutlookConversionResult[];
         try {
-            results = await postConversion(url, { meeting_ids: ids, ...fields });
+            results = await postConversion(url, body);
         } catch (error) {
-            return failedResults(ids, conversionErrorMessage(error, fallback));
-        } finally {
-            ids.forEach((id) => convertsInFlight.delete(id));
+            return {
+                results: failedResults(body.meeting_ids, conversionErrorMessage(error, fallback)),
+                done: [],
+            };
         }
 
         const succeeded = results.filter(
@@ -668,9 +700,81 @@ export function useOutlookMeetings(
             void queryClient.invalidateQueries({ queryKey: ['timeEntries'] });
             void queryClient.invalidateQueries({ queryKey: ['goals'] });
             if (!injected) void queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
-            if (ids.length === 1) announce(current.created_announcement);
+        }
+        return { results, done };
+    }
+
+    function convertUrl(): string | null {
+        const url =
+            testMeetings.value !== null ? testConvertUrl.value : calendar.value?.urls.convert;
+        return url ?? null;
+    }
+
+    async function convert(
+        ids: string[],
+        fields: OutlookConversionFields
+    ): Promise<OutlookConversionResult[]> {
+        const url = convertUrl();
+        const current = labels.value;
+        const fallback = current?.error_generic ?? '';
+        if (!url || !current || ids.length === 0) return failedResults(ids, fallback);
+        if (!claim(ids)) return [];
+
+        try {
+            const { results, done } = await send(url, { meeting_ids: ids, ...fields }, fallback);
+            if (done.length > 0 && ids.length === 1) announce(current.created_announcement);
+            return results;
+        } finally {
+            release(ids);
+        }
+    }
+
+    async function confirmPreassigned(ids: string[]): Promise<OutlookConversionResult[]> {
+        if (!canAct.value || ids.length === 0) return [];
+        const url = convertUrl();
+        const current = labels.value;
+        const fallback = current?.error_generic ?? '';
+        if (!url || !current) return failedResults(ids, fallback);
+        if (!claim(ids)) return [];
+
+        pendingConfirmIds.value = [...pendingConfirmIds.value, ...ids];
+        const results: OutlookConversionResult[] = [];
+        for (let index = 0; index < ids.length; index += MAX_CONFIRM_BATCH) {
+            const chunk = ids.slice(index, index + MAX_CONFIRM_BATCH);
+            try {
+                const answer = await send(
+                    url,
+                    { meeting_ids: chunk, use_series_assignment: true },
+                    fallback
+                );
+                results.push(...answer.results);
+            } finally {
+                // A chunk's meetings stop being pending as soon as their own request settled.
+                release(chunk);
+                const settled = new Set(chunk);
+                pendingConfirmIds.value = pendingConfirmIds.value.filter((id) => !settled.has(id));
+            }
         }
         return results;
+    }
+
+    async function confirmOne(id: string): Promise<OutlookConversionResult | null> {
+        const current = labels.value;
+        if (!canAct.value || !current) return null;
+        const [result] = await confirmPreassigned([id]);
+        if (!result) return null;
+
+        if (result.status === 'created' || result.status === 'existing') {
+            useNotificationsStore().addNotification('success', current.created_success);
+            announce(current.created_announcement);
+        } else {
+            useNotificationsStore().addNotification(
+                'error',
+                current.confirm_failed,
+                result.error?.message || current.error_generic
+            );
+        }
+        return result;
     }
 
     // Core time-entry mutations (create, edit, move, delete, bulk) only invalidate ['timeEntries'] and
@@ -780,6 +884,9 @@ export function useOutlookMeetings(
         announcement,
         announce,
         convert,
+        confirmPreassigned,
+        confirmOne,
+        isConfirmPending,
         openForm,
         formRequest,
         selection,

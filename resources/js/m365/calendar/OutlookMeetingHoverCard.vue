@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue';
-import { ClockPlus } from '@lucide/vue';
+import { Check, ClockPlus, Pencil } from '@lucide/vue';
 import { HoverCardContent, HoverCardPortal } from 'reka-ui';
 import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
+import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 import OutlookMeetingSummary from './OutlookMeetingSummary.vue';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
+import { isPreassigned } from './suggestions';
 
 // Hover card of one Outlook meeting (03.1-UI-SPEC section 2, UX-03 / D-05; Phase 4 UI-SPEC
 // sections 1-2). Thin wrapper over reka HoverCardPortal / HoverCardContent styled like
@@ -15,6 +17,8 @@ import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 // When the Outlook context can act, the card offers "Create time entry": it asks the context for
 // the meeting's form, and the lane closes this card and opens the meeting's panel in form mode. The
 // card itself never hosts inputs (D-17). The hint then also names the multi-select modifier.
+// A pre-assigned meeting (Phase 5, D-03) offers Edit (the same form channel) and a one-click Confirm
+// instead; the card may close while the confirm runs, the block and the toast carry the outcome.
 //
 // `reference` anchors the card to the meeting block: the block's HoverCardTrigger sits inside the
 // panel's Popover, whose Popper context captures the trigger's anchor, so the card's own Popper root
@@ -41,9 +45,19 @@ const hint = computed(() => {
     return isMacPlatform() ? props.labels.hover_hint_select_mac : props.labels.hover_hint_select;
 });
 
+const preassigned = computed(() => canAct.value && isPreassigned(props.meeting));
+const confirmPending = computed(
+    () => preassigned.value && context?.isConfirmPending(props.meeting.id) === true
+);
+
 function onCreate(): void {
     if (!canAct.value) return;
     context?.openForm(props.meeting.id);
+}
+
+function onConfirm(): void {
+    if (!preassigned.value || confirmPending.value) return;
+    void context?.confirmOne(props.meeting.id);
 }
 </script>
 
@@ -68,7 +82,21 @@ function onCreate(): void {
             <p class="mt-3 text-xs text-text-tertiary" data-testid="outlook-hover-hint">
                 {{ hint }}
             </p>
-            <div v-if="canAct || $slots.actions" class="mt-3 flex justify-end gap-2">
+            <div v-if="preassigned" class="mt-4 flex justify-end gap-2">
+                <slot name="actions" />
+                <SecondaryButton :icon="Pencil" data-testid="outlook-hover-edit" @click="onCreate">
+                    {{ labels.edit }}
+                </SecondaryButton>
+                <PrimaryButton
+                    type="button"
+                    :icon="Check"
+                    :loading="confirmPending"
+                    data-testid="outlook-hover-confirm"
+                    @click="onConfirm">
+                    {{ labels.confirm }}
+                </PrimaryButton>
+            </div>
+            <div v-else-if="canAct || $slots.actions" class="mt-3 flex justify-end gap-2">
                 <slot name="actions" />
                 <PrimaryButton
                     v-if="canAct"
