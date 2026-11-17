@@ -6,7 +6,11 @@
     light/dark class and the accent-<id> class are on <html> before the first paint.
 
     Order of precedence: the signed-in user's stored value (server) > localStorage > default
-    (theme "system", accent "untangle"). Theme "system" resolves to light only when the OS asks
+    (theme "system", accent "untangle"). Exception: while localStorage holds the
+    `appearance-pending` marker (set by resources/js/branding/useAppearance.ts when this device has
+    a choice the server has not confirmed yet, e.g. a reload inside the save debounce), a valid
+    stored value wins over the server one and is not overwritten, so the latest local choice is
+    never lost; useAppearance then sends it. Theme "system" resolves to light only when the OS asks
     for light; otherwise dark, so a browser with no preference gets dark (D-02, same as
     resources/js/utils/theme.ts). Unknown values fall back silently.
 
@@ -89,16 +93,27 @@
             }
         }
 
-        current.theme = pick(cfg.theme, 'theme', THEMES, 'system');
-        current.accent = pick(cfg.accent, 'accent', ACCENTS, 'untangle');
-        apply();
+        /*
+         * Initial value of one setting. With the pending marker, a valid stored value is this
+         * device's latest choice (not yet confirmed by the server): it wins and stays stored.
+         * Otherwise a valid server value wins and is copied to storage for the bundle.
+         */
+        function initial(serverValue, key, list, fallback) {
+            var stored = readStored(key);
+            if (pending && allowed(list, stored)) {
+                return stored;
+            }
+            if (allowed(list, serverValue)) {
+                writeStored(key, serverValue);
+                return serverValue;
+            }
+            return allowed(list, stored) ? stored : fallback;
+        }
 
-        if (allowed(THEMES, cfg.theme)) {
-            writeStored('theme', cfg.theme);
-        }
-        if (allowed(ACCENTS, cfg.accent)) {
-            writeStored('accent', cfg.accent);
-        }
+        var pending = readStored('appearance-pending') !== null;
+        current.theme = initial(cfg.theme, 'theme', THEMES, 'system');
+        current.accent = initial(cfg.accent, 'accent', ACCENTS, 'untangle');
+        apply();
 
         window.addEventListener('storage', function (event) {
             try {
