@@ -2,7 +2,7 @@
 
 ## Overview
 
-This milestone extends Untangle's fork of solidtime so the team signs in with Microsoft 365 and finds their Outlook meetings already waiting as suggestions in the calendar, ready to become time entries in one click. The work moves from facts to features. First the Untangle M365 admin registers and consents the app, and real Outlook responses are recorded (Phase 1). Then come Microsoft sign-in with secure token storage (Phase 2), the read-only meeting overlay in the calendar (Phase 3), and turning meetings into time entries (Phase 4). Recurring-series rules (Phase 5) and out-of-sync detection (Phase 6) both build on the meeting-to-entry link and can run in parallel. Phase 7 finishes deletion cleanup, impersonation safety, the off switch and an upstream merge rehearsal before the whole team relies on the integration. Phase 8 adds scheduled hour budgets on projects and contracts, so reported time measures project profitability per month and per contract.
+This milestone extends Untangle's fork of solidtime so the team signs in with Microsoft 365 and finds their Outlook meetings already waiting as suggestions in the calendar, ready to become time entries in one click. The work moves from facts to features. First the Untangle M365 admin registers and consents the app, and real Outlook responses are recorded (Phase 1). Then come Microsoft sign-in with secure token storage (Phase 2), the read-only meeting overlay in the calendar (Phase 3), and turning meetings into time entries (Phase 4). Smart suggestions learned from history (Phase 5) and out-of-sync detection (Phase 6) both build on the meeting-to-entry link and can run in parallel. Phase 7 finishes deletion cleanup, impersonation safety, the off switch and an upstream merge rehearsal before the whole team relies on the integration. Phase 8 adds scheduled hour budgets on projects and contracts, so reported time measures project profitability per month and per contract.
 
 ## Cross-Phase Constraints
 
@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3.1: Calendar UX Polish** (INSERTED) - View options (weekends, hour range), readable high-contrast meeting blocks, hover tooltip, context-menu layering, wheel zoom/scroll, visible Sync cooldown
 - [x] **Phase 3.2: Appearance & Untangle Branding** (INSERTED) - Untangle colours by default, light/dark theme and accent colour per user, organization icon in workspace settings
 - [ ] **Phase 4: Assign Meetings to Projects** - Single and bulk conversion of meeting suggestions into real time entries using core rules, with no duplicates
-- [ ] **Phase 5: Recurring Meeting Rules** - "This series goes to project X" and "always ignore this series" rules with one-click confirmation and a rules manager
+- [ ] **Phase 5: Smart Meeting Suggestions** - Recurring meetings come pre-assigned from series history, other meetings get a project suggested from past conversions (organizer, attendees, subject), one-click or bulk confirm, "always ignore this series"
 - [ ] **Phase 6: Out-of-Sync Detection** - Logged meetings moved or cancelled in Outlook are flagged, never changed automatically; user chooses keep, adjust or delete
 - [ ] **Phase 7: Hardening & Release** - Complete deletion cleanup, impersonation guard, clean off switch, documented fork seams and upstream merge rehearsal
 - [ ] **Phase 8: Project Hour Budgets & Profitability** - Projects and contracts carry scheduled, renewing hour budgets; reported time counts against them; profitability per month and contract
@@ -273,20 +273,21 @@ Plans:
 
 **UI hint**: yes
 
-### Phase 5: Recurring Meeting Rules
+### Phase 5: Smart Meeting Suggestions
 
-**Goal**: As a team member with recurring meetings, I want to decide once which project a meeting series belongs to or that it should be ignored, so that each new occurrence needs only a one-click confirmation or nothing at all.
+**Goal**: As a team member, I want recurring meetings to come already assigned to the project I used last time, and other meetings to come with a good project suggestion learned from my history, so that logging meeting time is mostly confirming instead of choosing.
 **Mode:** mvp
 **Depends on**: Phase 4 (can run in parallel with Phase 6)
-**Requirements**: RULE-01, RULE-02, RULE-03, RULE-04, RULE-05
+**Requirements**: RULE-01, RULE-02, RULE-03, RULE-04, RULE-05 (revised 2026-11-17: learned suggestions instead of manual rules)
 **Success Criteria** (what must be TRUE):
-  1. From an occurrence of a recurring meeting, user creates a rule "assign this series to project X" (optionally task, tags, billable), and all current unassigned and future occurrences then show pre-assigned to that project without becoming time entries on their own.
-  2. User confirms a pre-assigned occurrence with one click, or confirms several at once (for example all visible in the week), and each confirmed occurrence becomes a time entry.
-  3. From an occurrence of a recurring meeting, user creates "always ignore this series" and its occurrences stop appearing as suggestions.
-  4. User can list, edit and delete their rules; editing or deleting a rule never changes time entries already created, and rules whose series no longer exists in Outlook are shown as orphaned.
+  1. After the user converts one occurrence of a recurring series, its other unassigned occurrences (past in view and future) show pre-assigned to that project, task, tags and billable, and the mini form opens prefilled with them, without any rule setup and without becoming time entries on their own.
+  2. User confirms a pre-assigned meeting with one click, or all pre-assigned meetings visible in the day/week at once, and each confirmed meeting becomes a time entry through the Phase 4 path.
+  3. For a meeting without series history, the mini form opens with a project (and client) suggested from the user's own past conversions using organizer, attendees (emails/domains) and subject words, plus the next alternatives; nothing is sent outside the server.
+  4. User can mark a series "always ignore" (and undo it), see why a meeting is pre-assigned or suggested, change a series' assignment or make the system forget it; none of this changes existing time entries.
+  5. Attendee data needed for suggestions is stored only for the meeting owner and purged with the other meeting data on disconnect/user deletion.
 
 **Plans**: TBD
-**Research focus**: series identity in practice (series splits, edited occurrences) checked against the Phase 1 decision document
+**Research focus**: series identity in practice (series splits, edited occurrences) against docs/m365/DECISIONS-graph.md; adding attendees to the Graph $select within Calendars.Read; a simple, explainable ranking (no ML library) over the user's own links
 **UI hint**: yes
 
 ### Phase 6: Out-of-Sync Detection
@@ -345,7 +346,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 and 3.2 (parallel, both d
 | 3.1 Calendar UX Polish | 8/8 | Complete | 2026-11-17 |
 | 3.2 Appearance & Untangle Branding | 9/9 | Complete | 2026-11-17 |
 | 4. Assign Meetings to Projects | 0/9 | Planned | - |
-| 5. Recurring Meeting Rules | 0/TBD | Not started | - |
+| 5. Smart Meeting Suggestions | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |
 | 7. Hardening & Release | 0/TBD | Not started | - |
 | 8. Project Hour Budgets & Profitability | 0/TBD | Not started | - |

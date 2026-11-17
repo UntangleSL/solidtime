@@ -51,13 +51,15 @@
 - [ ] **ASGN-04**: User can multi-select several meeting suggestions and assign them all to a project in one action, seeing which succeeded and which failed
 - [ ] **ASGN-05**: Time entries created from meetings remain normal, fully editable/deletable time entries (deleting one makes the meeting a suggestion again)
 
-### Recurring Meeting Rules (RULE)
+### Smart Meeting Suggestions (RULE)
 
-- [ ] **RULE-01**: From an occurrence of a recurring meeting, user can create a rule "assign this series to project X" (optionally task/tags/billable)
-- [ ] **RULE-02**: All current unassigned and future occurrences of a ruled series appear pre-assigned to the rule's project; each occurrence becomes a time entry only after the user confirms it with one click
-- [ ] **RULE-03**: User can confirm several pre-assigned occurrences at once (e.g. all visible in the week)
-- [ ] **RULE-04**: From an occurrence of a recurring meeting, user can create a rule "always ignore this series" so its occurrences stop appearing as suggestions
-- [ ] **RULE-05**: User can list, edit and delete their rules; editing/deleting a rule never changes time entries already created; rules whose series no longer exists in Outlook are shown as orphaned
+Revised 2026-11-17 (owner): instead of rules the user must create, assignments are learned from the user's own conversions. An AI "propose my week" button is deferred to v2 (PROD-05).
+
+- [ ] **RULE-01**: An occurrence of a recurring series in which the user already converted another occurrence shows pre-assigned with that series' last project, task, tags and billable, with no rule setup; the mini form opens prefilled with it
+- [ ] **RULE-02**: A pre-assigned meeting becomes a time entry only when the user confirms it: one click per meeting, or several at once (e.g. all pre-assigned meetings visible in the day/week)
+- [ ] **RULE-03**: For meetings without series history, the system suggests a project (and its client) learned from the user's own past conversions, using the organizer, attendee emails/domains and subject words; the mini form opens prefilled with the best suggestion and offers the next alternatives; suggestions never leave the server
+- [ ] **RULE-04**: From an occurrence of a recurring meeting, user can choose "always ignore this series" so its occurrences stop appearing as suggestions, and can undo it
+- [ ] **RULE-05**: User can see why a meeting is pre-assigned/suggested, change a series' assignment or make the system forget it; none of this ever changes time entries already created
 
 ### Out-of-Sync Detection (OSYNC)
 
@@ -105,9 +107,10 @@ High level, added by the owner 2026-11-05; details to be refined in Phase 8 disc
 ### Productivity
 
 - **PROD-01**: "Confirm all pre-assigned this week" from a weekly summary
-- **PROD-02**: Last-used project hint for meetings with the same subject
+- **PROD-02**: ~~Last-used project hint for meetings with the same subject~~ (folded into RULE-03, 2026-11-17)
 - **PROD-03**: Weekly email/notification of unassigned meetings
 - **PROD-04**: Option to skip meetings with `showAs=free`
+- **PROD-05**: "Propose my day/week" button where an AI agent (Claude API) reads unassigned meetings plus clients/projects and proposes assignments for review in the multi-assign screen (owner idea 2026-11-17; deferred until the history engine's hit rate is known)
 
 ### Sync
 
