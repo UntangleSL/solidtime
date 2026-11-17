@@ -196,7 +196,11 @@ test('saved theme and accent are applied before any script runs', async ({ page 
     // A new device: every JS bundle is blocked and localStorage is empty before any page script
     // runs (addInitScript runs before the inline head script), so only the server-fed pre-paint
     // script can set the classes. The OS asks for light, the saved theme is dark.
-    const fresh = await page.context().newPage();
+    // Close the first tab: clearing localStorage below is shared across the context's pages and
+    // would make that tab's appearance sync react (and save defaults) mid-test.
+    const context = page.context();
+    await page.close();
+    const fresh = await context.newPage();
     await fresh.emulateMedia({ colorScheme: 'light' });
     let blockedScripts = 0;
     await fresh.route('**/build/assets/*.js', (route) => {
