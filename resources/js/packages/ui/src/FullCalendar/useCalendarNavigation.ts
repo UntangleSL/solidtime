@@ -8,15 +8,31 @@ export function useCalendarNavigation(callbacks: {
     onDatesChange: (payload: { start: Dayjs; end: Dayjs }) => void;
     scrollToCurrentTime: () => void;
     initialDate?: Dayjs | null;
+    // Fork (UX-01): week view hides Saturday and Sunday when this returns false. Missing means shown.
+    showWeekends?: () => boolean;
 }) {
-    const activeView = ref('timeGridWeek');
+    function weekendsHidden(): boolean {
+        return callbacks.showWeekends?.() === false;
+    }
+
+    function isWeekend(day: Dayjs): boolean {
+        return day.day() === 0 || day.day() === 6;
+    }
+
+    // A deep link to a hidden weekend day would open a week without that day: open it in day view.
+    const initialView =
+        callbacks.initialDate && isWeekend(callbacks.initialDate) && weekendsHidden()
+            ? 'timeGridDay'
+            : 'timeGridWeek';
+    const activeView = ref(initialView);
     const currentDate = ref(callbacks.initialDate ?? getLocalizedDayJs());
 
     function getFirstDay(): number {
         return getWeekStartDayNumber();
     }
 
-    const viewDays = computed<Dayjs[]>(() => {
+    // Every day of the current week (or the single day in day view); drives the fetched range.
+    const weekDays = computed<Dayjs[]>(() => {
         const numDays = activeView.value === 'timeGridWeek' ? 7 : 1;
 
         if (numDays === 1) {
@@ -35,6 +51,14 @@ export function useCalendarNavigation(callbacks: {
         return days;
     });
 
+    // The rendered days: the week without Saturday and Sunday when weekends are hidden.
+    const viewDays = computed<Dayjs[]>(() => {
+        if (activeView.value !== 'timeGridWeek' || !weekendsHidden()) {
+            return weekDays.value;
+        }
+        return weekDays.value.filter((day) => !isWeekend(day));
+    });
+
     const rangeLabel = computed(() => {
         const days = viewDays.value;
         if (days.length === 0) return '';
@@ -42,7 +66,8 @@ export function useCalendarNavigation(callbacks: {
     });
 
     function emitDatesChange() {
-        const days = viewDays.value;
+        // Always the whole week, so entries and meetings of hidden days still load.
+        const days = weekDays.value;
         if (days.length === 0) return;
 
         const start = days[0]!;

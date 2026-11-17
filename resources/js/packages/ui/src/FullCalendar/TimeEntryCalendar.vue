@@ -20,6 +20,7 @@ import FullCalendarDayHeader from './FullCalendarDayHeader.vue';
 import CalendarToolbar from './CalendarToolbar.vue';
 import CalendarDayColumn from './CalendarDayColumn.vue';
 import type { CalendarSettings } from './calendarSettings';
+import { DEFAULT_CALENDAR_SETTINGS, sanitizeCalendarSettings } from './calendarSettings';
 import {
     ContextMenu,
     ContextMenuContent,
@@ -108,13 +109,9 @@ const scrollerRef = ref<HTMLElement | null>(null);
 
 const calendarSettings = useLocalStorage<CalendarSettings>(
     'solidtime:calendar-settings',
-    {
-        snapMinutes: 15,
-        startHour: 0,
-        endHour: 24,
-        slotMinutes: 15,
-    },
-    { mergeDefaults: true }
+    { ...DEFAULT_CALENDAR_SETTINGS },
+    // Validate the stored value on read, so a corrupted or hand-edited object cannot break the grid
+    { mergeDefaults: (stored, defaults) => sanitizeCalendarSettings({ ...defaults, ...stored }) }
 );
 
 function onSettingsUpdate(newSettings: CalendarSettings) {
@@ -154,6 +151,7 @@ const {
     // treat the bare date as UTC midnight, landing on the previous local day
     // for negative UTC offsets
     initialDate: props.initialDate ? getLocalizedDayJsFromMinutes(props.initialDate, 0) : null,
+    showWeekends: () => calendarSettings.value.showWeekends !== false,
 });
 
 const cssBackground = useCssVariable('--color-bg-background');
