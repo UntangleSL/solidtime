@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { Popover, PopoverContent, PopoverTrigger, Button } from '..';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '..';
-import { Field, FieldLabel } from '../field';
+import { Field, FieldDescription, FieldLabel } from '../field';
 import { Separator } from '../separator';
+import { Switch } from '../switch';
 import { Settings } from '@lucide/vue';
 import { ref, watch } from 'vue';
 import type { CalendarSettings } from './calendarSettings';
@@ -21,6 +22,7 @@ const snapMinutes = ref(String(props.settings.snapMinutes));
 const startHour = ref(String(props.settings.startHour));
 const endHour = ref(String(props.settings.endHour));
 const slotMinutes = ref(String(props.settings.slotMinutes));
+const showWeekends = ref(props.settings.showWeekends !== false);
 
 watch(
     () => props.settings,
@@ -29,11 +31,17 @@ watch(
         startHour.value = String(s.startHour);
         endHour.value = String(s.endHour);
         slotMinutes.value = String(s.slotMinutes);
+        showWeekends.value = s.showWeekends !== false;
     }
 );
 
 function emitUpdate(partial: Partial<CalendarSettings>) {
     emit('update:settings', { ...props.settings, ...partial });
+}
+
+function onShowWeekendsChange(value: boolean) {
+    showWeekends.value = value;
+    emitUpdate({ showWeekends: value });
 }
 
 function onSnapChange(value: string) {
@@ -111,6 +119,18 @@ const hourOptions = Array.from({ length: 25 }, (_, i) => ({
         <PopoverContent align="end" class="w-72 p-4">
             <div class="space-y-4">
                 <div class="text-sm font-semibold">Calendar Settings</div>
+
+                <Field>
+                    <div class="flex items-center justify-between gap-3">
+                        <FieldLabel for="calendar-weekends">Show weekends</FieldLabel>
+                        <Switch
+                            id="calendar-weekends"
+                            data-testid="calendar-weekends-switch"
+                            :model-value="showWeekends"
+                            @update:model-value="(v) => onShowWeekendsChange(v === true)" />
+                    </div>
+                    <FieldDescription class="text-xs">Applies to the week view.</FieldDescription>
+                </Field>
 
                 <Field>
                     <FieldLabel for="calendar-snap">Snap Interval</FieldLabel>
