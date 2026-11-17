@@ -9,7 +9,7 @@ import {
 import OutlookMeetingContextItems from './OutlookMeetingContextItems.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
 import { useOutlookSelection } from './useOutlookSelection';
-import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
+import type { OutlookAssignment, OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 
 const labels = {
     no_subject: '(No subject)',
@@ -20,7 +20,24 @@ const labels = {
     create_entry: 'Create time entry',
     select: 'Select meeting',
     deselect: 'Deselect meeting',
+    confirm: 'Confirm',
+    edit: 'Edit',
+    ignore_series: 'Always ignore this series',
+    unignore_series: 'Stop ignoring this series',
+    forget_series: 'Forget this series',
 } as OutlookCalendarLabels;
+
+const assignment: OutlookAssignment = {
+    project_id: 'p-1',
+    project_name: 'Acme Website',
+    project_color: '#ef5350',
+    client_name: 'Acme',
+    task_id: null,
+    task_name: null,
+    tags: [],
+    billable: true,
+    converted_at: '2026-10-20T10:00:00Z',
+};
 
 function meeting(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
     return {
@@ -37,9 +54,16 @@ function meeting(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
     };
 }
 
+// A pre-assigned occurrence of a recurring series (Phase 5).
+function preassigned(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
+    return meeting({ series_key: 'series-1', assignment, suggestions: [], ...overrides });
+}
+
 interface FakeOptions {
     canAct?: boolean;
     includeDismissed?: boolean;
+    // Ids whose confirm is in flight (isConfirmPending).
+    pending?: string[];
 }
 
 function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
@@ -63,6 +87,14 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
     const openForm = vi.fn((_id: string) => {
         menuAtOpenForm.push(menu() !== null);
     });
+    // Records whether the menu was still in the DOM when the confirm was sent (layering rule).
+    const menuAtConfirm: boolean[] = [];
+    const confirmOne = vi.fn(async (_id: string) => {
+        menuAtConfirm.push(menu() !== null);
+        return null;
+    });
+    const pending = new Set<string>(options.pending ?? []);
+    const isConfirmPending = vi.fn((id: string) => pending.has(id));
     const selection = useOutlookSelection();
     const context = {
         labels: ref(labels),
@@ -72,9 +104,21 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
         dismiss,
         restore,
         openForm,
+        confirmOne,
+        isConfirmPending,
         selection,
     } as unknown as OutlookMeetingsContext;
-    return { context, dismiss, restore, list, openForm, menuAtOpenForm, selection };
+    return {
+        context,
+        dismiss,
+        restore,
+        list,
+        openForm,
+        menuAtOpenForm,
+        confirmOne,
+        menuAtConfirm,
+        selection,
+    };
 }
 
 // A day lane like OutlookGhostLayer renders it: a group with focusable blocks in start order.
@@ -368,6 +412,122 @@ describe('OutlookMeetingContextItems', () => {
         expect(item('outlook-menu-select')).toBeNull();
         expect(menu()?.querySelector('[role="separator"]')).toBeNull();
         expect(itemOrder()).toEqual(['outlook-menu-label']);
+    });
+});
+
+// Phase 5 (UI-SPEC section 4): a pre-assigned meeting is confirmed or edited from its menu.
+describe('OutlookMeetingContextItems pre-assigned meetings', () => {
+    it('offers Confirm with the project hint and Edit instead of "Create time entry"', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([
+            preassigned({ series_key: null, web_link: 'https://outlook.example.test/a' }),
+        ]);
+        await openMenu(block!, context);
+
+        expect(itemOrder()).toEqual([
+            'outlook-menu-label',
+            'outlook-menu-confirm',
+            'outlook-project-dot',
+            'outlook-menu-confirm-project',
+            'outlook-menu-edit',
+            'outlook-menu-select',
+            'outlook-menu-open',
+            'separator',
+            'outlook-menu-dismiss',
+        ]);
+        expect(item('outlook-menu-create')).toBeNull();
+
+        const confirm = item('outlook-menu-confirm') as HTMLElement;
+        expect(confirm.textContent).toContain('Confirm');
+        expect(confirm.querySelector('svg')?.getAttribute('class')).toContain('lucide-check');
+        const hint = item('outlook-menu-confirm-project') as HTMLElement;
+        expect(hint.textContent?.trim()).toBe('Acme Website');
+        expect(hint.className).toContain('max-w-32');
+        expect(hint.className).toContain('truncate');
+        expect(hint.className).toContain('text-text-tertiary');
+        expect(hint.parentElement?.className).toContain('ml-auto');
+        const dot = confirm.querySelector<HTMLElement>('[data-testid="outlook-project-dot"]');
+        expect(dot?.getAttribute('aria-hidden')).toBe('true');
+        expect(dot?.compareDocumentPosition(hint)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+        const edit = item('outlook-menu-edit') as HTMLElement;
+        expect(edit.textContent?.trim()).toBe('Edit');
+        expect(edit.querySelector('svg')?.getAttribute('class')).toContain('pencil');
+    });
+
+    it('renders the project name of the hint as text only', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([
+            preassigned({
+                assignment: { ...assignment, project_name: '<img src=x onerror=alert(1)>' },
+            }),
+        ]);
+        await openMenu(block!, context);
+
+        const hint = item('outlook-menu-confirm-project') as HTMLElement;
+        expect(hint.textContent?.trim()).toBe('<img src=x onerror=alert(1)>');
+        expect(hint.querySelector('img')).toBeNull();
+    });
+
+    it('Confirm sends the confirm once, after the menu has closed', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context, confirmOne, menuAtConfirm, openForm } = fakeContext([preassigned()]);
+        await openMenu(block!, context);
+
+        item('outlook-menu-confirm')?.click();
+
+        await vi.waitFor(() => expect(confirmOne).toHaveBeenCalledTimes(1));
+        expect(confirmOne).toHaveBeenCalledWith('m-1');
+        expect(menuAtConfirm).toEqual([false]);
+        expect(menu()).toBeNull();
+        expect(openForm).not.toHaveBeenCalled();
+    });
+
+    it('Confirm is disabled while a confirm of the meeting runs', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([preassigned()], { pending: ['m-1'] });
+        await openMenu(block!, context);
+
+        const confirm = item('outlook-menu-confirm') as HTMLElement;
+        expect(confirm.hasAttribute('data-disabled')).toBe(true);
+        expect(confirm.getAttribute('aria-disabled')).toBe('true');
+    });
+
+    it('Edit asks for the form only after the menu has closed', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context, openForm, menuAtOpenForm, confirmOne } = fakeContext([preassigned()]);
+        await openMenu(block!, context);
+
+        item('outlook-menu-edit')?.click();
+
+        await vi.waitFor(() => expect(openForm).toHaveBeenCalledTimes(1));
+        expect(openForm).toHaveBeenCalledWith('m-1');
+        expect(menuAtOpenForm).toEqual([false]);
+        expect(confirmOne).not.toHaveBeenCalled();
+    });
+
+    it('a faded pre-assigned meeting offers "Create time entry" instead', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([preassigned({ dismissed: true })], {
+            includeDismissed: true,
+        });
+        await openMenu(block!, context);
+
+        expect(item('outlook-menu-create')).not.toBeNull();
+        expect(item('outlook-menu-confirm')).toBeNull();
+        expect(item('outlook-menu-edit')).toBeNull();
+    });
+
+    it('offers neither Confirm nor Edit when the context cannot act', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context, confirmOne } = fakeContext([preassigned()], { canAct: false });
+        await openMenu(block!, context);
+
+        expect(menu()).not.toBeNull();
+        expect(item('outlook-menu-confirm')).toBeNull();
+        expect(item('outlook-menu-edit')).toBeNull();
+        expect(item('outlook-menu-create')).toBeNull();
+        expect(confirmOne).not.toHaveBeenCalled();
     });
 });
 
