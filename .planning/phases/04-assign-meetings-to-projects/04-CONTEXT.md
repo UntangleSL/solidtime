@@ -37,6 +37,11 @@ Turn Outlook meeting suggestions (the ghost blocks shipped in Phases 3/3.1) into
 - **D-13:** Privacy and token rules unchanged (Phase 3 D-15, D-16, D-22): meeting subject only goes into the user's own time entry description; impersonation cannot convert meetings.
 - **D-14:** Calendar shows weekends hidden by default (owner, 2026-11-17, shipped as a 3.1 follow-up); nothing in this phase depends on weekends being visible.
 
+### Decided after research (2026-11-17, orchestrator under owner's standing delegation)
+- **D-15:** Meeting links survive "Disconnect Microsoft" (they hold only ids, no subject); this keeps a reconnect from offering already-converted meetings again. The Phase 3 D-21 purge still removes cached meetings, sync windows and dismissals. Links go only when the time entry is deleted (DB cascade) or the user is deleted.
+- **D-16:** In a multi-assign, a meeting that already had an entry is reported neutrally as "Already had a time entry" (counts as done, not as a failure).
+- **D-17:** The hover-card action opens the detail panel in form mode; the hover card does not host the form.
+
 ### Claude's Discretion
 - Link storage shape (link table vs column on `outlook_meetings`) and how deleting an entry re-surfaces the suggestion, as long as D-05/D-06 hold and the link survives re-syncs.
 - Where "last used project" is remembered (server or local).
