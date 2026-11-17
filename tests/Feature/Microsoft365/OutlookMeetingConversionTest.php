@@ -471,7 +471,7 @@ class OutlookMeetingConversionTest extends TestCaseWithDatabase
         $response->assertOk();
         $response->assertJsonPath('results.0.status', 'failed');
         $response->assertJsonPath('results.0.error.key', 'validation');
-        $response->assertJsonPath('results.0.error.message', __('validation.task_belongs_to_project'));
+        $response->assertJsonPath('results.0.error.message', __('validation.task_belongs_to_project', ['attribute' => 'task']));
         $this->assertSame(0, TimeEntry::query()->count());
         $this->assertSame(0, OutlookMeetingLink::query()->count());
     }
