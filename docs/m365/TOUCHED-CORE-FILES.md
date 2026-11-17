@@ -210,3 +210,17 @@ No Phase 4 commit edits these, so they cannot conflict because of this phase:
 - `resources/js/packages/ui/src/TimeEntry/TimeEntryCreateModal.vue`
 - `resources/js/packages/ui/src/TimeTracker/TimeTrackerProjectTaskDropdown.vue`
 - `resources/js/packages/ui/src/Tag/TagDropdown.vue`
+
+### Reconciliation (04-09)
+
+Checked against the real phase diff before the release:
+`git diff --name-only 4678af6e HEAD -- . ':!resources/js/m365' ':!app/Microsoft365' ':!tests/Feature/Microsoft365' ':!tests/Unit/Microsoft365' ':!docs' ':!.planning' ':!lang/en/microsoft365.php' ':!lang/es/microsoft365.php'`
+(base `4678af6e`, the commit that added the Phase 4 plans) lists six paths, and each one has a row
+above: `Calendar.vue`, `CalendarDayColumn.vue`, `FullCalendarEventContent.vue`,
+`FullCalendarEventContent.test.ts`, `TimeEntryCalendar.vue` and `e2e/outlook-convert.spec.ts`. None
+of the hot files listed above appears in the diff. No core path is left unexplained by a Phase 4 plan.
+
+After the plans merged, four test-only fixes under `tests/Feature/Microsoft365/` (fork-owned) aligned
+exact assertions with the shipped behaviour: `linked_time_entry_ids` in the meetings response
+(`OutlookMeetingEndpointTest`, `OutlookMeetingPrivacyTest`) and the resolved `:attribute` in one
+validation message (`OutlookMeetingConversionTest`). No core file changed.
