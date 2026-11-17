@@ -114,8 +114,12 @@ const LABELS = {
 
 const FORBIDDEN_MESSAGE = "You can't add time to this project.";
 
+const MEETING_MENU = '[data-testid="outlook-meeting-menu"]';
+const HOVER_CARD = '[data-testid="outlook-hover-card"]';
 const DETAIL_PANEL = '[data-testid="outlook-ghost-detail"]';
 const CONVERT_FORM = '[data-testid="outlook-convert-form"]';
+const SELECTION_BAR = '[data-testid="outlook-selection-bar"]';
+const BATCH_POPOVER = '[data-testid="outlook-batch-popover"]';
 const CONVERT_ROUTE = '**/m365/organizations/*/meetings/time-entries';
 
 async function goToCalendar(page: Page) {
@@ -400,5 +404,420 @@ test.describe('Outlook meeting conversion', () => {
         await expect(
             page.getByRole('button', { name: 'Create Time Entry', exact: true })
         ).toHaveCount(0);
+    });
+
+    test('Create time entry from the context menu opens the form', async ({ page, ctx }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        await injectMeetings(
+            page,
+            [
+                {
+                    id: 'm-menu',
+                    subject: 'Menu meeting',
+                    start: todayAt('14:00:00'),
+                    end: todayAt('15:00:00'),
+                },
+            ],
+            convertUrl(ctx)
+        );
+        const block = ghost(page, 'm-menu');
+        await expect(block).toHaveCount(1);
+
+        await block.click({ button: 'right' });
+        const menu = page.locator(MEETING_MENU);
+        await expect(menu).toBeVisible();
+        await menu.locator('[data-testid="outlook-menu-create"]').click();
+
+        await expect(page.locator(MEETING_MENU)).toHaveCount(0);
+        const form = page.locator(DETAIL_PANEL).locator(CONVERT_FORM);
+        await expect(form).toBeVisible();
+        await expect(form.locator('[data-testid="outlook-convert-description"]')).toHaveValue(
+            'Menu meeting'
+        );
+    });
+
+    test('Create time entry from the hover card opens the form', async ({ page, ctx }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        await injectMeetings(
+            page,
+            [
+                {
+                    id: 'm-hover',
+                    subject: 'Hover meeting',
+                    start: todayAt('14:00:00'),
+                    end: todayAt('15:00:00'),
+                },
+            ],
+            convertUrl(ctx)
+        );
+        const block = ghost(page, 'm-hover');
+        await expect(block).toHaveCount(1);
+
+        await block.hover();
+        const card = page.locator(HOVER_CARD);
+        await expect(card).toBeVisible();
+        await expect(card).toContainText(LABELS.hover_hint_select);
+        await card.locator('[data-testid="outlook-hover-create"]').click();
+
+        await expect(page.locator(HOVER_CARD)).toHaveCount(0);
+        const form = page.locator(DETAIL_PANEL).locator(CONVERT_FORM);
+        await expect(form).toBeVisible();
+        await expect(form.locator('[data-testid="outlook-convert-description"]')).toHaveValue(
+            'Hover meeting'
+        );
+    });
+
+    test('assigns two selected meetings, reports a failure and retries it', async ({
+        page,
+        ctx,
+    }) => {
+        const projectName = 'Batch Project ' + Math.floor(1 + Math.random() * 10000);
+        const project = await createProjectViaApi(ctx, { name: projectName });
+        const meetings: InjectedMeeting[] = [
+            {
+                id: 'm-alpha',
+                subject: 'Alpha review',
+                start: todayAt('09:00:00'),
+                end: todayAt('09:30:00'),
+            },
+            {
+                id: 'm-beta',
+                subject: 'Beta planning',
+                start: todayAt('10:00:00'),
+                end: todayAt('10:30:00'),
+            },
+            {
+                id: 'm-gamma',
+                subject: 'Gamma retro',
+                start: todayAt('11:00:00'),
+                end: todayAt('11:30:00'),
+            },
+        ];
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '09:00:00');
+        const conversions = await routeConversions(page, ctx, meetings);
+        await injectMeetings(page, meetings, convertUrl(ctx));
+        await expect(page.locator('.m365-ghost')).toHaveCount(3);
+
+        await ghost(page, 'm-alpha').click({ modifiers: ['Control'] });
+        await ghost(page, 'm-beta').click({ modifiers: ['Control'] });
+
+        await expect(ghost(page, 'm-alpha')).toHaveAttribute('data-selected', '');
+        await expect(ghost(page, 'm-beta')).toHaveAttribute('data-selected', '');
+        await expect(ghost(page, 'm-gamma')).not.toHaveAttribute('data-selected');
+        await expect(page.locator(DETAIL_PANEL)).toHaveCount(0);
+        const bar = page.locator(SELECTION_BAR);
+        await expect(bar).toBeVisible();
+        await expect(bar.locator('[data-testid="outlook-selection-count"]')).toHaveText(
+            '2 meetings selected'
+        );
+
+        await bar.locator('[data-testid="outlook-selection-assign"]').click();
+        const popover = page.locator(BATCH_POPOVER);
+        const form = popover.locator('[data-testid="outlook-batch-form"]');
+        await expect(form).toBeVisible();
+        const rows = form.locator('[data-testid="outlook-batch-row"]');
+        await expect(rows).toHaveCount(2);
+        // No status before the first submit
+        await expect(rows.first()).not.toHaveAttribute('data-status');
+
+        await pickProject(page, form, projectName);
+        // The selection survives the nested picker
+        await expect(ghost(page, 'm-beta')).toHaveAttribute('data-selected', '');
+
+        conversions.failOnce.add('m-beta');
+        await form.locator('[data-testid="outlook-batch-submit"]').click();
+
+        const alphaRow = rows.filter({ hasText: 'Alpha review' });
+        const betaRow = rows.filter({ hasText: 'Beta planning' });
+        await expect(alphaRow).toHaveAttribute('data-status', 'created');
+        await expect(betaRow).toHaveAttribute('data-status', 'failed');
+        await expect(betaRow.locator('[data-testid="outlook-batch-row-reason"]')).toHaveText(
+            FORBIDDEN_MESSAGE
+        );
+        await expect(form.locator('[data-testid="outlook-batch-summary"]')).toHaveText(
+            '1 of 2 time entries created'
+        );
+        expect(conversions.bodies[0]!.meeting_ids).toEqual(['m-alpha', 'm-beta']);
+        expect(conversions.bodies[0]!.project_id).toBe(project.id);
+        expect(conversions.bodies[0]!.start).toBeUndefined();
+
+        // The created meeting left the lane, the failed one is still selected
+        await expect(ghost(page, 'm-alpha')).toHaveCount(0);
+        await expect(ghost(page, 'm-beta')).toHaveAttribute('data-selected', '');
+        await expect(ghost(page, 'm-gamma')).toHaveCount(1);
+
+        const retry = form.locator('[data-testid="outlook-batch-retry"]');
+        await expect(retry).toHaveText('Retry 1 failed');
+        await retry.click();
+
+        await expect(page.locator(BATCH_POPOVER)).toHaveCount(0);
+        await expect(page.locator(SELECTION_BAR)).toHaveCount(0);
+        await expect(ghost(page, 'm-beta')).toHaveCount(0);
+        expect(conversions.bodies).toHaveLength(2);
+        expect(conversions.bodies[1]!.meeting_ids).toEqual(['m-beta']);
+
+        // Both entries are real and carry the Outlook icon
+        for (const subject of ['Alpha review', 'Beta planning']) {
+            const entry = page.locator('.fc-event').filter({ hasText: subject }).first();
+            await expect(entry).toBeVisible();
+            await expect(entry.locator('[data-testid="outlook-entry-badge"]')).toHaveCount(1);
+        }
+    });
+
+    test('shift-click selects a range and Escape clears it', async ({ page, ctx }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '09:00:00');
+        await injectMeetings(
+            page,
+            [
+                {
+                    id: 'm-r1',
+                    subject: 'Range one',
+                    start: todayAt('09:00:00'),
+                    end: todayAt('09:30:00'),
+                },
+                {
+                    id: 'm-r2',
+                    subject: 'Range two',
+                    start: todayAt('10:00:00'),
+                    end: todayAt('10:30:00'),
+                },
+                {
+                    id: 'm-r3',
+                    subject: 'Range three',
+                    start: todayAt('11:00:00'),
+                    end: todayAt('11:30:00'),
+                },
+            ],
+            convertUrl(ctx)
+        );
+        await expect(page.locator('.m365-ghost')).toHaveCount(3);
+
+        await ghost(page, 'm-r1').click({ modifiers: ['Control'] });
+        await ghost(page, 'm-r3').click({ modifiers: ['Shift'] });
+
+        await expect(page.locator('.m365-ghost[data-selected]')).toHaveCount(3);
+        await expect(page.locator(DETAIL_PANEL)).toHaveCount(0);
+        await expect(
+            page.locator(SELECTION_BAR).locator('[data-testid="outlook-selection-count"]')
+        ).toHaveText('3 meetings selected');
+
+        await page.keyboard.press('Escape');
+
+        await expect(page.locator('.m365-ghost[data-selected]')).toHaveCount(0);
+        await expect(page.locator(SELECTION_BAR)).toHaveCount(0);
+    });
+
+    test('a plain click clears the selection and opens the panel', async ({ page, ctx }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '09:00:00');
+        await injectMeetings(
+            page,
+            [
+                {
+                    id: 'm-p1',
+                    subject: 'Plain one',
+                    start: todayAt('09:00:00'),
+                    end: todayAt('09:30:00'),
+                },
+                {
+                    id: 'm-p2',
+                    subject: 'Plain two',
+                    start: todayAt('10:00:00'),
+                    end: todayAt('10:30:00'),
+                },
+            ],
+            convertUrl(ctx)
+        );
+        await expect(page.locator('.m365-ghost')).toHaveCount(2);
+
+        await ghost(page, 'm-p1').click({ modifiers: ['Control'] });
+        await expect(ghost(page, 'm-p1')).toHaveAttribute('data-selected', '');
+        await expect(page.locator(SELECTION_BAR)).toBeVisible();
+
+        await ghost(page, 'm-p2').click();
+
+        await expect(page.locator('.m365-ghost[data-selected]')).toHaveCount(0);
+        await expect(page.locator(SELECTION_BAR)).toHaveCount(0);
+        const panel = page.locator(DETAIL_PANEL);
+        await expect(panel).toBeVisible();
+        await expect(panel).toContainText('Plain two');
+    });
+
+    test('without actions the panel stays read-only', async ({ page }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        // No third argument: display only (canAct false). Neither meeting has an Outlook link, so
+        // the read-only panel has no focusable content of its own.
+        await injectMeetings(page, [
+            {
+                id: 'm-ro1',
+                subject: 'Read-only one',
+                start: todayAt('14:00:00'),
+                end: todayAt('14:30:00'),
+            },
+            {
+                id: 'm-ro2',
+                subject: 'Read-only two',
+                start: todayAt('15:00:00'),
+                end: todayAt('15:30:00'),
+            },
+        ]);
+        await expect(page.locator('.m365-ghost')).toHaveCount(2);
+
+        await ghost(page, 'm-ro1').click();
+        const panel = page.locator(DETAIL_PANEL);
+        await expect(panel).toBeVisible();
+        await expect(panel).toContainText('Read-only one');
+        // 04-04 observation: in happy-dom a read-only panel without a link closes in the same tick.
+        // In the browser it must stay open.
+        await page.waitForTimeout(500);
+        await expect(panel).toBeVisible();
+        await expect(panel.locator('[data-testid="outlook-detail-create"]')).toHaveCount(0);
+        await expect(panel.locator('[data-testid="outlook-detail-action"]')).toHaveCount(0);
+
+        await page.keyboard.press('Escape');
+        await expect(page.locator(DETAIL_PANEL)).toHaveCount(0);
+
+        // Ctrl-click selects nothing and opens the panel like a plain click
+        await ghost(page, 'm-ro2').click({ modifiers: ['Control'] });
+        await expect(page.locator(DETAIL_PANEL)).toBeVisible();
+        await expect(page.locator(DETAIL_PANEL)).toContainText('Read-only two');
+        await expect(page.locator('.m365-ghost[data-selected]')).toHaveCount(0);
+        await expect(page.locator(SELECTION_BAR)).toHaveCount(0);
+    });
+});
+
+test.describe('Outlook conversion layout at 1366x768', () => {
+    test.use({ viewport: { width: 1366, height: 768 } });
+
+    test('the form popover on the last visible day at the last hour stays inside the viewport', async ({
+        page,
+        ctx,
+    }) => {
+        await goToCalendar(page);
+        const lastDay = await page.locator('.fc-col-header-cell').last().getAttribute('data-date');
+        expect(lastDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        await injectMeetings(
+            page,
+            [
+                {
+                    id: 'm-edge',
+                    subject: 'Late meeting',
+                    start: `${lastDay}T22:00:00Z`,
+                    end: `${lastDay}T23:00:00Z`,
+                },
+            ],
+            convertUrl(ctx)
+        );
+        await scrollCalendarToTime(page, '22:00:00');
+        const block = ghost(page, 'm-edge');
+        await expect(block).toHaveCount(1);
+
+        await block.click();
+        const panel = page.locator(DETAIL_PANEL);
+        await expect(panel).toBeVisible();
+        await panel.locator('[data-testid="outlook-detail-create"]').click();
+        await expect(panel.locator(CONVERT_FORM)).toBeVisible();
+        // Let the popper settle after the content grew
+        await page.waitForTimeout(300);
+
+        const box = await panel.boundingBox();
+        expect(box).not.toBeNull();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.y).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(1366);
+        expect(box!.y + box!.height).toBeLessThanOrEqual(768);
+    });
+
+    test('the selection bar is 48px tall and covers at most 64px of the visible grid', async ({
+        page,
+        ctx,
+    }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        await injectMeetings(
+            page,
+            [
+                {
+                    id: 'm-bar',
+                    subject: 'Bar meeting',
+                    start: todayAt('14:00:00'),
+                    end: todayAt('15:00:00'),
+                },
+            ],
+            convertUrl(ctx)
+        );
+        await ghost(page, 'm-bar').click({ modifiers: ['Control'] });
+        const bar = page.locator(SELECTION_BAR);
+        await expect(bar).toBeVisible();
+
+        // Polled: the bar slides in
+        const measure = () =>
+            page.evaluate((selector) => {
+                const barEl = document.querySelector(selector);
+                const grid = document.querySelector('.fc');
+                if (!barEl || !grid) return null;
+                const barRect = barEl.getBoundingClientRect();
+                const gridBottom = Math.min(
+                    window.innerHeight,
+                    grid.getBoundingClientRect().bottom
+                );
+                return {
+                    height: Math.round(barRect.height),
+                    covered: Math.round(gridBottom - barRect.top),
+                };
+            }, SELECTION_BAR);
+        await expect.poll(async () => (await measure())?.height).toBe(48);
+        await expect.poll(async () => (await measure())?.covered ?? 999).toBeLessThanOrEqual(64);
+    });
+
+    test('converting the last meeting of a day removes its lane', async ({
+        page,
+        ctx,
+    }, testInfo) => {
+        const projectName = 'Lane Project ' + Math.floor(1 + Math.random() * 10000);
+        await createProjectViaApi(ctx, { name: projectName });
+        const meetings: InjectedMeeting[] = [
+            {
+                id: 'm-lane-last',
+                subject: 'Only meeting',
+                start: todayAt('14:00:00'),
+                end: todayAt('15:00:00'),
+            },
+        ];
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '13:00:00');
+        await routeConversions(page, ctx, meetings);
+        await injectMeetings(page, meetings, convertUrl(ctx));
+        const day = page.locator(`.fc [data-date="${todayUtc()}"]`).filter({
+            has: page.locator('[data-testid="outlook-lane"]'),
+        });
+        await expect(day).toHaveCount(1);
+        await testInfo.attach('before-conversion', {
+            body: await page.screenshot(),
+            contentType: 'image/png',
+        });
+
+        await ghost(page, 'm-lane-last').click();
+        const panel = page.locator(DETAIL_PANEL);
+        await panel.locator('[data-testid="outlook-detail-create"]').click();
+        const form = panel.locator(CONVERT_FORM);
+        await expect(form).toBeVisible();
+        await pickProject(page, form, projectName);
+        await form.locator('[data-testid="outlook-convert-submit"]').click();
+
+        await expect(ghost(page, 'm-lane-last')).toHaveCount(0);
+        await expect(page.locator('[data-testid="outlook-lane"]')).toHaveCount(0);
+        await expect(page.locator('.fc-event').filter({ hasText: 'Only meeting' })).toBeVisible();
+        await testInfo.attach('after-conversion', {
+            body: await page.screenshot(),
+            contentType: 'image/png',
+        });
     });
 });
