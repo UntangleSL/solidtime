@@ -37,6 +37,7 @@ import { useTasksQuery } from '@/utils/useTasksQuery';
 import { useTimeEntriesInfiniteQuery } from '@/utils/useTimeEntriesInfiniteQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
 import type { OutlookCalendarLabels, OutlookConversionResult, OutlookMeeting } from '@/m365/types';
+import OutlookAssignResults from './OutlookAssignResults.vue';
 import { fillLabel } from './labels';
 import { readLastProject, rememberLastProject, resolvePrefillProject } from './lastProject';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
@@ -308,17 +309,54 @@ const batchSubmitLabel = computed(() =>
     plural(props.labels.batch_submit_one, props.labels.batch_submit_many, batchCount.value)
 );
 
-// "Tue 10:00 – 11:00" (the end day is repeated only when the meeting ends on another day).
-function rowWhen(item: OutlookMeeting): string {
-    const start = getLocalizedDayJs(item.start);
-    const end = getLocalizedDayJs(item.end);
-    const startTime = formatTime(item.start, timeFormat.value);
-    const endTime = formatTime(item.end, timeFormat.value);
-    return start.isSame(end, 'day')
-        ? `${start.format('ddd')} ${startTime} – ${endTime}`
-        : `${start.format('ddd')} ${startTime} – ${end.format('ddd')} ${endTime}`;
+// Per-meeting state of the batch (D-08): absent before the first submit, 'pending' while its
+// request runs, then the server's result. Kept across retries so done rows stay listed.
+type BatchState = Record<string, OutlookConversionResult | 'pending'>;
+const batchResults = ref<BatchState>({});
+// After a submit with at least one failure the form shows the outcome (header summary, Close and
+// Retry); every control stays usable so a retry can use other values.
+const resultView = ref(false);
+const summaryEl = ref<HTMLElement | null>(null);
+
+function isDone(value: OutlookConversionResult | 'pending' | undefined): boolean {
+    return value !== undefined && value !== 'pending' && value.status !== 'failed';
 }
 
+const doneCount = computed(
+    () => batchMeetings.filter((item) => isDone(batchResults.value[item.id])).length
+);
+const failedIds = computed(() =>
+    batchMeetings
+        .filter((item) => {
+            const value = batchResults.value[item.id];
+            return value !== undefined && value !== 'pending' && value.status === 'failed';
+        })
+        .map((item) => item.id)
+);
+
+const summaryText = computed(() =>
+    doneCount.value === 0
+        ? props.labels.batch_none
+        : fillLabel(props.labels.batch_summary, {
+              done: String(doneCount.value),
+              total: String(batchCount.value),
+          })
+);
+const retryLabel = computed(() =>
+    fillLabel(props.labels.retry_failed, { count: String(failedIds.value.length) })
+);
+
+function failed(id: string, message: string): OutlookConversionResult {
+    return {
+        meeting_id: id,
+        status: 'failed',
+        time_entry_id: null,
+        error: { key: 'request_failed', message },
+    };
+}
+
+// First submit: every listed meeting. In result view (Retry, Ctrl/Cmd+Enter): only the failed
+// ones, with the current values.
 async function submitBatch(): Promise<void> {
     if (saving.value) return;
 
@@ -328,30 +366,69 @@ async function submitBatch(): Promise<void> {
         focusPicker();
         return;
     }
-    if (!context) return;
 
-    const ids = batchMeetings.map((item) => item.id);
+    const ids = resultView.value ? failedIds.value : batchMeetings.map((item) => item.id);
+    if (ids.length === 0) return;
     const project = projectId.value;
-    saving.value = true;
-    emit('busy', true);
-    let results: OutlookConversionResult[];
-    try {
-        results = await context.convert(ids, {
-            project_id: project,
-            task_id: taskId.value,
-            tags: [...selectedTags.value],
-            billable: billable.value,
-        });
-    } finally {
-        saving.value = false;
-        emit('busy', false);
-    }
-    if (results.length === 0) return;
+    const previous = batchResults.value;
+    const pending: BatchState = { ...previous };
+    ids.forEach((id) => (pending[id] = 'pending'));
+    batchResults.value = pending;
 
-    if (results.every((result) => result.status !== 'failed')) {
-        if (organizationId) rememberLastProject(organizationId, project);
-        emit('done', results);
+    let results: OutlookConversionResult[] = [];
+    if (context) {
+        saving.value = true;
+        emit('busy', true);
+        try {
+            results = await context.convert(ids, {
+                project_id: project,
+                task_id: taskId.value,
+                tags: [...selectedTags.value],
+                billable: billable.value,
+            });
+        } finally {
+            saving.value = false;
+            emit('busy', false);
+        }
+        // Another conversion of one of these meetings is still running (the context sent nothing).
+        if (results.length === 0) {
+            batchResults.value = previous;
+            return;
+        }
     }
+
+    const next: BatchState = { ...batchResults.value };
+    ids.forEach((id) => {
+        next[id] =
+            results.find((result) => result.meeting_id === id) ??
+            failed(id, props.labels.error_generic);
+    });
+    batchResults.value = next;
+    if (results.some((result) => result.status !== 'failed') && organizationId) {
+        rememberLastProject(organizationId, project);
+    }
+
+    if (failedIds.value.length === 0) {
+        // One toast and one announcement for the whole batch, never per row (UI-SPEC section 9).
+        const text =
+            doneCount.value === 1
+                ? props.labels.created_success
+                : fillLabel(props.labels.batch_success_many, { count: String(doneCount.value) });
+        useNotificationsStore().addNotification('success', text);
+        context?.announce(text);
+        emit(
+            'done',
+            batchMeetings
+                .map((item) => next[item.id])
+                .filter((value): value is OutlookConversionResult => isDone(value))
+        );
+        return;
+    }
+
+    resultView.value = true;
+    context?.announce(summaryText.value);
+    await nextTick();
+    summaryEl.value?.focus();
 }
 
 // Ctrl/Cmd+Enter submits from any field of the form. Open pickers render in their own layers
@@ -390,8 +467,13 @@ onMounted(() => {
         :aria-busy="saving ? 'true' : undefined"
         @keydown="onKeydown">
         <div class="min-w-0">
-            <h3 :id="titleId" class="text-sm font-semibold text-text-primary">
-                {{ isBatch ? batchTitle : labels.create_entry }}
+            <h3
+                :id="titleId"
+                ref="summaryEl"
+                class="text-sm font-semibold text-text-primary focus:outline-none"
+                :tabindex="resultView ? -1 : undefined"
+                :data-testid="resultView ? 'outlook-batch-summary' : undefined">
+                {{ !isBatch ? labels.create_entry : resultView ? summaryText : batchTitle }}
             </h3>
             <p
                 v-if="!isBatch"
@@ -402,21 +484,11 @@ onMounted(() => {
             </p>
         </div>
 
-        <ul v-if="isBatch" role="list" class="m-0 max-h-40 list-none overflow-y-auto p-0">
-            <li
-                v-for="item in batchMeetings"
-                :key="item.id"
-                class="flex min-h-8 items-center gap-2"
-                data-testid="outlook-batch-row">
-                <span class="flex size-4 shrink-0 items-center justify-center"></span>
-                <span class="min-w-0 flex-1 truncate text-xs font-semibold text-text-primary">
-                    {{ item.subject?.trim() ? item.subject : labels.no_subject }}
-                </span>
-                <span class="shrink-0 text-right text-xs text-text-tertiary tabular-nums">
-                    {{ rowWhen(item) }}
-                </span>
-            </li>
-        </ul>
+        <OutlookAssignResults
+            v-if="isBatch"
+            :meetings="batchMeetings"
+            :results="batchResults"
+            :labels="labels" />
 
         <fieldset :disabled="saving" class="m-0 min-w-0 space-y-4 border-0 p-0">
             <TextInput
@@ -527,7 +599,23 @@ onMounted(() => {
             <span>{{ serverError }}</span>
         </p>
 
-        <div class="flex justify-end gap-2">
+        <div v-if="resultView" class="flex justify-end gap-2">
+            <SecondaryButton
+                type="button"
+                :disabled="saving"
+                data-testid="outlook-batch-close"
+                @click="emit('cancel')">
+                {{ labels.close }}
+            </SecondaryButton>
+            <PrimaryButton
+                type="button"
+                :loading="saving"
+                data-testid="outlook-batch-retry"
+                @click="submit">
+                {{ retryLabel }}
+            </PrimaryButton>
+        </div>
+        <div v-else class="flex justify-end gap-2">
             <SecondaryButton type="button" :disabled="saving" @click="emit('cancel')">
                 {{ labels.cancel }}
             </SecondaryButton>

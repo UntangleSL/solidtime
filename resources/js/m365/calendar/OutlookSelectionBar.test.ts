@@ -306,4 +306,34 @@ describe('OutlookSelectionBar', () => {
         expect(selection.selectedIds.value).toEqual([]);
         expect(query('outlook-selection-bar')).toBeNull();
     });
+
+    it('keeps the result view open after a partial failure and the failed meeting selected', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+        mountBar();
+        convert.mockImplementation(async (ids: string[]) => {
+            meetings.value = meetings.value.filter((item) => item.id !== 'm-1');
+            selection.remove(['m-1']);
+            return ids.map((id) =>
+                id === 'm-1' ? result(id, 'created') : result(id, 'failed', 'Not allowed.')
+            );
+        });
+        selection.toggle('m-1');
+        selection.toggle('m-2');
+        await settle();
+        await openBatch();
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(el('outlook-batch-summary').textContent?.trim()).toBe('1 of 2 time entries created');
+        expect(document.body.querySelectorAll('[data-testid="outlook-batch-row"]')).toHaveLength(2);
+        expect(selection.selectedIds.value).toEqual(['m-2']);
+        expect(addNotification).not.toHaveBeenCalled();
+
+        el('outlook-batch-close').click();
+        await settle();
+
+        expect(query('outlook-batch-form')).toBeNull();
+        expect(el('outlook-selection-assign').textContent?.trim()).toBe('Assign 1 meeting');
+    });
 });

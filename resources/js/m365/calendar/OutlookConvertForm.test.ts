@@ -527,3 +527,301 @@ describe('OutlookConvertForm (single)', () => {
         expect(input('outlook-convert-description').value).toBe('<img src=x onerror=alert(1)>');
     });
 });
+
+const batchLabels = {
+    ...labels,
+    assign_one: 'Assign 1 meeting',
+    assign_many: 'Assign :count meetings',
+    batch_note: 'Each meeting keeps its own time, and its subject becomes the description.',
+    batch_submit_one: 'Create 1 time entry',
+    batch_submit_many: 'Create :count time entries',
+    batch_summary: ':done of :total time entries created',
+    batch_none: 'No time entries created',
+    batch_success_many: ':count time entries created successfully',
+    retry_failed: 'Retry :count failed',
+    close: 'Close',
+    row_created: 'Created',
+    row_existing: 'Already had a time entry',
+} as OutlookCalendarLabels;
+
+function outcome(
+    id: string,
+    status: OutlookConversionResult['status'],
+    message = "You can't add time to this project."
+): OutlookConversionResult {
+    return {
+        meeting_id: id,
+        status,
+        time_entry_id: status === 'failed' ? null : 'te-' + id,
+        error: status === 'failed' ? { key: 'forbidden', message } : null,
+    };
+}
+
+function threeMeetings(): OutlookMeeting[] {
+    return [
+        meeting({ id: 'm-3', start: '2026-10-28T09:00:00Z', end: '2026-10-28T10:00:00Z' }),
+        meeting({ id: 'm-1' }),
+        meeting({ id: 'm-2', start: '2026-10-27T13:00:00Z', end: '2026-10-27T14:00:00Z' }),
+    ];
+}
+
+let announce: ReturnType<typeof vi.fn>;
+
+function mountBatch(meetings: OutlookMeeting[] = threeMeetings()) {
+    announce = vi.fn();
+    const context = { convert, announce } as unknown as OutlookMeetingsContext;
+    wrapper = mount(OutlookConvertForm, {
+        attachTo: document.body,
+        props: { mode: 'batch', meetings, labels: batchLabels },
+        global: {
+            provide: {
+                [OUTLOOK_MEETINGS_KEY as symbol]: context,
+                [billableRatesLockKey as symbol]: {
+                    locked: computed(() => locked.value),
+                    requestUpgrade: () => undefined,
+                },
+                organization: computed(() => ({
+                    time_format: '24-hours',
+                    billable_rate: null,
+                })),
+            },
+        },
+    });
+    return wrapper;
+}
+
+function batchRows(): HTMLElement[] {
+    return Array.from(
+        document.body.querySelectorAll<HTMLElement>('[data-testid="outlook-batch-row"]')
+    );
+}
+
+describe('OutlookConvertForm (batch)', () => {
+    beforeEach(() => {
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+    });
+
+    it('lists the meetings in start order with the batch title, note and submit label', async () => {
+        mountBatch();
+        await settle();
+
+        const form = el('outlook-batch-form');
+        expect(form.querySelector('h3')!.textContent?.trim()).toBe('Assign 3 meetings');
+        expect(batchRows()).toHaveLength(3);
+        expect(batchRows()[0]!.textContent).toContain('Tue 09:00 – 10:00');
+        expect(batchRows()[1]!.textContent).toContain('Tue 13:00 – 14:00');
+        expect(batchRows()[2]!.textContent).toContain('Wed 09:00 – 10:00');
+        expect(form.textContent).toContain(batchLabels.batch_note);
+        expect(form.querySelector('[data-testid="outlook-convert-description"]')).toBeNull();
+        expect(form.querySelector('[data-testid="outlook-convert-start"]')).toBeNull();
+        expect(el('outlook-batch-submit').textContent?.trim()).toBe('Create 3 time entries');
+        expect(document.activeElement).toBe(el('outlook-batch-submit'));
+    });
+
+    it('shows a spinner on every row while the request runs and disables the controls', async () => {
+        const request = deferred<OutlookConversionResult[]>();
+        convert.mockReturnValue(request.promise);
+        const w = mountBatch();
+        await settle();
+
+        const submit = el<HTMLButtonElement>('outlook-batch-submit');
+        submit.click();
+        await settle();
+
+        expect(convert).toHaveBeenCalledWith(['m-1', 'm-2', 'm-3'], {
+            project_id: 'p-1',
+            task_id: null,
+            tags: [],
+            billable: true,
+        });
+        for (const row of batchRows()) {
+            expect(row.getAttribute('data-status')).toBe('pending');
+            expect(row.querySelector('.animate-spin')).not.toBeNull();
+        }
+        expect(submit.disabled).toBe(true);
+        expect(submit.querySelector('.animate-spin')).not.toBeNull();
+        expect(el('outlook-convert-tags').closest('fieldset')?.disabled).toBe(true);
+        expect(w.emitted('busy')).toEqual([[true]]);
+
+        request.resolve(['m-1', 'm-2', 'm-3'].map((id) => outcome(id, 'created')));
+        await settle();
+        expect(w.emitted('busy')).toEqual([[true], [false]]);
+    });
+
+    it('shows each outcome, summarises, focuses the header and offers Close and Retry', async () => {
+        convert.mockResolvedValue([
+            outcome('m-1', 'created'),
+            outcome('m-2', 'existing'),
+            outcome('m-3', 'failed'),
+        ]);
+        const w = mountBatch();
+        await settle();
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(batchRows().map((row) => row.getAttribute('data-status'))).toEqual([
+            'created',
+            'existing',
+            'failed',
+        ]);
+        expect(batchRows()[0]!.textContent).toContain('Created');
+        expect(batchRows()[1]!.textContent).toContain('Already had a time entry');
+        expect(batchRows()[2]!.textContent).toContain("You can't add time to this project.");
+
+        const summary = el('outlook-batch-summary');
+        expect(summary.textContent?.trim()).toBe('2 of 3 time entries created');
+        expect(summary.getAttribute('tabindex')).toBe('-1');
+        expect(document.activeElement).toBe(summary);
+        expect(announce).toHaveBeenCalledTimes(1);
+        expect(announce).toHaveBeenCalledWith('2 of 3 time entries created');
+
+        expect(el('outlook-batch-close').textContent?.trim()).toBe('Close');
+        expect(el('outlook-batch-retry').textContent?.trim()).toBe('Retry 1 failed');
+        expect(document.body.querySelector('[data-testid="outlook-batch-submit"]')).toBeNull();
+        expect(el('outlook-convert-tags').closest('fieldset')?.disabled).toBe(false);
+        expect(w.emitted('done')).toBeUndefined();
+        expect(addNotification).not.toHaveBeenCalled();
+
+        el('outlook-batch-close').click();
+        expect(w.emitted('cancel')).toHaveLength(1);
+    });
+
+    it('says "No time entries created" when every meeting failed', async () => {
+        convert.mockResolvedValue(['m-1', 'm-2', 'm-3'].map((id) => outcome(id, 'failed')));
+        mountBatch();
+        await settle();
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(el('outlook-batch-summary').textContent?.trim()).toBe('No time entries created');
+        expect(el('outlook-batch-retry').textContent?.trim()).toBe('Retry 3 failed');
+    });
+
+    it('retries only the failed meetings with the current values and finishes when they succeed', async () => {
+        convert.mockResolvedValueOnce([
+            outcome('m-1', 'created'),
+            outcome('m-2', 'created'),
+            outcome('m-3', 'failed'),
+        ]);
+        const w = mountBatch();
+        await settle();
+        el('outlook-batch-submit').click();
+        await settle();
+
+        w.findComponent({ name: 'TimeTrackerProjectTaskDropdown' }).vm.$emit(
+            'update:project',
+            'p-2'
+        );
+        await settle();
+        convert.mockResolvedValueOnce([outcome('m-3', 'created')]);
+        el('outlook-batch-retry').click();
+        await settle();
+
+        expect(convert).toHaveBeenCalledTimes(2);
+        expect(convert.mock.calls[1]).toEqual([
+            ['m-3'],
+            { project_id: 'p-2', task_id: null, tags: [], billable: false },
+        ]);
+        expect(w.emitted('done')).toHaveLength(1);
+        expect((w.emitted('done')![0]![0] as OutlookConversionResult[]).length).toBe(3);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'success',
+            '3 time entries created successfully'
+        );
+        expect(localStorage.getItem(STORAGE_KEY)).toBe('p-2');
+    });
+
+    it('closes with one toast and one announcement when every meeting is done', async () => {
+        convert.mockResolvedValue([
+            outcome('m-1', 'created'),
+            outcome('m-2', 'existing'),
+            outcome('m-3', 'created'),
+        ]);
+        const w = mountBatch();
+        await settle();
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(w.emitted('done')).toHaveLength(1);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'success',
+            '3 time entries created successfully'
+        );
+        expect(announce).toHaveBeenCalledTimes(1);
+        expect(announce).toHaveBeenCalledWith('3 time entries created successfully');
+    });
+
+    it('uses the core toast for a single meeting', async () => {
+        convert.mockResolvedValue([outcome('m-1', 'created')]);
+        mountBatch([meeting()]);
+        await settle();
+
+        expect(el('outlook-batch-form').querySelector('h3')!.textContent?.trim()).toBe(
+            'Assign 1 meeting'
+        );
+        expect(el('outlook-batch-submit').textContent?.trim()).toBe('Create 1 time entry');
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(addNotification).toHaveBeenCalledWith('success', 'Time entry created successfully');
+        expect(announce).toHaveBeenCalledWith('Time entry created successfully');
+    });
+
+    it('marks a meeting missing from the answer as failed with the generic reason', async () => {
+        convert.mockResolvedValue([outcome('m-1', 'created')]);
+        mountBatch([meeting(), meeting({ id: 'm-2', start: '2026-10-27T13:00:00Z' })]);
+        await settle();
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(batchRows()[1]!.getAttribute('data-status')).toBe('failed');
+        expect(batchRows()[1]!.textContent).toContain(batchLabels.error_generic);
+    });
+
+    it('puts the rows back when the context sends nothing (already in flight)', async () => {
+        convert.mockResolvedValue([]);
+        const w = mountBatch();
+        await settle();
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(batchRows().every((row) => !row.hasAttribute('data-status'))).toBe(true);
+        expect(document.body.querySelector('[data-testid="outlook-batch-summary"]')).toBeNull();
+        expect(w.emitted('done')).toBeUndefined();
+    });
+
+    it('keeps 20 meetings usable: 20 rows in the list and one toast for all', async () => {
+        const many = Array.from({ length: 20 }, (_, index) =>
+            meeting({
+                id: 'm-' + String(index).padStart(2, '0'),
+                start: `2026-10-27T${String(index).padStart(2, '0')}:00:00Z`,
+                end: `2026-10-27T${String(index).padStart(2, '0')}:30:00Z`,
+            })
+        );
+        convert.mockImplementation(async (ids: string[]) =>
+            ids.map((id) => outcome(id, 'created'))
+        );
+        mountBatch(many);
+        await settle();
+
+        expect(batchRows()).toHaveLength(20);
+        expect(el('outlook-batch-submit').textContent?.trim()).toBe('Create 20 time entries');
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![0]).toHaveLength(20);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'success',
+            '20 time entries created successfully'
+        );
+    });
+});
