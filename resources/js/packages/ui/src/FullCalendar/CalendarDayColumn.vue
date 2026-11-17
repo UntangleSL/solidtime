@@ -142,7 +142,11 @@ const emit = defineEmits<{
                         :client-name="dayEvent.event.client?.name"
                         :is-break="dayEvent.event.isBreak"
                         :is-misplaced-break="dayEvent.event.isMisplacedBreak"
-                        :duration-seconds="getEventDurationSeconds(dayEvent, dayStr)" />
+                        :duration-seconds="getEventDurationSeconds(dayEvent, dayStr)">
+                        <template v-if="$slots['event-extra']" #title-prefix>
+                            <slot name="event-extra" :time-entry="dayEvent.event.timeEntry" />
+                        </template>
+                    </FullCalendarEventContent>
                 </div>
                 <div
                     v-if="!dayEvent.event.isRunning && !dayEvent.isClippedEnd"

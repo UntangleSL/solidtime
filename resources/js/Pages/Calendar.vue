@@ -28,6 +28,7 @@ import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
 import OutlookCalendarControls from '@/m365/calendar/OutlookCalendarControls.vue';
 import OutlookDismissedSetting from '@/m365/calendar/OutlookDismissedSetting.vue';
+import OutlookEntryBadge from '@/m365/calendar/OutlookEntryBadge.vue';
 import OutlookGhostLayer from '@/m365/calendar/OutlookGhostLayer.vue';
 import OutlookLaneCaption from '@/m365/calendar/OutlookLaneCaption.vue';
 import OutlookMeetingContextItems from '@/m365/calendar/OutlookMeetingContextItems.vue';
@@ -166,6 +167,9 @@ function onRefresh() {
             </template>
             <template v-if="outlook.labels.value" #day-header-extra="header">
                 <OutlookLaneCaption v-bind="header" />
+            </template>
+            <template v-if="outlook.labels.value" #event-extra="{ timeEntry }">
+                <OutlookEntryBadge :time-entry-id="timeEntry.id" />
             </template>
             <template v-if="outlook.calendar.value" #toolbar-extra>
                 <OutlookCalendarControls />

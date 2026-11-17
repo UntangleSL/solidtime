@@ -792,6 +792,11 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                                                         isDragging || isResizing || isSelecting
                                                     " />
                                             </template>
+                                            <template
+                                                v-if="$slots['event-extra']"
+                                                #event-extra="slotProps">
+                                                <slot name="event-extra" v-bind="slotProps" />
+                                            </template>
                                         </CalendarDayColumn>
                                     </div>
                                 </div>

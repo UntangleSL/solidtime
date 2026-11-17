@@ -47,6 +47,7 @@ const formattedDuration = computed(() =>
     <div class="text-2xs leading-tight px-0.5 py-1">
         <div class="font-semibold flex items-center gap-1">
             <Coffee v-if="isBreak" class="w-3 h-3 shrink-0" />
+            <slot name="title-prefix" />
             <span class="truncate">{{ title }}</span>
             <ExclamationTriangleIcon
                 v-if="isMisplacedBreak"
