@@ -148,3 +148,4 @@ PHPUnit (`CalendarViewFixturesTest`): no disponible el 2026-10-19 (el equipo de 
 | 2026-11-17 | Fase 3.1: mejoras de uso del calendario publicadas (imagen sha-293c055; sin variables nuevas ni migraciones) | propietaria / orquestación |
 | 2026-11-17 | Fase 3.2: apariencia y marca Untangle publicadas (imagen sha-293c055; sin variables nuevas) | propietaria / orquestación |
 | 2026-11-17 | Fase 4: asignar reuniones a proyectos publicada (imagen sha-c693c94; sin variables nuevas; migración outlook_meeting_links) | propietaria / orquestación |
+| 2026-11-17 | Fase 5: sugerencias inteligentes de reuniones publicada (imagen sha-0f2d424; sin variables nuevas; migraciones de columnas en outlook_meeting_links y outlook_meetings y tabla outlook_series_settings; $select de Graph con attendees) | orquestación |
