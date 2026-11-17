@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, ref, watch, type ComputedRef } from 'vue';
-import { CalendarDays, EyeOff, User, Video } from '@lucide/vue';
+import { CalendarDays, Check, EyeOff, User, Video } from '@lucide/vue';
 import { HoverCardRoot, HoverCardTrigger } from 'reka-ui';
 import type { Organization } from '@/packages/api/src';
 import { formatTime, getLocalizedDayJsFromMinutes } from '@/packages/ui/src/utils/time';
@@ -59,6 +59,15 @@ const timeFormat = computed(() => organization?.value?.time_format ?? '24-hours'
 const context = inject(OUTLOOK_MEETINGS_KEY, null);
 const canAct = computed(() => context?.canAct.value === true);
 
+// Multi-select (Phase 4 D-07, UI-SPEC section 5): one selection for the whole calendar, kept by the
+// context (inert while it cannot act). A panel and a selection never coexist.
+const selection = computed(() => context?.selection ?? null);
+const hasSelection = computed(() => (selection.value?.selectedIds.value.length ?? 0) > 0);
+
+function isSelected(id: string): boolean {
+    return selection.value?.isSelected(id) === true;
+}
+
 // One detail panel open at a time (the id of the meeting whose panel is open).
 const openId = ref<string | null>(null);
 // The open panel shows the conversion form instead of the details (Phase 4). Only meaningful while
@@ -73,8 +82,9 @@ function setOpen(id: string, value: boolean): void {
     if (value) {
         // No panel may open while the context menu is open (D-06 layering rule)
         if (props.contextMenuOpen) return;
-        // The panel replaces the hover card of the same meeting
+        // The panel replaces the hover card of the same meeting; a plain click clears the selection
         closeHover();
+        selection.value?.clear();
         openId.value = id;
     } else if (openId.value === id) openId.value = null;
 }
@@ -98,7 +108,26 @@ const hoverAnchor = ref<HTMLElement | null>(null);
 let pointerOverId: string | null = null;
 const openDelay = computed(() => hoverOpenDelay.value);
 
+// Whether Ctrl, Cmd or Shift is held, from the last pointer or key event: while a selection exists
+// and a modifier is held no card opens, so cards do not flash during multi-select.
+let modifierHeld = false;
+
+function hasModifier(event: MouseEvent | KeyboardEvent): boolean {
+    return event.ctrlKey || event.metaKey || event.shiftKey;
+}
+
+function noteModifiers(event: MouseEvent | KeyboardEvent): void {
+    modifierHeld = hasModifier(event);
+}
+
+useEventListener(document, 'keydown', noteModifiers, { capture: true, passive: true });
+useEventListener(document, 'keyup', noteModifiers, { capture: true, passive: true });
+useEventListener(window, 'blur', () => {
+    modifierHeld = false;
+});
+
 function onBlockPointerEnter(id: string, event: PointerEvent): void {
+    noteModifiers(event);
     if (event.pointerType !== 'touch') pointerOverId = id;
 }
 
@@ -122,6 +151,7 @@ function onHoverOpenChange(id: string, value: boolean): void {
     if (hoverId.value === id) return;
     if (pointerOverId !== id || openId.value === id) return;
     if (props.contextMenuOpen || props.interacting) return;
+    if (modifierHeld && hasSelection.value) return;
     hoverAnchor.value = ghostElement(id);
     hoverId.value = id;
     noteHoverCardOpened();
@@ -181,6 +211,55 @@ useEventListener(
 onBeforeUnmount(closeHover);
 
 const layerEl = ref<HTMLElement | null>(null);
+
+// The meetings rendered anywhere in the calendar (every day layer of the visible range), in context
+// order: a Shift range never reaches a meeting on a hidden day.
+function renderedMeetings(): OutlookMeeting[] {
+    const root: ParentNode = layerEl.value?.closest('.fc') ?? document;
+    const ids = new Set(
+        Array.from(root.querySelectorAll<HTMLElement>('[data-ghost-id]')).map(
+            (el) => el.dataset.ghostId
+        )
+    );
+    const source = context?.meetings?.value ?? props.meetings;
+    return source.filter((meeting) => ids.has(meeting.id));
+}
+
+// Ctrl/Cmd toggles the meeting (and makes it the range anchor), Shift adds the range from the
+// anchor. Any open panel and card close first.
+function selectFromInput(id: string, range: boolean): void {
+    const current = selection.value;
+    if (!canAct.value || !current) return;
+    openId.value = null;
+    closeHover();
+    if (range) current.selectRange(id, renderedMeetings());
+    else current.toggle(id);
+}
+
+// Capture phase on the lane: a modifier click on a block selects instead of opening the panel. The
+// block's PopoverTrigger listener sits on the block itself (as-child), so only stopping the event
+// before it reaches the block keeps the panel closed (04-RESEARCH Pitfall 6). Without canAct the
+// click goes through and behaves like a plain click.
+function onLaneClickCapture(event: MouseEvent): void {
+    if (!canAct.value || !selection.value || !hasModifier(event)) return;
+    const target = event.target;
+    const block = target instanceof Element ? target.closest<HTMLElement>('[data-ghost-id]') : null;
+    const id = block?.dataset.ghostId;
+    if (!block || !id || !layerEl.value?.contains(block)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectFromInput(id, event.shiftKey);
+}
+
+// Enter on a focused block: Ctrl/Cmd+Enter toggles, Shift+Enter adds the range, plain Enter opens
+// the panel like a click (a synthetic click carries no modifier keys).
+function onBlockEnter(event: KeyboardEvent, id: string): void {
+    if (canAct.value && selection.value && hasModifier(event)) {
+        selectFromInput(id, event.shiftKey);
+        return;
+    }
+    (event.currentTarget as HTMLElement).click();
+}
 
 function ghostElement(id: string): HTMLElement | null {
     return layerEl.value?.querySelector<HTMLElement>(`[data-ghost-id="${CSS.escape(id)}"]`) ?? null;
@@ -382,7 +461,14 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
         start: formatTime(meeting.start, timeFormat.value),
         end: formatTime(meeting.end, timeFormat.value),
     });
-    return meeting.dismissed ? label + props.labels.dismissed_suffix : label;
+    const dismissed = meeting.dismissed ? label + props.labels.dismissed_suffix : label;
+    return isSelected(meeting.id) ? dismissed + props.labels.selected_suffix : dismissed;
+}
+
+// aria-pressed only while a selection exists, so the blocks read as plain buttons otherwise.
+function ariaPressedOf(id: string): 'true' | 'false' | undefined {
+    if (!hasSelection.value) return undefined;
+    return isSelected(id) ? 'true' : 'false';
 }
 </script>
 
@@ -395,7 +481,8 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
         data-testid="outlook-lane"
         class="m365-lane absolute inset-y-0 right-0.5 pointer-events-none"
         :style="{ width: laneWidth }"
-        @contextmenu.capture="closeAllForContextMenu">
+        @contextmenu.capture="closeAllForContextMenu"
+        @click.capture="onLaneClickCapture">
         <HoverCardRoot
             v-for="box in boxes"
             :key="box.meeting.id"
@@ -423,17 +510,22 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
                             'm365-meeting--cascaded': box.cascade > 0,
                             'rounded-t-none': box.isClippedStart,
                             'rounded-b-none': box.isClippedEnd,
+                            'm365-meeting--selected ring-2 ring-accent-700 dark:ring-accent-200 ring-offset-0':
+                                isSelected(box.meeting.id),
                         }"
                         data-calendar-overlay
                         :data-ghost-id="box.meeting.id"
                         :data-panel-open="openId === box.meeting.id ? '' : undefined"
+                        :data-selected="isSelected(box.meeting.id) ? '' : undefined"
                         role="button"
                         tabindex="0"
                         :aria-label="ariaLabelOf(box.meeting)"
+                        :aria-pressed="ariaPressedOf(box.meeting.id)"
                         :style="blockStyle(box)"
-                        @keydown.enter.prevent="($event.currentTarget as HTMLElement).click()"
+                        @keydown.enter.prevent="onBlockEnter($event, box.meeting.id)"
                         @keydown.space.prevent="($event.currentTarget as HTMLElement).click()"
                         @pointerenter="onBlockPointerEnter(box.meeting.id, $event)"
+                        @pointermove="noteModifiers($event)"
                         @pointerleave="onBlockPointerLeave(box.meeting.id)">
                         <div
                             class="flex h-full min-w-0 flex-col overflow-hidden px-1.5 text-xs leading-[14px]"
@@ -496,6 +588,17 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
                                 </div>
                             </template>
                         </div>
+                        <!-- Selected check badge: 16px from tier 3, 12px on tiers 1-2 (UI-SPEC) -->
+                        <span
+                            v-if="isSelected(box.meeting.id)"
+                            class="m365-meeting__badge absolute top-1 right-1 flex items-center justify-center rounded-full"
+                            :class="tierOf(box) >= 3 ? 'size-4' : 'size-3'"
+                            aria-hidden="true"
+                            data-ghost-badge>
+                            <Check
+                                :class="tierOf(box) >= 3 ? 'size-3' : 'size-2'"
+                                :stroke-width="3" />
+                        </span>
                     </div>
                 </HoverCardTrigger>
             </OutlookGhostDetail>
@@ -533,6 +636,14 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
 }
 .m365-meeting:hover {
     background-color: var(--m365-meeting-bg-hover, var(--fb-hover));
+}
+/* Selected (Phase 4): the hover fill at rest; the ring comes from utility classes */
+.m365-meeting--selected:not(.m365-meeting--dismissed) {
+    background-color: var(--m365-meeting-bg-hover, var(--fb-hover));
+}
+.m365-meeting__badge {
+    background-color: var(--m365-meeting-bar, var(--fb-bar));
+    color: var(--color-on-accent);
 }
 /*
  * A cascaded extra (more overlaps than columns) gets a 1px --color-bg-primary edge on its left so

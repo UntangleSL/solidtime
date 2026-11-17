@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref } from 'vue';
-import { ExternalLink, Eye, EyeOff } from '@lucide/vue';
+import { ClockPlus, ExternalLink, Eye, EyeOff, ListChecks, X } from '@lucide/vue';
 import {
     ContextMenuItem,
     ContextMenuLabel,
@@ -10,10 +10,12 @@ import type { OutlookMeeting } from '@/m365/types';
 import { safeHttpsUrl } from './safeUrl';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
-// Items of the meeting context menu (UI-SPEC 3.1 section 4, D-06), rendered through the core
-// `context-menu-overlay` slot of TimeEntryCalendar for the right-clicked meeting block. The menu
-// only opens Outlook or dismisses / restores the meeting: nothing here creates, changes or deletes
-// a time entry. Meeting values are only ever rendered through text interpolation.
+// Items of the meeting context menu (UI-SPEC 3.1 section 4, D-06; Phase 4 UI-SPEC section 4),
+// rendered through the core `context-menu-overlay` slot of TimeEntryCalendar for the right-clicked
+// meeting block. The menu starts a conversion ("Create time entry" opens the meeting's form in its
+// panel once the menu has closed), opens Outlook or dismisses / restores the meeting; it never
+// changes or deletes a time entry itself. It always acts on the right-clicked meeting only. Meeting
+// values are only ever rendered through text interpolation.
 const props = defineProps<{
     element: HTMLElement;
 }>();
@@ -38,6 +40,18 @@ const link = computed(() => (meeting.value ? safeHttpsUrl(meeting.value.web_link
 const canAct = computed(() => meeting.value !== null && context?.canAct.value === true);
 
 const rootEl = ref<HTMLElement | null>(null);
+
+// Select / Deselect: the keyboard and discoverable path to multi-select (D-07), always for the
+// right-clicked meeting only, even while other meetings are selected.
+const selected = computed(
+    () => meeting.value !== null && context?.selection?.isSelected(meeting.value.id) === true
+);
+
+function onToggleSelect(): void {
+    const current = meeting.value;
+    if (!context || !current || !canAct.value) return;
+    context.selection.toggle(current.id);
+}
 
 function openInOutlook(): void {
     if (link.value) window.open(link.value, '_blank', 'noopener,noreferrer');
@@ -94,6 +108,16 @@ async function onDismiss(): Promise<void> {
     (target ?? syncButton())?.focus();
 }
 
+// The panel opens in form mode only after the menu has closed (3.1 layering rule: never a panel
+// while the menu is open); the lane's formRequest watcher does the opening.
+async function onCreate(): Promise<void> {
+    const current = meeting.value;
+    if (!context || !current || !canAct.value) return;
+    const menu = rootEl.value?.closest('[role="menu"]') ?? null;
+    await afterMenuClosed(menu);
+    context.openForm(current.id);
+}
+
 async function onRestore(): Promise<void> {
     const current = meeting.value;
     if (!context || !current) return;
@@ -115,7 +139,23 @@ async function onRestore(): Promise<void> {
             data-testid="outlook-menu-label">
             {{ subject }}
         </ContextMenuLabel>
-        <!-- Reserved for Phase 4: "Create time entry" as the first item (not rendered yet) -->
+        <ContextMenuItem
+            v-if="canAct && meeting"
+            class="space-x-3"
+            data-testid="outlook-menu-create"
+            @select="onCreate()">
+            <ClockPlus class="w-4 h-4 text-icon-default" aria-hidden="true" />
+            <span>{{ labels.create_entry }}</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+            v-if="canAct && meeting"
+            class="space-x-3"
+            data-testid="outlook-menu-select"
+            @select="onToggleSelect()">
+            <X v-if="selected" class="w-4 h-4 text-icon-default" aria-hidden="true" />
+            <ListChecks v-else class="w-4 h-4 text-icon-default" aria-hidden="true" />
+            <span>{{ selected ? labels.deselect : labels.select }}</span>
+        </ContextMenuItem>
         <ContextMenuItem
             v-if="link"
             class="space-x-3"

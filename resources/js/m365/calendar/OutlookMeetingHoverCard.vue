@@ -1,22 +1,50 @@
 <script setup lang="ts">
+import { computed, inject } from 'vue';
+import { ClockPlus } from '@lucide/vue';
 import { HoverCardContent, HoverCardPortal } from 'reka-ui';
+import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 import OutlookMeetingSummary from './OutlookMeetingSummary.vue';
+import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
-// Hover card of one Outlook meeting (03.1-UI-SPEC section 2, UX-03 / D-05). Thin wrapper over reka
-// HoverCardPortal / HoverCardContent styled like PopoverContent; it must sit inside a HoverCardRoot
-// supplied by the caller. Supplemental only: no role, not focus-trapped (the block's aria-label and
-// the click panel carry everything). Phase 4 adds "Create time entry / Assign to project" through
-// the `actions` slot.
+// Hover card of one Outlook meeting (03.1-UI-SPEC section 2, UX-03 / D-05; Phase 4 UI-SPEC
+// sections 1-2). Thin wrapper over reka HoverCardPortal / HoverCardContent styled like
+// PopoverContent; it must sit inside a HoverCardRoot supplied by the caller. Supplemental only: no
+// role, not focus-trapped (the block's aria-label and the click panel carry everything).
+//
+// When the Outlook context can act, the card offers "Create time entry": it asks the context for
+// the meeting's form, and the lane closes this card and opens the meeting's panel in form mode. The
+// card itself never hosts inputs (D-17). The hint then also names the multi-select modifier.
 //
 // `reference` anchors the card to the meeting block: the block's HoverCardTrigger sits inside the
 // panel's Popover, whose Popper context captures the trigger's anchor, so the card's own Popper root
 // would otherwise have no anchor to position against.
-defineProps<{
+const props = defineProps<{
     meeting: OutlookMeeting;
     labels: OutlookCalendarLabels;
     reference?: HTMLElement | null;
 }>();
+
+const context = inject(OUTLOOK_MEETINGS_KEY, null);
+const canAct = computed(() => context?.canAct.value === true);
+
+// Same detection as the core zoom tooltip (CalendarZoomControls): the hint names ⌘ on macOS.
+function isMacPlatform(): boolean {
+    if (typeof navigator === 'undefined') return false;
+    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+    const platform = nav.userAgentData?.platform || nav.platform || '';
+    return /mac/i.test(platform);
+}
+
+const hint = computed(() => {
+    if (!canAct.value) return props.labels.hover_hint;
+    return isMacPlatform() ? props.labels.hover_hint_select_mac : props.labels.hover_hint_select;
+});
+
+function onCreate(): void {
+    if (!canAct.value) return;
+    context?.openForm(props.meeting.id);
+}
 </script>
 
 <template>
@@ -38,10 +66,18 @@ defineProps<{
                 </template>
             </OutlookMeetingSummary>
             <p class="mt-3 text-xs text-text-tertiary" data-testid="outlook-hover-hint">
-                {{ labels.hover_hint }}
+                {{ hint }}
             </p>
-            <div v-if="$slots.actions" class="mt-3 flex justify-end gap-2">
+            <div v-if="canAct || $slots.actions" class="mt-3 flex justify-end gap-2">
                 <slot name="actions" />
+                <PrimaryButton
+                    v-if="canAct"
+                    type="button"
+                    :icon="ClockPlus"
+                    data-testid="outlook-hover-create"
+                    @click="onCreate">
+                    {{ labels.create_entry }}
+                </PrimaryButton>
             </div>
         </HoverCardContent>
     </HoverCardPortal>
