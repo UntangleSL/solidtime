@@ -218,7 +218,7 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 03.2-01-PLAN.md — Untangle token stylesheet, six accent presets per mode, Syne page titles, contrast gate over every theme x accent (wave 1)
+- [ ] 03.2-01-PLAN.md — Untangle token stylesheet, six accent presets per mode, contrast gate (no Syne, D-10) over every theme x accent (wave 1)
 - [ ] 03.2-02-PLAN.md — Fork module app/Appearance: user_appearance_settings, PUT /user/appearance, appearance prop, en/es copy, TS prop contract (wave 1)
 - [ ] 03.2-03-PLAN.md — Contrast fixes (timer button, pale accent link/check/progress), e2e timer assertions; wave-1 CI gate (wave 1)
 
