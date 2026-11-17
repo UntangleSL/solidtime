@@ -18,6 +18,8 @@ import {
     DropdownMenuItem,
     DropdownMenuLabel,
 } from '@/packages/ui/src';
+import OrganizationIcon from '@/branding/OrganizationIcon.vue';
+import { useOrganizationIcons } from '@/branding/organizationIcons';
 
 const page = usePage<{
     auth: {
@@ -26,6 +28,8 @@ const page = usePage<{
         };
     };
 }>();
+
+const { iconFor } = useOrganizationIcons();
 
 const switchToTeam = (organization: Organization) => {
     switchOrganization(organization.id);
@@ -39,10 +43,10 @@ const switchToTeam = (organization: Organization) => {
             as-child>
             <button data-testid="organization_switcher">
                 <div class="flex flex-1 space-x-2 items-center w-[calc(100%-30px)]">
-                    <div
-                        class="rounded bg-blue-900 font-medium text-xs flex-shrink-0 text-white w-5 h-5 flex items-center justify-center">
-                        {{ page.props.auth.user.current_team.name.slice(0, 1).toUpperCase() }}
-                    </div>
+                    <OrganizationIcon
+                        :name="page.props.auth.user.current_team.name"
+                        :icon-url="iconFor(page.props.auth.user.current_team.id)"
+                        size="sm" />
                     <span class="text-xs flex-1 truncate font-medium">
                         {{ page.props.auth.user.current_team.name }}
                     </span>
@@ -96,6 +100,10 @@ const switchToTeam = (organization: Organization) => {
                                         v-if="team.id == page.props.auth.user.current_team_id"
                                         class="h-5 w-5 text-green-400" />
                                     <ArrowRightIcon v-else class="h-5 w-5 text-icon-default" />
+                                    <OrganizationIcon
+                                        :name="team.name"
+                                        :icon-url="iconFor(team.id)"
+                                        size="sm" />
 
                                     <div class="w-full truncate text-left">
                                         {{ team.name }}

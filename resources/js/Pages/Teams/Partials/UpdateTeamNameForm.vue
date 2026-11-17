@@ -15,6 +15,7 @@ import { canManageBilling } from '@/utils/permissions';
 import { api } from '@/packages/api/src';
 import { useNotificationsStore } from '@/utils/notification';
 import { getApiValidationFieldErrors, isApiValidationError } from '@/utils/apiValidation';
+import OrganizationIconField from '@/branding/OrganizationIconField.vue';
 
 const props = defineProps<{
     team: Organization;
@@ -30,6 +31,7 @@ const errors = ref<Record<string, string>>({});
 const processing = ref(false);
 const recentlySuccessful = ref(false);
 const notifications = useNotificationsStore();
+const iconField = ref<InstanceType<typeof OrganizationIconField> | null>(null);
 let recentlySuccessfulTimeout: ReturnType<typeof setTimeout> | undefined;
 
 const updateTeamName = async () => {
@@ -48,6 +50,8 @@ const updateTeamName = async () => {
                 },
             }
         );
+        // Fork (03.2): upload a pending organization icon with the same Save; errors show under it.
+        await iconField.value?.commit();
         notifications.addNotification('success', 'Organization updated successfully');
         recentlySuccessful.value = true;
         if (recentlySuccessfulTimeout) {
@@ -56,7 +60,7 @@ const updateTeamName = async () => {
         recentlySuccessfulTimeout = setTimeout(() => {
             recentlySuccessful.value = false;
         }, 2000);
-        router.reload({ only: ['auth', 'team'] });
+        router.reload({ only: ['auth', 'team', 'appearance'] });
     } catch (error) {
         if (isApiValidationError(error)) {
             errors.value = getApiValidationFieldErrors(error);
@@ -108,6 +112,12 @@ const updateTeamName = async () => {
                     </Link>
                 </div>
             </div>
+
+            <OrganizationIconField
+                ref="iconField"
+                :organization="team"
+                :can-update="permissions.canUpdateTeam"
+                :disabled="processing" />
 
             <!-- Organization Name -->
             <Field class="col-span-6 sm:col-span-4">
