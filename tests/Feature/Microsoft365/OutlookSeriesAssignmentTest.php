@@ -548,7 +548,7 @@ class OutlookSeriesAssignmentTest extends TestCaseWithDatabase
         Member::factory()->forUser($colleague)->forOrganization($data->organization)->role(Role::Employee)->create();
         $colleague->currentOrganization()->associate($data->organization);
         $colleague->save();
-        $this->connectedAccount($colleague);
+        $this->connectedAccount($colleague, objectId: '00000000-0000-4000-8000-0000000000c2');
         $colleagueOccurrence = $this->occurrence($colleague, 'colleague-occ', '2026-10-20');
         $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
         $c = $this->occurrence($data->user, 'occ-c', '2026-10-19');
