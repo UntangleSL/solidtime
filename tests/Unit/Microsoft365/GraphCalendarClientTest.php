@@ -387,4 +387,18 @@ class GraphCalendarClientTest extends TestCase
         $this->assertSame('UTC', $utc->getTimezone()->getName());
         $this->assertNull($foreign);
     }
+
+    public function test_select_adds_attendees_and_nothing_else(): void
+    {
+        // Arrange
+        $phase3 = 'id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting';
+
+        // Act
+        $select = GraphCalendarClient::SELECT;
+
+        // Assert
+        $this->assertSame($phase3.',attendees', $select);
+        $this->assertStringNotContainsString('body', $select);
+        $this->assertStringNotContainsString('lastModifiedDateTime', $select);
+    }
 }

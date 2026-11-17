@@ -23,6 +23,11 @@ final class OutlookMeetingSyncService
 {
     private const int UPSERT_CHUNK = 200;
 
+    /**
+     * Attendee entries kept per meeting (D-09 minimisation); attendee_count keeps the real number.
+     */
+    public const int MAX_ATTENDEES = 50;
+
     public function __construct(
         private readonly GraphCalendarClient $client,
         private readonly OutlookMeetingEligibility $eligibility,
@@ -320,6 +325,8 @@ final class OutlookMeetingSyncService
         $organizer = $event['organizer'] ?? null;
         $organizerEmail = is_array($organizer) ? ($organizer['emailAddress'] ?? null) : null;
         $organizerName = is_array($organizerEmail) ? ($organizerEmail['name'] ?? null) : null;
+        $organizerAddress = $this->addressOrNull(is_array($organizerEmail) ? ($organizerEmail['address'] ?? null) : null);
+        $attendees = $this->attendees($event['attendees'] ?? null);
 
         $subject = $event['subject'] ?? null;
         $seriesMasterId = $event['seriesMasterId'] ?? null;
@@ -337,6 +344,10 @@ final class OutlookMeetingSyncService
             'starts_at' => $startsAt->format('Y-m-d H:i:s'),
             'ends_at' => $endsAt->format('Y-m-d H:i:s'),
             'organizer_name' => is_string($organizerName) ? Str::limit($organizerName, 255, '') : null,
+            'organizer_address' => $organizerAddress,
+            // Upsert bypasses the model casts: the jsonb column gets the encoded list
+            'attendees' => $attendees === null ? null : json_encode($attendees['list'], JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE),
+            'attendee_count' => $attendees === null ? null : $attendees['count'],
             'is_organizer' => ($event['isOrganizer'] ?? false) === true,
             'is_online_meeting' => ($event['isOnlineMeeting'] ?? false) === true,
             'show_as' => is_string($showAs) ? Str::limit($showAs, 20, '') : null,
@@ -344,6 +355,55 @@ final class OutlookMeetingSyncService
             'last_seen_at' => $seenAt->format('Y-m-d H:i:s'),
             'gone_at' => null,
         ];
+    }
+
+    /**
+     * Minimal attendee list (D-09): address, name and type only, never the response status. Rooms and
+     * equipment (type "resource") and entries without an address are skipped. The count is taken before
+     * the list is capped at MAX_ATTENDEES. Null when Graph sent no attendee list.
+     *
+     * @return array{list: list<array{address: string, name: string|null, type: string}>, count: int}|null
+     */
+    private function attendees(mixed $attendees): ?array
+    {
+        if (! is_array($attendees)) {
+            return null;
+        }
+
+        $kept = [];
+        foreach ($attendees as $attendee) {
+            if (! is_array($attendee)) {
+                continue;
+            }
+            $type = $attendee['type'] ?? null;
+            $type = is_string($type) ? strtolower(trim($type)) : 'required';
+            if ($type === 'resource') {
+                continue;
+            }
+            $emailAddress = $attendee['emailAddress'] ?? null;
+            $address = $this->addressOrNull(is_array($emailAddress) ? ($emailAddress['address'] ?? null) : null);
+            if ($address === null) {
+                continue;
+            }
+            $name = is_array($emailAddress) ? ($emailAddress['name'] ?? null) : null;
+            $kept[] = [
+                'address' => $address,
+                'name' => is_string($name) ? Str::limit($name, 255, '') : null,
+                'type' => Str::limit($type === '' ? 'required' : $type, 20, ''),
+            ];
+        }
+
+        return ['list' => array_slice($kept, 0, self::MAX_ATTENDEES), 'count' => count($kept)];
+    }
+
+    private function addressOrNull(mixed $address): ?string
+    {
+        if (! is_string($address)) {
+            return null;
+        }
+        $address = strtolower(trim($address));
+
+        return $address !== '' && strlen($address) <= 320 ? $address : null;
     }
 
     private function httpsUrlOrNull(mixed $url): ?string
@@ -373,6 +433,9 @@ final class OutlookMeetingSyncService
                 'starts_at',
                 'ends_at',
                 'organizer_name',
+                'organizer_address',
+                'attendees',
+                'attendee_count',
                 'is_organizer',
                 'is_online_meeting',
                 'show_as',

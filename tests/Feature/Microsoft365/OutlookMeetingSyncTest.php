@@ -18,7 +18,9 @@ use App\Models\Member;
 use App\Models\TimeEntry;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Closure;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -42,6 +44,8 @@ class OutlookMeetingSyncTest extends TestCaseWithDatabase
 {
     use InteractsWithGraphFixtures;
     use InteractsWithMicrosoft365;
+
+    private const string GRAPH_URL = 'https://graph.microsoft.com/v1.0/me/calendarView*';
 
     private function createUser(): User
     {
@@ -107,10 +111,49 @@ class OutlookMeetingSyncTest extends TestCaseWithDatabase
         $this->assertSame(
             'https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-19T00%3A00%3A00Z'
             .'&endDateTime=2026-11-16T00%3A00%3A00Z'
-            .'&$select=id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting'
+            .'&$select=id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting,attendees'
             .'&$orderby=start/dateTime&$top=100',
             $firstUrl
         );
+    }
+
+    public function test_sync_stores_attendees_and_the_organizer_address(): void
+    {
+        // Arrange
+        $user = $this->createUser();
+        $this->connectedAccount($user);
+        $this->fakeExperimentSelect(function (array $event): array {
+            if (str_contains((string) ($event['subject'] ?? ''), 'S1b]')) {
+                // Graph does not normalise case: the stored addresses are trimmed and lower-cased
+                $event['organizer']['emailAddress']['address'] = ' Person-A@Example.TEST ';
+                $event['attendees'][1]['emailAddress']['address'] = 'Person-B@Example.test';
+            }
+
+            return $event;
+        });
+
+        // Act
+        $outcome = $this->syncFixtureWindow($user);
+
+        // Assert
+        $this->assertSame(SyncStatus::Ok, $outcome->status);
+        $this->assertSame(12, OutlookMeeting::query()->where('user_id', '=', $user->getKey())->count());
+        $meeting = OutlookMeeting::query()
+            ->where('user_id', '=', $user->getKey())
+            ->where('subject', 'like', '%S1b]%')
+            ->firstOrFail();
+        $this->assertSame('person-a@example.test', $meeting->organizer_address);
+        $this->assertSame(2, $meeting->attendee_count);
+        $attendees = $meeting->attendees;
+        $this->assertIsArray($attendees);
+        $this->assertCount(2, $attendees);
+        // jsonb keeps the list order but not the key order of an object
+        $this->assertEquals(['address' => 'person-a@example.test', 'name' => 'Test User A', 'type' => 'required'], $attendees[0]);
+        $this->assertEquals(['address' => 'person-b@example.test', 'name' => 'Test User B', 'type' => 'required'], $attendees[1]);
+        foreach ($attendees as $attendee) {
+            $this->assertIsArray($attendee);
+            $this->assertArrayNotHasKey('status', $attendee);
+        }
     }
 
     public function test_s2_occurrences_are_stored_in_utc(): void
@@ -271,6 +314,25 @@ class OutlookMeetingSyncTest extends TestCaseWithDatabase
         $this->assertIsString($everything);
         $this->assertStringNotContainsString('SECRET', $everything);
         $this->assertStringNotContainsString('FAKE-non-utc-event', $everything);
+    }
+
+    /**
+     * Fakes calendarView with the recorded round A experiment-select pages, the pass that carries
+     * attendees, each event passed through $mutate when given.
+     *
+     * @param  (Closure(array<string, mixed>): array<string, mixed>)|null  $mutate
+     */
+    private function fakeExperimentSelect(?Closure $mutate = null): void
+    {
+        Config::set('microsoft365.graph.max_pages', 30);
+        $sequence = Http::sequence();
+        foreach ($this->graphPages('A', 'experiment-select') as $page) {
+            if ($mutate !== null && is_array($page['value'] ?? null)) {
+                $page['value'] = array_map($mutate, $page['value']);
+            }
+            $sequence->push($page);
+        }
+        Http::fake([self::GRAPH_URL => $sequence]);
     }
 
     /**
