@@ -36,12 +36,18 @@ import { useTagsStore } from '@/utils/useTags';
 import { useTasksQuery } from '@/utils/useTasksQuery';
 import { useTimeEntriesInfiniteQuery } from '@/utils/useTimeEntriesInfiniteQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
-import type { OutlookCalendarLabels, OutlookConversionResult, OutlookMeeting } from '@/m365/types';
+import type {
+    OutlookCalendarLabels,
+    OutlookConversionResult,
+    OutlookMeeting,
+    OutlookSuggestion,
+} from '@/m365/types';
 import OutlookAssignResults from './OutlookAssignResults.vue';
+import OutlookSuggestionPicks from './OutlookSuggestionPicks.vue';
 import { fillLabel } from './labels';
 import { readLastProject, rememberLastProject, resolvePrefillProject } from './lastProject';
 import { type PrefillReason, reasonIcon, reasonLabel } from './suggestionReason';
-import { type Prefill, resolveSinglePrefill } from './suggestions';
+import { type Prefill, quickPicks, resolveSinglePrefill } from './suggestions';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
 // Mini form that turns Outlook meetings into time entries (Phase 4). Single mode (UI-SPEC section
@@ -187,13 +193,41 @@ watch(
     { immediate: true }
 );
 
+// --- Quick picks (D-07): the candidates the user can switch to in one click. Only projects the
+// picker can show (loaded, not archived).
+type PickCandidate = Pick<
+    OutlookSuggestion,
+    'project_id' | 'project_name' | 'project_color' | 'client_name'
+> & { reason: PrefillReason };
+
+function usableProject(id: string): boolean {
+    return projects.value.some((project) => project.id === id && !project.is_archived);
+}
+
+const singleCandidates = computed<OutlookSuggestion[]>(() =>
+    isBatch
+        ? []
+        : (meeting.value.suggestions ?? []).filter((item) => usableProject(item.project_id))
+);
+const candidates = computed<PickCandidate[]>(() => singleCandidates.value);
+const picks = computed<PickCandidate[]>(() => quickPicks(singleCandidates.value, projectId.value));
+
+function onSuggestionPicked(id: string): void {
+    projectTouched = true;
+    projectId.value = id;
+    taskId.value = null;
+    void nextTick(focusSubmit);
+}
+
 // Why the project in the picker is there (RULE-05): the reason of the prefill while its project is
-// selected. A project the user picked by hand has no reason line.
+// selected, else the reason of the candidate it is. A project picked by hand that is not a
+// candidate has no reason line.
 const currentReason = computed<PrefillReason | null>(() => {
     const id = projectId.value;
     if (!id) return null;
     const applied = appliedPrefill.value;
-    return applied.projectId === id ? applied.reason : null;
+    if (applied.projectId === id) return applied.reason;
+    return candidates.value.find((item) => item.project_id === id)?.reason ?? null;
 });
 const currentReasonLabel = computed(() =>
     currentReason.value ? reasonLabel(currentReason.value, props.labels) : ''
@@ -591,6 +625,10 @@ onMounted(() => {
                             {{ currentReasonLabel }}
                         </span>
                     </p>
+                    <OutlookSuggestionPicks
+                        :candidates="picks"
+                        :labels="labels"
+                        @pick="onSuggestionPicked" />
                 </div>
                 <FieldError v-if="projectError" class="text-xs">
                     {{ labels.error_project_required }}

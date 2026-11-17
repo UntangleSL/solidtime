@@ -8,6 +8,7 @@ import type {
     OutlookCalendarLabels,
     OutlookConversionResult,
     OutlookMeeting,
+    OutlookSuggestion,
 } from '@/m365/types';
 import OutlookConvertForm from './OutlookConvertForm.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
@@ -143,6 +144,31 @@ function assignment(overrides: Partial<OutlookAssignment> = {}): OutlookAssignme
         converted_at: '2026-10-20T10:00:00Z',
         ...overrides,
     };
+}
+
+function suggestion(
+    projectId: string,
+    overrides: Partial<OutlookSuggestion> = {}
+): OutlookSuggestion {
+    return {
+        project_id: projectId,
+        project_name: 'Project ' + projectId,
+        project_color: '#42a5f5',
+        client_name: null,
+        confident: false,
+        reason: { kind: 'subject', count: 2, value: null },
+        ...overrides,
+    };
+}
+
+function chips(): HTMLElement[] {
+    return Array.from(
+        document.body.querySelectorAll<HTMLElement>('[data-testid="outlook-suggestion-pick"]')
+    );
+}
+
+function chipIds(): (string | null)[] {
+    return chips().map((chip) => chip.getAttribute('data-project-id'));
 }
 
 function reasonText(): string | null {
@@ -697,6 +723,137 @@ describe('OutlookConvertForm (series pre-assignment)', () => {
         await settle();
 
         expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
+    });
+});
+
+describe('OutlookConvertForm (learned suggestions)', () => {
+    beforeEach(() => {
+        state.projects = [
+            project('p-1', { is_billable: true }),
+            project('p-2'),
+            project('p-3'),
+            project('p-4', { is_billable: true }),
+            project('p-old', { is_archived: true }),
+        ];
+    });
+
+    function learned(): OutlookMeeting {
+        return meeting({
+            suggestions: [
+                suggestion('p-1', {
+                    confident: true,
+                    reason: { kind: 'domain', count: 4, value: 'client.com' },
+                }),
+                suggestion('p-3', { reason: { kind: 'person', count: 2, value: 'Ana López' } }),
+                suggestion('p-4'),
+            ],
+        });
+    }
+
+    it('opens with the confident top suggestion, its reason and the next two as chips', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-2');
+        mountForm(learned());
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-1');
+        expect(el('outlook-convert-billable').textContent).not.toContain('Non-Billable');
+        expect(el('outlook-convert-tags').textContent?.trim()).toBe('Tags');
+        expect(reasonText()).toBe('Like 4 meetings with @client.com');
+        expect(el('outlook-suggestion-picks').getAttribute('aria-label')).toBe('Other suggestions');
+        expect(chipIds()).toEqual(['p-3', 'p-4']);
+        expect(document.activeElement).toBe(el('outlook-convert-submit'));
+
+        el('outlook-convert-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![1]).toMatchObject({
+            project_id: 'p-1',
+            task_id: null,
+            tags: [],
+            billable: true,
+            prefill_source: 'suggestion',
+            prefill_project_id: 'p-1',
+        });
+    });
+
+    it('keeps the last-used project when the top is not confident and offers the best others', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-2');
+        mountForm(
+            meeting({ suggestions: [suggestion('p-1'), suggestion('p-2'), suggestion('p-3')] })
+        );
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-2');
+        expect(reasonText()).toBe('Last used');
+        expect(chipIds()).toEqual(['p-1', 'p-3']);
+    });
+
+    it('a chip sets its project, clears the task, keeps the tags, follows billable and focuses Create', async () => {
+        const w = mountForm(learned());
+        await settle();
+        const dropdown = w.findComponent({ name: 'TimeTrackerProjectTaskDropdown' });
+        dropdown.vm.$emit('update:task', 'task-9');
+        w.findComponent({ name: 'TagDropdown' }).vm.$emit('update:modelValue', ['t-1']);
+        await settle();
+
+        chips()[0]!.click();
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-3');
+        expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
+        expect(el('outlook-convert-tags').textContent?.trim()).toBe('1 Tag');
+        expect(document.activeElement).toBe(el('outlook-convert-submit'));
+        expect(reasonText()).toBe('Like 2 meetings with Ana López');
+        expect(chipIds()).toEqual(['p-1', 'p-4']);
+
+        el('outlook-convert-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![1]).toMatchObject({
+            project_id: 'p-3',
+            task_id: null,
+            tags: ['t-1'],
+            billable: false,
+            prefill_source: 'suggestion',
+            prefill_project_id: 'p-1',
+        });
+    });
+
+    it('hides the reason line for a project picked by hand that is not a candidate', async () => {
+        const w = mountForm(learned());
+        await settle();
+
+        pickProject(w, 'p-2');
+        await settle();
+
+        expect(reasonText()).toBeNull();
+        expect(chipIds()).toEqual(['p-1', 'p-3']);
+    });
+
+    it('shows no reason line and no chip group without history', async () => {
+        mountForm(meeting({ suggestions: [] }));
+        await settle();
+
+        expect(reasonText()).toBeNull();
+        expect(document.body.querySelector('[data-testid="outlook-suggestion-picks"]')).toBeNull();
+        expect(chips()).toHaveLength(0);
+    });
+
+    it('never offers an archived or unknown project and never prefills it', async () => {
+        mountForm(
+            meeting({
+                suggestions: [
+                    suggestion('p-old', { confident: true }),
+                    suggestion('p-gone'),
+                    suggestion('p-2'),
+                ],
+            })
+        );
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('No Project');
+        expect(reasonText()).toBeNull();
+        expect(chipIds()).toEqual(['p-2']);
     });
 });
 
