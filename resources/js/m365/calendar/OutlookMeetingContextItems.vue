@@ -1,6 +1,18 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref } from 'vue';
-import { Check, ClockPlus, ExternalLink, Eye, EyeOff, ListChecks, Pencil, X } from '@lucide/vue';
+import {
+    CalendarOff,
+    Check,
+    ClockPlus,
+    ExternalLink,
+    Eye,
+    EyeOff,
+    ListChecks,
+    Pencil,
+    Undo2,
+    Unlink,
+    X,
+} from '@lucide/vue';
 import {
     ContextMenuItem,
     ContextMenuLabel,
@@ -9,7 +21,7 @@ import {
 import type { OutlookMeeting } from '@/m365/types';
 import OutlookProjectDot from './OutlookProjectDot.vue';
 import { safeHttpsUrl } from './safeUrl';
-import { isPreassigned } from './suggestions';
+import { isPreassigned, isRecurring } from './suggestions';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
 // Items of the meeting context menu (UI-SPEC 3.1 section 4, D-06; Phase 4 UI-SPEC section 4),
@@ -19,7 +31,8 @@ import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 // changes or deletes a time entry itself. It always acts on the right-clicked meeting only. Meeting
 // values are only ever rendered through text interpolation.
 // Phase 5 (UI-SPEC section 4): a pre-assigned meeting offers Confirm (with its project as a hint)
-// and Edit in place of "Create time entry".
+// and Edit in place of "Create time entry"; recurring meetings get the series controls (always
+// ignore / stop ignoring / forget this series).
 const props = defineProps<{
     element: HTMLElement;
 }>();
@@ -104,21 +117,33 @@ function syncButton(): HTMLElement | null {
     return document.querySelector<HTMLElement>('[data-testid="outlook-sync-button"]');
 }
 
-// Same rules as the detail panel (Phase 3 03-09 / 03-10): after a dismiss the next meeting of the
-// day gets focus (the previous one for the last), the same block while dismissed meetings are
-// shown, else the Sync button. A restore keeps focus on that meeting.
-async function onDismiss(): Promise<void> {
-    const current = meeting.value;
-    if (!context || !current) return;
-    const menu = rootEl.value?.closest('[role="menu"]') ?? null;
+// Same rules as the detail panel (Phase 3 03-09 / 03-10, Phase 5 UI-SPEC section 5): after a
+// dismiss or "Always ignore this series" the next meeting of the day that stays in the lane gets
+// focus (the previous one for the last), the same block while dismissed meetings are shown (the
+// meeting turns faded instead of leaving), else the Sync button. `leaving` are the ids that leave
+// the lane with the action (the meeting itself, or every occurrence of its series).
+async function hideAndRefocus(
+    current: OutlookMeeting,
+    leaving: ReadonlySet<string>,
+    action: (id: string) => Promise<void>
+): Promise<void> {
+    if (!context) return;
+    const menu = menuOf();
     const group = props.element.closest('[role="group"]');
     const stays = context.includeDismissed.value === true;
     const blocks = group ? Array.from(group.querySelectorAll<HTMLElement>('[data-ghost-id]')) : [];
     const index = blocks.findIndex((block) => block.dataset.ghostId === current.id);
-    const neighbour = index === -1 ? null : (blocks[index + 1] ?? blocks[index - 1] ?? null);
+    const remains = (block: HTMLElement | undefined): boolean =>
+        block !== undefined && !leaving.has(block.dataset.ghostId ?? '');
+    const neighbour =
+        index === -1
+            ? null
+            : (blocks.slice(index + 1).find(remains) ??
+              blocks.slice(0, index).reverse().find(remains) ??
+              null);
     const targetId = stays ? current.id : (neighbour?.dataset.ghostId ?? null);
 
-    void context.dismiss(current.id);
+    void action(current.id);
     await afterMenuClosed(menu);
 
     const root: ParentNode = group?.isConnected ? group : document;
@@ -126,12 +151,39 @@ async function onDismiss(): Promise<void> {
     (target ?? syncButton())?.focus();
 }
 
+// Restore, "Stop ignoring this series" and "Forget this series" keep focus on the same meeting.
+async function actAndKeepFocus(
+    current: OutlookMeeting,
+    action: (id: string) => Promise<void>
+): Promise<void> {
+    const menu = menuOf();
+    const group = props.element.closest('[role="group"]');
+
+    void action(current.id);
+    await afterMenuClosed(menu);
+
+    const root: ParentNode = group?.isConnected ? group : document;
+    blockIn(root, current.id)?.focus();
+}
+
+async function onDismiss(): Promise<void> {
+    const current = meeting.value;
+    if (!context || !current) return;
+    await hideAndRefocus(current, new Set([current.id]), context.dismiss);
+}
+
+async function onRestore(): Promise<void> {
+    const current = meeting.value;
+    if (!context || !current) return;
+    await actAndKeepFocus(current, context.restore);
+}
+
 // The panel opens in form mode only after the menu has closed (3.1 layering rule: never a panel
 // while the menu is open); the lane's formRequest watcher does the opening.
 async function onCreate(): Promise<void> {
     const current = meeting.value;
     if (!context || !current || !canAct.value) return;
-    const menu = rootEl.value?.closest('[role="menu"]') ?? null;
+    const menu = menuOf();
     await afterMenuClosed(menu);
     context.openForm(current.id);
 }
@@ -154,17 +206,35 @@ async function onEdit(): Promise<void> {
     context.openForm(current.id);
 }
 
-async function onRestore(): Promise<void> {
+// Series controls (D-10, D-11): "Always ignore" on a recurring meeting that is not ignored, "Stop
+// ignoring" on a (faded) occurrence of an ignored series, "Forget" on a pre-assigned meeting.
+const recurring = computed(
+    () => canAct.value && meeting.value !== null && isRecurring(meeting.value)
+);
+const seriesIgnored = computed(() => recurring.value && meeting.value?.series_ignored === true);
+
+async function onIgnoreSeries(): Promise<void> {
     const current = meeting.value;
-    if (!context || !current) return;
-    const menu = rootEl.value?.closest('[role="menu"]') ?? null;
-    const group = props.element.closest('[role="group"]');
+    if (!context || !current || !recurring.value || seriesIgnored.value) return;
+    const leaving = new Set(
+        context.meetings.value
+            .filter((candidate) => candidate.series_key === current.series_key)
+            .map((candidate) => candidate.id)
+    );
+    leaving.add(current.id);
+    await hideAndRefocus(current, leaving, context.ignoreSeries);
+}
 
-    void context.restore(current.id);
-    await afterMenuClosed(menu);
+async function onUnignoreSeries(): Promise<void> {
+    const current = meeting.value;
+    if (!context || !current || !seriesIgnored.value) return;
+    await actAndKeepFocus(current, context.unignoreSeries);
+}
 
-    const root: ParentNode = group?.isConnected ? group : document;
-    blockIn(root, current.id)?.focus();
+async function onForgetSeries(): Promise<void> {
+    const current = meeting.value;
+    if (!context || !current || assignment.value === null) return;
+    await actAndKeepFocus(current, context.forgetSeries);
 }
 </script>
 
@@ -240,6 +310,30 @@ async function onRestore(): Promise<void> {
                 @select="onDismiss()">
                 <EyeOff class="w-4 h-4 text-icon-default" aria-hidden="true" />
                 <span>{{ labels.dismiss }}</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+                v-if="seriesIgnored"
+                class="space-x-3"
+                data-testid="outlook-menu-unignore-series"
+                @select="onUnignoreSeries()">
+                <Undo2 class="w-4 h-4 text-icon-default" aria-hidden="true" />
+                <span>{{ labels.unignore_series }}</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+                v-else-if="recurring"
+                class="space-x-3"
+                data-testid="outlook-menu-ignore-series"
+                @select="onIgnoreSeries()">
+                <CalendarOff class="w-4 h-4 text-icon-default" aria-hidden="true" />
+                <span>{{ labels.ignore_series }}</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+                v-if="assignment"
+                class="space-x-3"
+                data-testid="outlook-menu-forget-series"
+                @select="onForgetSeries()">
+                <Unlink class="w-4 h-4 text-icon-default" aria-hidden="true" />
+                <span>{{ labels.forget_series }}</span>
             </ContextMenuItem>
         </template>
     </div>
