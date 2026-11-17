@@ -265,7 +265,10 @@ class OutlookSeriesAssignmentTest extends TestCaseWithDatabase
         $this->assertNull($this->assignmentOf($read, $d));
         foreach ($read->json('data') as $item) {
             $this->assertFalse($item['series_ignored']);
-            $this->assertSame([], $item['suggestions']);
+        }
+        // A pre-assigned occurrence carries no learned suggestion; the single meeting may (05-09)
+        foreach ([$b, $c] as $occurrence) {
+            $this->assertSame([], $this->item($read, $occurrence)['suggestions']);
         }
     }
 

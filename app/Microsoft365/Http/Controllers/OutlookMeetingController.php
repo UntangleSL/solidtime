@@ -12,6 +12,7 @@ use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Microsoft365\Suggestions\MeetingHints;
+use App\Microsoft365\Suggestions\MeetingSuggester;
 use App\Microsoft365\Suggestions\SeriesAssignmentResolver;
 use App\Models\Member;
 use App\Models\Organization;
@@ -36,7 +37,9 @@ use Illuminate\Support\Facades\DB;
  * Each meeting of the read also carries its hints (Phase 5 D-02): an occurrence of a series the user
  * already converted comes pre-assigned to the project of the latest conversion. The read never converts
  * anything (D-03). Occurrences of a series the user chose to ignore are left out like dismissed ones and
- * come back only with include_dismissed (D-10).
+ * come back only with include_dismissed (D-10). Every other visible meeting carries up to three learned
+ * project suggestions ranked from the user's own past conversions (RULE-03); they are only offered,
+ * never pre-assigned (D-08).
  */
 class OutlookMeetingController extends Controller
 {
@@ -46,7 +49,7 @@ class OutlookMeetingController extends Controller
      * Cache read: never calls Graph, so the calendar can always render what it has (SYNC-01).
      * The range is half-open [start, end): a meeting touching only a boundary is not part of it.
      */
-    public function index(MeetingRangeRequest $request, SeriesAssignmentResolver $resolver): AnonymousResourceCollection
+    public function index(MeetingRangeRequest $request, SeriesAssignmentResolver $resolver, MeetingSuggester $suggester): AnonymousResourceCollection
     {
         $user = $this->sessionUser($request->user());
         $start = $request->rangeStart();
@@ -117,11 +120,23 @@ class OutlookMeetingController extends Controller
                 && ! isset($ignoredSeries[$meeting->series_master_id])),
         );
 
+        // Learned suggestions (RULE-03), ranked once per read for the meetings without a series assignment
+        // that are neither dismissed nor of an ignored series; the cost does not grow with the number of
+        // meetings (D-12). Suggestions are only offered in the dialog, never pre-assigned (D-08).
+        $suggestions = $organization === null ? [] : $suggester->forMeetings(
+            $user,
+            $organization,
+            $meetings->filter(fn (OutlookMeeting $meeting): bool => ! isset($assignments[$meeting->id])
+                && $meeting->dismissed_at === null
+                && ! ($meeting->series_master_id !== null && isset($ignoredSeries[$meeting->series_master_id]))),
+        );
+
         $resources = $meetings->map(fn (OutlookMeeting $meeting): OutlookMeetingResource => new OutlookMeetingResource(
             $meeting,
             new MeetingHints(
                 assignment: $assignments[$meeting->id] ?? null,
                 seriesIgnored: $meeting->series_master_id !== null && isset($ignoredSeries[$meeting->series_master_id]),
+                suggestions: $suggestions[$meeting->id] ?? [],
             ),
         ));
 

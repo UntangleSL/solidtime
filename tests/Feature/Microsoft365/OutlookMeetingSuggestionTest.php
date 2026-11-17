@@ -1,0 +1,305 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\Microsoft365;
+
+use App\Enums\Role;
+use App\Http\Controllers\Api\V1\TimeEntryController;
+use App\Http\Requests\V1\TimeEntry\TimeEntryStoreRequest;
+use App\Microsoft365\Graph\GraphAccessGuard;
+use App\Microsoft365\Http\Controllers\MeetingConversionController;
+use App\Microsoft365\Http\Controllers\OutlookMeetingController;
+use App\Microsoft365\Http\Controllers\OutlookSeriesController;
+use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
+use App\Microsoft365\Http\Requests\MeetingConversionRequest;
+use App\Microsoft365\Http\Requests\MeetingRangeRequest;
+use App\Microsoft365\Http\Resources\OutlookMeetingResource;
+use App\Microsoft365\Microsoft365ServiceProvider;
+use App\Microsoft365\MicrosoftConfig;
+use App\Microsoft365\Models\MicrosoftAccount;
+use App\Microsoft365\Models\OutlookMeeting;
+use App\Microsoft365\Models\OutlookMeetingLink;
+use App\Microsoft365\Models\OutlookSeriesSetting;
+use App\Microsoft365\Suggestions\Assignment;
+use App\Microsoft365\Suggestions\BookableProjects;
+use App\Microsoft365\Suggestions\MeetingHints;
+use App\Microsoft365\Suggestions\MeetingSignalInput;
+use App\Microsoft365\Suggestions\MeetingSignals;
+use App\Microsoft365\Suggestions\MeetingSuggester;
+use App\Microsoft365\Suggestions\ProjectSuggestionEngine;
+use App\Microsoft365\Suggestions\Reason;
+use App\Microsoft365\Suggestions\SeriesAssignmentResolver;
+use App\Microsoft365\Suggestions\SeriesKey;
+use App\Microsoft365\Suggestions\SubjectTokenizer;
+use App\Microsoft365\Suggestions\Suggestion;
+use App\Microsoft365\Suggestions\SuggestionHistory;
+use App\Microsoft365\TimeEntries\CoreTimeEntryCreator;
+use App\Models\Client;
+use App\Models\Member;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
+use Illuminate\Support\Carbon;
+use Illuminate\Testing\TestResponse;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\UsesClass;
+use Tests\Feature\Microsoft365\Support\InteractsWithGraphFixtures;
+use Tests\Feature\Microsoft365\Support\InteractsWithMicrosoft365;
+use Tests\TestCaseWithDatabase;
+
+/**
+ * Learned project suggestions in the calendar read (Phase 5 RULE-03, RULE-05; D-06, D-07, D-08, D-09,
+ * D-11, D-12, D-14): every meeting without a series assignment comes with up to three projects ranked
+ * from the session user's own conversions in the current organization, each explained by one short
+ * reason. Conversions go through the real convert endpoint, so the signals are the ones 05-05 stores.
+ * Meetings have no subject unless a test needs one, so subject words never add noise to the ranking.
+ */
+#[CoversClass(MeetingSuggester::class)]
+#[CoversClass(SuggestionHistory::class)]
+#[UsesClass(ProjectSuggestionEngine::class)]
+#[UsesClass(Suggestion::class)]
+#[UsesClass(Reason::class)]
+#[UsesClass(MeetingSignals::class)]
+#[UsesClass(MeetingSignalInput::class)]
+#[UsesClass(SubjectTokenizer::class)]
+#[UsesClass(BookableProjects::class)]
+#[UsesClass(SeriesAssignmentResolver::class)]
+#[UsesClass(Assignment::class)]
+#[UsesClass(MeetingHints::class)]
+#[UsesClass(SeriesKey::class)]
+#[UsesClass(OutlookMeetingController::class)]
+#[UsesClass(OutlookSeriesController::class)]
+#[UsesClass(OutlookMeetingResource::class)]
+#[UsesClass(MeetingRangeRequest::class)]
+#[UsesClass(MeetingConversionController::class)]
+#[UsesClass(MeetingConversionRequest::class)]
+#[UsesClass(CoreTimeEntryCreator::class)]
+#[UsesClass(OutlookMeetingLink::class)]
+#[UsesClass(OutlookMeeting::class)]
+#[UsesClass(OutlookSeriesSetting::class)]
+#[UsesClass(MicrosoftAccount::class)]
+#[UsesClass(GraphAccessGuard::class)]
+#[UsesClass(EnsureMicrosoftIsEnabled::class)]
+#[UsesClass(MicrosoftConfig::class)]
+#[UsesClass(Microsoft365ServiceProvider::class)]
+#[UsesClass(TimeEntryController::class)]
+#[UsesClass(TimeEntryStoreRequest::class)]
+class OutlookMeetingSuggestionTest extends TestCaseWithDatabase
+{
+    use InteractsWithGraphFixtures;
+    use InteractsWithMicrosoft365;
+
+    private const string WEEK_START = '2026-10-19T00:00:00Z';
+
+    private const string WEEK_END = '2026-10-26T00:00:00Z';
+
+    private const string SERIES = 'series-1';
+
+    /**
+     * An employee of a fresh organization, signed in on the web guard with a connected account.
+     *
+     * @return object{user: User, organization: Organization, member: Member, owner: User, ownerMember: Member}
+     */
+    private function employee(): object
+    {
+        $this->configureMicrosoft365();
+        $data = $this->createUserWithRole(Role::Employee);
+        $data->user->save();
+        $this->connectedAccount($data->user);
+        $this->actingAs($data->user);
+
+        return $data;
+    }
+
+    private function publicProject(Organization $organization, ?Client $client = null): Project
+    {
+        return Project::factory()->forOrganization($organization)->forClient($client)->isPublic()->create();
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     */
+    private function meeting(User $user, string $graphId, array $overrides = []): OutlookMeeting
+    {
+        return OutlookMeeting::query()->create(array_merge([
+            'user_id' => $user->getKey(),
+            'graph_id' => $graphId,
+            'event_type' => 'singleInstance',
+            'subject' => null,
+            'starts_at' => '2026-10-20 09:00:00',
+            'ends_at' => '2026-10-20 10:00:00',
+            'organizer_name' => 'Org Name',
+            'is_organizer' => false,
+            'is_online_meeting' => true,
+            'web_link' => 'https://outlook.office.com/owa/?itemid='.$graphId,
+            'last_seen_at' => '2026-10-19 00:00:00',
+        ], $overrides));
+    }
+
+    /**
+     * A one-hour single meeting with the given attendees (address, display name or null).
+     *
+     * @param  list<array{0: string, 1: string|null}>  $people
+     * @param  array<string, mixed>  $overrides
+     */
+    private function single(User $user, string $graphId, string $start, array $people, array $overrides = []): OutlookMeeting
+    {
+        $startsAt = Carbon::parse($start, 'UTC');
+
+        return $this->meeting($user, $graphId, array_merge([
+            'starts_at' => $startsAt->format('Y-m-d H:i:s'),
+            'ends_at' => $startsAt->copy()->addHour()->format('Y-m-d H:i:s'),
+            'attendees' => array_map(
+                fn (array $person): array => ['address' => $person[0], 'name' => $person[1], 'type' => 'required'],
+                $people,
+            ),
+            'attendee_count' => count($people),
+        ], $overrides));
+    }
+
+    /**
+     * An occurrence of a recurring series on the given day, 09:00-10:00 UTC, with the given attendees.
+     *
+     * @param  list<array{0: string, 1: string|null}>  $people
+     */
+    private function occurrence(User $user, string $graphId, string $day, array $people, string $series = self::SERIES): OutlookMeeting
+    {
+        return $this->single($user, $graphId, $day.' 09:00:00', $people, [
+            'event_type' => 'occurrence',
+            'series_master_id' => $series,
+            'original_start' => $day.' 09:00:00',
+        ]);
+    }
+
+    /**
+     * Converts one meeting to a project (no task, no tags, not billable) and returns the entry id.
+     */
+    private function convertTo(Organization $organization, OutlookMeeting $meeting, Project $project): string
+    {
+        $response = $this->postJson(route('microsoft.meetings.convert', ['organization' => $organization->getKey()], false), [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        $entryId = $response->json('results.0.time_entry_id');
+        $this->assertIsString($entryId);
+
+        return $entryId;
+    }
+
+    /**
+     * @param  array<string, mixed>  $extra
+     */
+    private function read(string $start = self::WEEK_START, string $end = self::WEEK_END, array $extra = []): TestResponse
+    {
+        return $this->getJson(route('microsoft.meetings.index', ['start' => $start, 'end' => $end] + $extra, false));
+    }
+
+    /**
+     * The serialized meeting with this id in a read.
+     *
+     * @return array<string, mixed>
+     */
+    private function item(TestResponse $response, OutlookMeeting $meeting): array
+    {
+        $data = $response->json('data');
+        $this->assertIsArray($data);
+        foreach ($data as $item) {
+            if (is_array($item) && ($item['id'] ?? null) === $meeting->id) {
+                return $item;
+            }
+        }
+        $this->fail('Meeting '.$meeting->graph_id.' is not in the read');
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function suggestionsOf(TestResponse $response, OutlookMeeting $meeting): array
+    {
+        $suggestions = $this->item($response, $meeting)['suggestions'];
+        $this->assertIsArray($suggestions);
+        $this->assertTrue(array_is_list($suggestions));
+        $this->assertLessThanOrEqual(3, count($suggestions));
+
+        /** @var list<array<string, mixed>> $suggestions */
+        return $suggestions;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function suggestedProjectIds(TestResponse $response, OutlookMeeting $meeting): array
+    {
+        return array_map(fn (array $suggestion): string => (string) $suggestion['project_id'], $this->suggestionsOf($response, $meeting));
+    }
+
+    /**
+     * Two past conversions to the project with people from client.test (ana and luis).
+     */
+    private function twoClientConversions(Organization $organization, User $user, Project $project, string $day = '2026-10-19'): void
+    {
+        $people = [['ana@client.test', 'Ana'], ['luis@client.test', 'Luis']];
+        $this->convertTo($organization, $this->single($user, 'hist-1', $day.' 09:00:00', $people), $project);
+        $this->convertTo($organization, $this->single($user, 'hist-2', $day.' 11:00:00', $people), $project);
+    }
+
+    public function test_two_conversions_with_a_client_domain_suggest_that_project(): void
+    {
+        // Arrange: two conversions to P with people at client.test, four to Q with people at other.test
+        $data = $this->employee();
+        $clientCo = Client::factory()->forOrganization($data->organization)->create(['name' => 'Client Co']);
+        $p = $this->publicProject($data->organization, $clientCo);
+        $q = $this->publicProject($data->organization);
+        $this->twoClientConversions($data->organization, $data->user, $p);
+        foreach (range(0, 3) as $index) {
+            $other = $this->single($data->user, 'other-'.$index, '2026-10-20 '.(9 + $index).':00:00', [['pat'.$index.'@other.test', 'Pat'], ['kim@other.test', 'Kim']]);
+            $this->convertTo($data->organization, $other, $q);
+        }
+        $next = $this->single($data->user, 'next', '2026-10-22 09:00:00', [['eva@client.test', 'Eva']]);
+
+        // Act
+        $read = $this->read();
+
+        // Assert: P first, confident, explained by the shared domain; no score, nothing pre-assigned
+        $read->assertOk();
+        $this->assertSame([$next->id], $read->json('data.*.id'));
+        $suggestions = $this->suggestionsOf($read, $next);
+        $this->assertNotEmpty($suggestions);
+        $this->assertSame([
+            'project_id' => $p->getKey(),
+            'confident' => true,
+            'reason' => ['kind' => 'domain', 'count' => 2, 'value' => 'client.test'],
+            'project_name' => $p->name,
+            'project_color' => $p->color,
+            'client_name' => 'Client Co',
+        ], $suggestions[0]);
+        $this->assertNotContains($q->getKey(), $this->suggestedProjectIds($read, $next));
+        $this->assertNull($this->item($read, $next)['assignment']);
+    }
+
+    public function test_meeting_with_an_assignment_has_no_suggestions(): void
+    {
+        // Arrange: one occurrence of the series converted to P; a single meeting with the same people
+        $data = $this->employee();
+        $p = $this->publicProject($data->organization);
+        $people = [['ana@client.test', 'Ana'], ['luis@client.test', 'Luis']];
+        $a = $this->occurrence($data->user, 'occ-a', '2026-10-20', $people);
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22', $people);
+        $single = $this->single($data->user, 'single', '2026-10-21 11:00:00', $people);
+        $this->convertTo($data->organization, $a, $p);
+
+        // Act
+        $read = $this->read();
+
+        // Assert: the pre-assigned occurrence carries no suggestion, the single meeting does
+        $read->assertOk();
+        $this->assertSame($p->getKey(), $this->item($read, $b)['assignment']['project_id'] ?? null);
+        $this->assertSame([], $this->suggestionsOf($read, $b));
+        $this->assertNull($this->item($read, $single)['assignment']);
+        $this->assertSame([$p->getKey()], $this->suggestedProjectIds($read, $single));
+    }
+}
