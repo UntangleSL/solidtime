@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computed, nextTick } from 'vue';
+import { computed, defineComponent, h, nextTick } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
+import { HoverCardRoot, HoverCardTrigger } from 'reka-ui';
 import OutlookGhostLayer from './OutlookGhostLayer.vue';
+import OutlookMeetingHoverCard from './OutlookMeetingHoverCard.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
 import { resetHoverCardDelay } from './hoverCardDelay';
 import type { CalendarSettings } from '@/packages/ui/src/FullCalendar/calendarSettings';
@@ -24,6 +26,9 @@ const labels = {
     restore: 'Restore meeting',
     dismissed_suffix: ', dismissed',
     hover_hint: 'Click for details',
+    hover_hint_select: 'Click for details. Ctrl+click to select several.',
+    hover_hint_select_mac: 'Click for details. ⌘+click to select several.',
+    create_entry: 'Create time entry',
 } as OutlookCalendarLabels;
 
 const settings: CalendarSettings = { snapMinutes: 15, startHour: 0, endHour: 24, slotMinutes: 15 };
@@ -267,5 +272,159 @@ describe('Outlook meeting hover card', () => {
         await advance(400);
 
         expect(card()?.textContent).toContain('Outlook meeting · Dismissed');
+    });
+});
+
+// The card on its own, open, inside a HoverCardRoot as the lane supplies it.
+describe('Outlook meeting hover card actions', () => {
+    let standalone: VueWrapper | null = null;
+    const platform = Object.getOwnPropertyDescriptor(navigator, 'platform');
+
+    function setPlatform(value: string): void {
+        Object.defineProperty(navigator, 'platform', { value, configurable: true });
+    }
+
+    function mountCard(
+        context: Partial<OutlookMeetingsContext> | null,
+        slots: { actions?: () => unknown } = {}
+    ) {
+        const Host = defineComponent({
+            setup() {
+                return () =>
+                    h(
+                        HoverCardRoot,
+                        { open: true },
+                        {
+                            default: () => [
+                                h(
+                                    HoverCardTrigger,
+                                    { asChild: true },
+                                    {
+                                        default: () =>
+                                            h('div', { 'data-testid': 'trigger' }, 'meeting'),
+                                    }
+                                ),
+                                h(
+                                    OutlookMeetingHoverCard,
+                                    { meeting: meeting(), labels },
+                                    slots.actions ? { actions: slots.actions } : {}
+                                ),
+                            ],
+                        }
+                    );
+            },
+        });
+        standalone = mount(Host, {
+            attachTo: document.body,
+            global: {
+                provide: {
+                    ...(context ? { [OUTLOOK_MEETINGS_KEY as symbol]: context } : {}),
+                    organization: computed(() => ({ time_format: '24-hours' })),
+                },
+            },
+        });
+        return standalone;
+    }
+
+    function hint(): string {
+        return (
+            document.body
+                .querySelector('[data-testid="outlook-hover-hint"]')
+                ?.textContent?.trim() ?? ''
+        );
+    }
+
+    function createButton(): HTMLButtonElement | null {
+        return document.body.querySelector<HTMLButtonElement>(
+            '[data-testid="outlook-hover-create"]'
+        );
+    }
+
+    function actingContext() {
+        const openForm = vi.fn();
+        return {
+            context: { canAct: { value: true }, openForm } as unknown as OutlookMeetingsContext,
+            openForm,
+        };
+    }
+
+    beforeEach(() => {
+        setPlatform('Win32');
+    });
+
+    afterEach(() => {
+        standalone?.unmount();
+        standalone = null;
+        if (platform) Object.defineProperty(navigator, 'platform', platform);
+        else delete (navigator as unknown as Record<string, unknown>).platform;
+    });
+
+    it('with canAct shows the select hint and a "Create time entry" button', async () => {
+        mountCard(actingContext().context);
+        await nextTick();
+
+        expect(card()).not.toBeNull();
+        expect(hint()).toBe('Click for details. Ctrl+click to select several.');
+        const button = createButton();
+        expect(button?.textContent?.trim()).toBe('Create time entry');
+        expect(button?.getAttribute('type')).toBe('button');
+    });
+
+    it('names the Cmd key on macOS', async () => {
+        setPlatform('MacIntel');
+        mountCard(actingContext().context);
+        await nextTick();
+
+        expect(hint()).toBe('Click for details. ⌘+click to select several.');
+    });
+
+    it("the button asks the context for the meeting's form once", async () => {
+        const { context, openForm } = actingContext();
+        mountCard(context);
+        await nextTick();
+
+        createButton()?.click();
+        await nextTick();
+
+        expect(openForm).toHaveBeenCalledTimes(1);
+        expect(openForm).toHaveBeenCalledWith('m-1');
+        // The card never hosts the form itself (D-17)
+        expect(card()?.querySelector('input')).toBeNull();
+    });
+
+    it('without canAct keeps the plain hint and offers no button', async () => {
+        mountCard({ canAct: { value: false } } as unknown as OutlookMeetingsContext);
+        await nextTick();
+
+        expect(hint()).toBe('Click for details');
+        expect(createButton()).toBeNull();
+    });
+
+    it('without a provided context keeps the plain hint and offers no button', async () => {
+        mountCard(null);
+        await nextTick();
+
+        expect(hint()).toBe('Click for details');
+        expect(createButton()).toBeNull();
+    });
+
+    it("still renders the caller's actions slot beside the button", async () => {
+        mountCard(actingContext().context, {
+            actions: () => h('button', { 'data-testid': 'extra-action' }, 'Extra'),
+        });
+        await nextTick();
+
+        const row = createButton()?.parentElement;
+        expect(row?.querySelector('[data-testid="extra-action"]')).not.toBeNull();
+    });
+
+    it('renders the slot row without canAct when the caller fills it', async () => {
+        mountCard(null, {
+            actions: () => h('button', { 'data-testid': 'extra-action' }, 'Extra'),
+        });
+        await nextTick();
+
+        expect(document.body.querySelector('[data-testid="extra-action"]')).not.toBeNull();
+        expect(createButton()).toBeNull();
     });
 });
