@@ -93,6 +93,39 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
         menuAtConfirm.push(menu() !== null);
         return null;
     });
+    // Series actions mirror the optimistic composable: ignoring hides every occurrence of the series
+    // (or fades them while dismissed meetings are shown), stop ignoring un-fades them, forget drops
+    // their pre-assignment.
+    const seriesOf = (id: string) => list.value.find((m) => m.id === id)?.series_key ?? null;
+    const ignoreSeries = vi.fn(async (id: string) => {
+        const key = seriesOf(id);
+        if (key === null) return;
+        if (includeDismissed.value) {
+            list.value = list.value.map((m) =>
+                m.series_key === key ? { ...m, series_ignored: true } : m
+            );
+        } else {
+            const gone = list.value.filter((m) => m.series_key === key).map((m) => m.id);
+            list.value = list.value.filter((m) => m.series_key !== key);
+            gone.forEach((goneId) =>
+                document
+                    .querySelectorAll(`[data-ghost-id="${goneId}"]`)
+                    .forEach((el) => el.remove())
+            );
+        }
+    });
+    const unignoreSeries = vi.fn(async (id: string) => {
+        const key = seriesOf(id);
+        list.value = list.value.map((m) =>
+            key !== null && m.series_key === key ? { ...m, series_ignored: false } : m
+        );
+    });
+    const forgetSeries = vi.fn(async (id: string) => {
+        const key = seriesOf(id);
+        list.value = list.value.map((m) =>
+            key !== null && m.series_key === key ? { ...m, assignment: null } : m
+        );
+    });
     const pending = new Set<string>(options.pending ?? []);
     const isConfirmPending = vi.fn((id: string) => pending.has(id));
     const selection = useOutlookSelection();
@@ -106,6 +139,9 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
         openForm,
         confirmOne,
         isConfirmPending,
+        ignoreSeries,
+        unignoreSeries,
+        forgetSeries,
         selection,
     } as unknown as OutlookMeetingsContext;
     return {
@@ -117,6 +153,9 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
         menuAtOpenForm,
         confirmOne,
         menuAtConfirm,
+        ignoreSeries,
+        unignoreSeries,
+        forgetSeries,
         selection,
     };
 }
@@ -434,6 +473,7 @@ describe('OutlookMeetingContextItems pre-assigned meetings', () => {
             'outlook-menu-open',
             'separator',
             'outlook-menu-dismiss',
+            'outlook-menu-forget-series',
         ]);
         expect(item('outlook-menu-create')).toBeNull();
 
@@ -531,6 +571,144 @@ describe('OutlookMeetingContextItems pre-assigned meetings', () => {
     });
 });
 
+// Phase 5 series controls (UI-SPEC sections 4 and 5, D-10, D-11).
+describe('OutlookMeetingContextItems series controls', () => {
+    it('a recurring meeting offers "Always ignore this series" after Dismiss', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([meeting({ series_key: 'series-1' })]);
+        await openMenu(block!, context);
+
+        expect(itemOrder()).toEqual([
+            'outlook-menu-label',
+            'outlook-menu-create',
+            'outlook-menu-select',
+            'separator',
+            'outlook-menu-dismiss',
+            'outlook-menu-ignore-series',
+        ]);
+        const ignore = item('outlook-menu-ignore-series') as HTMLElement;
+        expect(ignore.textContent?.trim()).toBe('Always ignore this series');
+        expect(ignore.querySelector('svg')?.getAttribute('class')).toContain('calendar-off');
+        expect(item('outlook-menu-unignore-series')).toBeNull();
+        expect(item('outlook-menu-forget-series')).toBeNull();
+    });
+
+    it('a pre-assigned recurring meeting also offers "Forget this series" last', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([preassigned()]);
+        await openMenu(block!, context);
+
+        expect(itemOrder()).toEqual([
+            'outlook-menu-label',
+            'outlook-menu-confirm',
+            'outlook-project-dot',
+            'outlook-menu-project-hint',
+            'outlook-menu-edit',
+            'outlook-menu-select',
+            'separator',
+            'outlook-menu-dismiss',
+            'outlook-menu-ignore-series',
+            'outlook-menu-forget-series',
+        ]);
+        const forget = item('outlook-menu-forget-series') as HTMLElement;
+        expect(forget.textContent?.trim()).toBe('Forget this series');
+        expect(forget.querySelector('svg')?.getAttribute('class')).toContain('unlink');
+    });
+
+    it('an occurrence of an ignored series offers "Stop ignoring this series" instead', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([preassigned({ series_ignored: true })], {
+            includeDismissed: true,
+        });
+        await openMenu(block!, context);
+
+        expect(itemOrder()).toEqual([
+            'outlook-menu-label',
+            'outlook-menu-create',
+            'outlook-menu-select',
+            'separator',
+            'outlook-menu-dismiss',
+            'outlook-menu-unignore-series',
+        ]);
+        const unignore = item('outlook-menu-unignore-series') as HTMLElement;
+        expect(unignore.textContent?.trim()).toBe('Stop ignoring this series');
+        expect(unignore.querySelector('svg')?.getAttribute('class')).toMatch(/undo-?2/);
+        expect(item('outlook-menu-ignore-series')).toBeNull();
+        // Faded, so not pre-assigned: no Confirm, Edit or Forget.
+        expect(item('outlook-menu-confirm')).toBeNull();
+        expect(item('outlook-menu-forget-series')).toBeNull();
+    });
+
+    it('a dismissed occurrence of an ignored series offers Restore and Stop ignoring', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext(
+            [meeting({ series_key: 'series-1', series_ignored: true, dismissed: true })],
+            { includeDismissed: true }
+        );
+        await openMenu(block!, context);
+
+        expect(item('outlook-menu-restore')).not.toBeNull();
+        expect(item('outlook-menu-unignore-series')).not.toBeNull();
+        expect(item('outlook-menu-dismiss')).toBeNull();
+        expect(item('outlook-menu-ignore-series')).toBeNull();
+    });
+
+    it('a single meeting offers none of the series items', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([meeting({ series_key: null })]);
+        await openMenu(block!, context);
+
+        expect(item('outlook-menu-dismiss')).not.toBeNull();
+        expect(item('outlook-menu-ignore-series')).toBeNull();
+        expect(item('outlook-menu-unignore-series')).toBeNull();
+        expect(item('outlook-menu-forget-series')).toBeNull();
+    });
+
+    it('offers none of the Phase 5 items when the context cannot act', async () => {
+        const [block] = renderLane(['m-1']);
+        const regular = fakeContext([preassigned()], { canAct: false });
+        await openMenu(block!, regular.context);
+        expect(menu()).not.toBeNull();
+        for (const id of [
+            'outlook-menu-confirm',
+            'outlook-menu-edit',
+            'outlook-menu-ignore-series',
+            'outlook-menu-unignore-series',
+            'outlook-menu-forget-series',
+        ]) {
+            expect(item(id)).toBeNull();
+        }
+
+        unmountMenu();
+        const ignored = fakeContext([meeting({ series_key: 'series-1', series_ignored: true })], {
+            canAct: false,
+            includeDismissed: true,
+        });
+        await openMenu(block!, ignored.context);
+        expect(menu()).not.toBeNull();
+        expect(itemOrder()).toEqual(['outlook-menu-label']);
+    });
+
+    it('selecting the series items calls the series actions with the meeting id', async () => {
+        const [block] = renderLane(['m-1']);
+        const first = fakeContext([preassigned()]);
+        await openMenu(block!, first.context);
+        item('outlook-menu-forget-series')?.click();
+        await vi.waitFor(() => expect(first.forgetSeries).toHaveBeenCalledWith('m-1'));
+        expect(first.ignoreSeries).not.toHaveBeenCalled();
+
+        unmountMenu();
+        const second = fakeContext([meeting({ series_key: 'series-1', series_ignored: true })], {
+            includeDismissed: true,
+        });
+        await openMenu(block!, second.context);
+        item('outlook-menu-unignore-series')?.click();
+        await vi.waitFor(() => expect(second.unignoreSeries).toHaveBeenCalledWith('m-1'));
+        expect(second.restore).not.toHaveBeenCalled();
+        expect(second.dismiss).not.toHaveBeenCalled();
+    });
+});
+
 // Focus after a menu Dismiss / Restore mirrors the detail panel (Phase 3 03-09 / 03-10). Nothing is
 // focused before the menu opens, so the menu's own focus return cannot satisfy these assertions.
 describe('OutlookMeetingContextItems focus', () => {
@@ -606,5 +784,109 @@ describe('OutlookMeetingContextItems focus', () => {
 
         await vi.waitFor(() => expect(document.activeElement).toBe(middle));
         expect(restore).toHaveBeenCalledWith('b');
+    });
+
+    it('after "Always ignore this series" focuses the next meeting outside the series', async () => {
+        const [, middle] = renderLane(['a', 'b', 'c', 'd']);
+        renderSyncButton();
+        const { context, ignoreSeries } = fakeContext([
+            meeting({ id: 'a', series_key: null }),
+            meeting({ id: 'b', series_key: 'series-1' }),
+            meeting({ id: 'c', series_key: 'series-1' }),
+            meeting({ id: 'd', series_key: null }),
+        ]);
+        await openMenu(middle!, context);
+
+        item('outlook-menu-ignore-series')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(block('d')));
+        expect(ignoreSeries).toHaveBeenCalledWith('b');
+        expect(block('b')).toBeNull();
+        expect(block('c')).toBeNull();
+        expect(menu()).toBeNull();
+    });
+
+    it('ignoring the series of the last meeting focuses the previous one', async () => {
+        const [, , last] = renderLane(['a', 'b', 'c']);
+        renderSyncButton();
+        const { context } = fakeContext([
+            meeting({ id: 'a' }),
+            meeting({ id: 'b' }),
+            meeting({ id: 'c', series_key: 'series-1' }),
+        ]);
+        await openMenu(last!, context);
+
+        item('outlook-menu-ignore-series')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(block('b')));
+    });
+
+    it('ignoring the only series of the day focuses the Sync button', async () => {
+        const [first] = renderLane(['a', 'b']);
+        const sync = renderSyncButton();
+        const { context } = fakeContext([
+            meeting({ id: 'a', series_key: 'series-1' }),
+            meeting({ id: 'b', series_key: 'series-1' }),
+        ]);
+        await openMenu(first!, context);
+
+        item('outlook-menu-ignore-series')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(sync));
+    });
+
+    it('ignoring with dismissed meetings shown keeps focus on the same meeting', async () => {
+        const [, middle] = renderLane(['a', 'b', 'c']);
+        renderSyncButton();
+        const { context, list } = fakeContext(
+            [
+                meeting({ id: 'a' }),
+                meeting({ id: 'b', series_key: 'series-1' }),
+                meeting({ id: 'c' }),
+            ],
+            { includeDismissed: true }
+        );
+        await openMenu(middle!, context);
+
+        item('outlook-menu-ignore-series')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(middle));
+        expect(list.value.find((m) => m.id === 'b')?.series_ignored).toBe(true);
+    });
+
+    it('after "Stop ignoring this series" keeps focus on the same meeting', async () => {
+        const [, middle] = renderLane(['a', 'b', 'c']);
+        renderSyncButton();
+        const { context, unignoreSeries } = fakeContext(
+            [
+                meeting({ id: 'a' }),
+                meeting({ id: 'b', series_key: 'series-1', series_ignored: true }),
+                meeting({ id: 'c' }),
+            ],
+            { includeDismissed: true }
+        );
+        await openMenu(middle!, context);
+
+        item('outlook-menu-unignore-series')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(middle));
+        expect(unignoreSeries).toHaveBeenCalledWith('b');
+    });
+
+    it('after "Forget this series" keeps focus on the same meeting', async () => {
+        const [, middle] = renderLane(['a', 'b', 'c']);
+        renderSyncButton();
+        const { context, forgetSeries, list } = fakeContext([
+            meeting({ id: 'a' }),
+            preassigned({ id: 'b' }),
+            meeting({ id: 'c' }),
+        ]);
+        await openMenu(middle!, context);
+
+        item('outlook-menu-forget-series')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(middle));
+        expect(forgetSeries).toHaveBeenCalledWith('b');
+        expect(list.value.find((m) => m.id === 'b')?.assignment).toBeNull();
     });
 });
