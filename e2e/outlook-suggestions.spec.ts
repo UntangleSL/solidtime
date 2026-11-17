@@ -221,12 +221,40 @@ const LABELS = {
     error_no_assignment: 'This meeting has no series assignment any more.',
 };
 
+// Spanish copy (lang/es/microsoft365.php) of what the panel and the hover card show, for the
+// footer-fit check at w-96 / w-72.
+const LABELS_ES = {
+    ...LABELS,
+    no_subject: '(Sin asunto)',
+    ghost_label: ':subject, de :start a :end, sugerencia de reunión de Outlook',
+    eyebrow: 'Reunión de Outlook',
+    organized_by: 'Organizada por :name',
+    you_organize: 'Eres el organizador',
+    online: 'Reunión en línea',
+    open_in_outlook: 'Abrir en Outlook',
+    dismiss: 'Descartar reunión',
+    restore: 'Restaurar reunión',
+    hover_hint: 'Haz clic para ver los detalles',
+    hover_hint_select: 'Haz clic para ver los detalles. Ctrl+clic para seleccionar varias.',
+    hover_hint_select_mac: 'Haz clic para ver los detalles. ⌘+clic para seleccionar varias.',
+    create_entry: 'Crear registro de tiempo',
+    preassigned_suffix: ', preasignada a :project',
+    preassigned_eyebrow: 'Preasignada · Misma serie',
+    why_series: 'Registraste esta serie en :project el :date.',
+    confirm: 'Confirmar',
+    edit: 'Editar',
+    more_actions: 'Más acciones',
+    reason_series: 'Misma serie',
+};
+
+const MEETING_MENU = '[data-testid="outlook-meeting-menu"]';
 const HOVER_CARD = '[data-testid="outlook-hover-card"]';
 const DETAIL_PANEL = '[data-testid="outlook-ghost-detail"]';
 const CONVERT_FORM = '[data-testid="outlook-convert-form"]';
 const CONFIRM_ALL = '[data-testid="outlook-confirm-all"]';
 const CONFIRM_POPOVER = '[data-testid="outlook-confirm-all-popover"]';
 const CONVERT_ROUTE = '**/m365/organizations/*/meetings/time-entries';
+const SERIES_ROUTE = '**/m365/organizations/*/meetings/*/series/*';
 
 async function goToCalendar(page: Page) {
     await page.goto(PLAYWRIGHT_BASE_URL + '/calendar');
@@ -253,6 +281,11 @@ function todayAt(time: string): string {
 
 function convertUrl(ctx: TestContext): string {
     return `${PLAYWRIGHT_BASE_URL}/m365/organizations/${ctx.orgId}/meetings/time-entries`;
+}
+
+// Base of the series actions: `${seriesUrl}/{id}/series/ignore` and `.../series/assignment`.
+function seriesUrl(ctx: TestContext): string {
+    return `${PLAYWRIGHT_BASE_URL}/m365/organizations/${ctx.orgId}/meetings`;
 }
 
 function withDefaults(meeting: InjectedMeeting) {
@@ -425,8 +458,66 @@ async function routeConversions(
     return state;
 }
 
+interface SeriesRequest {
+    method: string;
+    path: string;
+}
+
+// Answers the series actions (ignore, stop ignoring, forget) with 204 and records them.
+async function routeSeries(page: Page): Promise<SeriesRequest[]> {
+    const requests: SeriesRequest[] = [];
+    await page.route(SERIES_ROUTE, async (route) => {
+        const request = route.request();
+        requests.push({ method: request.method(), path: new URL(request.url()).pathname });
+        await route.fulfill({ status: 204, body: '' });
+    });
+    return requests;
+}
+
+function seriesPath(ctx: TestContext, id: string, action: 'ignore' | 'assignment'): string {
+    return `/m365/organizations/${ctx.orgId}/meetings/${id}/series/${action}`;
+}
+
 function ghost(page: Page, id: string): Locator {
     return page.locator(`.m365-ghost[data-ghost-id="${id}"]`);
+}
+
+// "Show dismissed meetings" is a per-browser view preference (localStorage, read through VueUse's
+// useLocalStorage). Its switch lives in the calendar settings popover, which Calendar.vue only
+// mounts with the integration on, so the test sets the stored value and dispatches the same
+// storage event VueUse listens to: the injected list (and its client-side series state) stays.
+async function setShowDismissed(page: Page, value: boolean) {
+    await page.evaluate((show) => {
+        const key = 'solidtime:m365-show-dismissed';
+        const newValue = JSON.stringify(show);
+        window.localStorage.setItem(key, newValue);
+        window.dispatchEvent(
+            new StorageEvent('storage', { key, newValue, storageArea: window.localStorage })
+        );
+    }, value);
+}
+
+// Every footer button of the panel keeps its label on one line and stays inside the panel.
+async function footerOverflow(panel: Locator, testIds: string[]) {
+    return panel.evaluate((el, ids) => {
+        const box = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        const contentRight =
+            box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
+        return ids.map((id) => {
+            const button = el.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+            if (!button) return { id, missing: true, clipped: false, outside: 0 };
+            const rect = button.getBoundingClientRect();
+            return {
+                id,
+                missing: false,
+                clipped:
+                    button.scrollWidth > button.clientWidth + 1 ||
+                    button.scrollHeight > button.clientHeight + 1,
+                outside: Math.max(0, Math.round(rect.right - contentRight)),
+            };
+        });
+    }, testIds);
 }
 
 test.describe('Outlook meeting suggestions', () => {
@@ -757,5 +848,317 @@ test.describe('Outlook meeting suggestions', () => {
         const entry = page.locator('.fc-event').filter({ hasText: 'Portal kickoff' }).first();
         await expect(entry).toBeVisible();
         await expect(entry).toContainText('Internal');
+    });
+
+    test('ignores a series from the context menu and brings it back from show dismissed', async ({
+        page,
+        ctx,
+    }) => {
+        const meetings: InjectedMeeting[] = [
+            {
+                id: 'm-s9-a',
+                subject: 'Vendor standup',
+                start: todayAt('09:00:00'),
+                end: todayAt('09:30:00'),
+                series_key: 's-9',
+            },
+            {
+                id: 'm-s9-b',
+                subject: 'Vendor standup',
+                start: todayAt('13:00:00'),
+                end: todayAt('13:30:00'),
+                series_key: 's-9',
+            },
+            {
+                id: 'm-single',
+                subject: 'One-off review',
+                start: todayAt('11:00:00'),
+                end: todayAt('11:30:00'),
+            },
+        ];
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '09:00:00');
+        const series = await routeSeries(page);
+        await injectMeetings(page, meetings, {
+            convertUrl: convertUrl(ctx),
+            seriesUrl: seriesUrl(ctx),
+        });
+        await expect(page.locator('.m365-ghost')).toHaveCount(3);
+
+        await ghost(page, 'm-s9-a').click({ button: 'right' });
+        const menu = page.locator(MEETING_MENU);
+        await expect(menu).toBeVisible();
+        // A one-off meeting has no series items; this one cannot be forgotten (no assignment)
+        await expect(menu.locator('[data-testid="outlook-menu-forget-series"]')).toHaveCount(0);
+        await menu.locator('[data-testid="outlook-menu-ignore-series"]').click();
+
+        await expect.poll(() => series.length).toBe(1);
+        expect(series[0]).toEqual({ method: 'POST', path: seriesPath(ctx, 'm-s9-a', 'ignore') });
+
+        // Every occurrence leaves the lane, the single meeting stays
+        await expect(ghost(page, 'm-s9-a')).toHaveCount(0);
+        await expect(ghost(page, 'm-s9-b')).toHaveCount(0);
+        await expect(ghost(page, 'm-single')).toHaveCount(1);
+        await expect(page.getByText(LABELS.series_ignored, { exact: true }).first()).toBeVisible();
+
+        // Show dismissed meetings: both occurrences are back, faded, read as "series ignored"
+        await setShowDismissed(page, true);
+        for (const id of ['m-s9-a', 'm-s9-b']) {
+            const block = ghost(page, id);
+            await expect(block).toHaveCount(1);
+            await expect(block).toHaveClass(/m365-meeting--dismissed/);
+            await expect(block).toHaveAttribute('aria-label', /, series ignored$/);
+            await expect(block).not.toHaveAttribute('data-preassigned');
+        }
+        await expect(ghost(page, 'm-single')).not.toHaveClass(/m365-meeting--dismissed/);
+
+        await ghost(page, 'm-s9-b').click({ button: 'right' });
+        await expect(menu).toBeVisible();
+        await expect(menu.locator('[data-testid="outlook-menu-ignore-series"]')).toHaveCount(0);
+        await menu.locator('[data-testid="outlook-menu-unignore-series"]').click();
+
+        await expect.poll(() => series.length).toBe(2);
+        expect(series[1]).toEqual({ method: 'DELETE', path: seriesPath(ctx, 'm-s9-b', 'ignore') });
+        for (const id of ['m-s9-a', 'm-s9-b']) {
+            const block = ghost(page, id);
+            await expect(block).not.toHaveClass(/m365-meeting--dismissed/);
+            await expect(block).not.toHaveAttribute('aria-label', /, series ignored$/);
+        }
+
+        // With dismissed meetings hidden again, the series stays in the lane
+        await setShowDismissed(page, false);
+        await expect(page.locator('.m365-ghost')).toHaveCount(3);
+    });
+
+    test('forgets a series from the panel', async ({ page, ctx }) => {
+        const project = await createProjectViaApi(ctx, { name: 'Steering Project' });
+        const assignment = assignmentFor(project);
+        const meetings: InjectedMeeting[] = [
+            {
+                id: 'm-s7-a',
+                subject: 'Steering committee',
+                start: todayAt('09:00:00'),
+                end: todayAt('10:00:00'),
+                series_key: 's-7',
+                assignment,
+            },
+            {
+                id: 'm-s7-b',
+                subject: 'Steering committee',
+                start: todayAt('15:00:00'),
+                end: todayAt('16:00:00'),
+                series_key: 's-7',
+                assignment,
+            },
+        ];
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '09:00:00');
+        const series = await routeSeries(page);
+        const conversions = await routeConversions(page, ctx, meetings);
+        await injectMeetings(page, meetings, {
+            convertUrl: convertUrl(ctx),
+            seriesUrl: seriesUrl(ctx),
+        });
+        await expect(ghost(page, 'm-s7-a')).toHaveAttribute('data-preassigned', '');
+        await expect(ghost(page, 'm-s7-b')).toHaveAttribute('data-preassigned', '');
+
+        await ghost(page, 'm-s7-a').click();
+        const panel = page.locator(DETAIL_PANEL);
+        await expect(panel).toBeVisible();
+        await expect(panel.locator('[data-testid="outlook-detail-confirm"]')).toBeVisible();
+        await panel.locator('[data-testid="outlook-detail-more"]').click();
+        const more = page.locator('[data-testid="outlook-detail-more-menu"]');
+        await expect(more).toBeVisible();
+        await more.locator('[data-testid="outlook-more-forget-series"]').click();
+
+        await expect.poll(() => series.length).toBe(1);
+        expect(series[0]).toEqual({
+            method: 'DELETE',
+            path: seriesPath(ctx, 'm-s7-a', 'assignment'),
+        });
+
+        // Neither occurrence is pre-assigned any more; both stay in the lane as plain meetings
+        for (const id of ['m-s7-a', 'm-s7-b']) {
+            const block = ghost(page, id);
+            await expect(block).toHaveCount(1);
+            await expect(block).not.toHaveAttribute('data-preassigned');
+            await expect(block.locator('[data-testid="outlook-preassigned-line"]')).toHaveCount(0);
+        }
+        await expect(
+            page.getByText(LABELS.series_forgotten, { exact: true }).first()
+        ).toBeVisible();
+        await expect(page.getByText(LABELS.series_forgotten_help).first()).toBeVisible();
+        // Nothing was converted and no time entry was touched
+        expect(conversions.bodies).toHaveLength(0);
+        await expect(page.locator(CONFIRM_ALL)).toHaveCount(0);
+    });
+});
+
+// Browser checks the wave-3 plans left open (05-10): the read-only panel in test-hook mode and the
+// Spanish footer at w-96.
+test.describe('Outlook suggestion panel checks', () => {
+    test('a read-only panel of a pre-assigned series stays open without actions', async ({
+        page,
+    }) => {
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        // No options: display only (canAct false). No Outlook link, so the panel has no focusable
+        // content of its own (05-10: in happy-dom such a panel closes on the next focus pass).
+        await injectMeetings(
+            page,
+            [
+                {
+                    id: 'm-ro',
+                    subject: 'Read-only series',
+                    start: todayAt('14:00:00'),
+                    end: todayAt('14:30:00'),
+                    series_key: 's-ro',
+                    assignment: {
+                        project_id: 'project-ro',
+                        project_name: 'Hidden Project',
+                        project_color: '#ef5350',
+                        client_name: null,
+                        task_id: null,
+                        task_name: null,
+                        tags: [],
+                        billable: false,
+                        converted_at: '2026-01-05T10:00:00Z',
+                    },
+                },
+            ],
+            {}
+        );
+        const block = ghost(page, 'm-ro');
+        await expect(block).toHaveCount(1);
+
+        await block.click();
+        const panel = page.locator(DETAIL_PANEL);
+        await expect(panel).toBeVisible();
+        await expect(panel).toContainText('Read-only series');
+        await page.waitForTimeout(500);
+        await expect(panel).toBeVisible();
+        for (const id of [
+            'outlook-detail-confirm',
+            'outlook-detail-edit',
+            'outlook-detail-more',
+            'outlook-detail-create',
+            'outlook-detail-action',
+            'outlook-detail-link',
+        ]) {
+            await expect(panel.locator(`[data-testid="${id}"]`)).toHaveCount(0);
+        }
+
+        await page.keyboard.press('Escape');
+        await expect(page.locator(DETAIL_PANEL)).toHaveCount(0);
+    });
+
+    test('the Spanish footer of a pre-assigned panel and its hover card fit', async ({
+        page,
+        ctx,
+    }, testInfo) => {
+        const project = await createProjectViaApi(ctx, { name: 'Proyecto Retainer' });
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '09:00:00');
+        await injectMeetings(
+            page,
+            [
+                {
+                    id: 'm-es-pre',
+                    subject: 'Comité de dirección',
+                    start: todayAt('09:00:00'),
+                    end: todayAt('10:00:00'),
+                    series_key: 's-es',
+                    assignment: assignmentFor(project, 'Cliente'),
+                },
+            ],
+            { convertUrl: convertUrl(ctx), seriesUrl: seriesUrl(ctx), labels: LABELS_ES }
+        );
+        const block = ghost(page, 'm-es-pre');
+        await expect(block).toHaveCount(1);
+
+        await block.hover();
+        const card = page.locator(HOVER_CARD);
+        await expect(card).toBeVisible();
+        await expect(card.locator('[data-testid="outlook-hover-confirm"]')).toHaveText('Confirmar');
+        expect(await footerOverflow(card, ['outlook-hover-edit', 'outlook-hover-confirm'])).toEqual(
+            [
+                { id: 'outlook-hover-edit', missing: false, clipped: false, outside: 0 },
+                { id: 'outlook-hover-confirm', missing: false, clipped: false, outside: 0 },
+            ]
+        );
+
+        await page.mouse.move(0, 0);
+        await expect(page.locator(HOVER_CARD)).toHaveCount(0);
+        await block.click();
+        const panel = page.locator(DETAIL_PANEL);
+        await expect(panel).toBeVisible();
+        await expect(panel.locator('[data-testid="outlook-detail-confirm"]')).toHaveText(
+            'Confirmar'
+        );
+        await testInfo.attach('es-preassigned-panel', {
+            body: await panel.screenshot(),
+            contentType: 'image/png',
+        });
+        expect(
+            await footerOverflow(panel, [
+                'outlook-detail-more',
+                'outlook-detail-edit',
+                'outlook-detail-confirm',
+            ])
+        ).toEqual([
+            { id: 'outlook-detail-more', missing: false, clipped: false, outside: 0 },
+            { id: 'outlook-detail-edit', missing: false, clipped: false, outside: 0 },
+            { id: 'outlook-detail-confirm', missing: false, clipped: false, outside: 0 },
+        ]);
+    });
+
+    // Known overflow, reported for 05-10 (OutlookGhostDetail footer): a recurring meeting without
+    // an assignment gets [More actions] … [Descartar reunión] [Crear registro de tiempo], which
+    // needs about 395px in a 350px content box (local Chromium probe with Inter), so the primary
+    // button's label wraps inside its fixed height. Marked as an expected failure: when the footer
+    // is fixed, this test starts passing and Playwright reports it, so the marker comes off then.
+    test('the Spanish footer of a recurring meeting without assignment fits', async ({
+        page,
+        ctx,
+    }, testInfo) => {
+        test.fail(true, 'Spanish recurring footer overflows the w-96 panel (reported to 05-10)');
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '09:00:00');
+        await injectMeetings(
+            page,
+            [
+                {
+                    id: 'm-es-rec',
+                    subject: 'Reunión semanal',
+                    start: todayAt('09:00:00'),
+                    end: todayAt('10:00:00'),
+                    series_key: 's-es-rec',
+                },
+            ],
+            { convertUrl: convertUrl(ctx), seriesUrl: seriesUrl(ctx), labels: LABELS_ES }
+        );
+        await ghost(page, 'm-es-rec').click();
+        const panel = page.locator(DETAIL_PANEL);
+        await expect(panel).toBeVisible();
+        await expect(panel.locator('[data-testid="outlook-detail-create"]')).toHaveText(
+            'Crear registro de tiempo'
+        );
+        await testInfo.attach('es-recurring-panel', {
+            body: await panel.screenshot(),
+            contentType: 'image/png',
+        });
+        expect(
+            await footerOverflow(panel, [
+                'outlook-detail-more',
+                'outlook-detail-action',
+                'outlook-detail-create',
+            ])
+        ).toEqual([
+            { id: 'outlook-detail-more', missing: false, clipped: false, outside: 0 },
+            { id: 'outlook-detail-action', missing: false, clipped: false, outside: 0 },
+            { id: 'outlook-detail-create', missing: false, clipped: false, outside: 0 },
+        ]);
     });
 });
