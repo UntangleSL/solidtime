@@ -9,6 +9,7 @@ use App\Appearance\AppearanceResolver;
 use App\Appearance\AppearanceServiceProvider;
 use App\Appearance\Http\Requests\AppearanceUpdateRequest;
 use App\Appearance\Models\UserAppearanceSetting;
+use App\Models\Passport\Client;
 use App\Models\User;
 use Illuminate\Support\Js;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -153,5 +154,36 @@ class AppearanceBootPartialTest extends TestCaseWithDatabase
             $html
         );
         $this->assertStringNotContainsString('name="theme-color" content="#000000"', $html);
+    }
+
+    public function test_oauth_authorize_page_uses_the_partial_instead_of_its_inline_copy(): void
+    {
+        // Arrange
+        $user = $this->createUserWithAppearance('light', 'azure');
+        $this->actingAs($user);
+        $client = Client::factory()->make(['name' => 'Appearance test client']);
+
+        // Act
+        $html = view('auth.oauth.authorize', [
+            'client' => $client,
+            'scopes' => [],
+            'request' => request(),
+            'authToken' => 'dummy-auth-token',
+        ])->render();
+
+        // Assert
+        $this->assertSame(1, substr_count($html, '<script data-early-theme>'));
+        $this->assertStringContainsString(
+            'window.__APPEARANCE__ = '.$this->expectedPayload(['theme' => 'light', 'accent' => 'azure']).';',
+            $html
+        );
+        $this->assertStringNotContainsString("localStorage.getItem('theme') || 'system'", $html);
+        $this->assertStringContainsString('<html lang="en" class="light">', $html);
+        $this->assertStringContainsString('Appearance test client', $html);
+        $partial = strpos($html, '<script data-early-theme>');
+        $stylesheet = strpos($html, '/build/assets/');
+        $this->assertNotFalse($partial);
+        $this->assertNotFalse($stylesheet, 'No built asset tag found; the front end must be built before this test.');
+        $this->assertLessThan($stylesheet, $partial);
     }
 }
