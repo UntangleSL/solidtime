@@ -16,7 +16,12 @@ import { useCalendarEvents } from '@/packages/ui/src/FullCalendar/useCalendarEve
 import type { DayEvent } from '@/packages/ui/src/FullCalendar/calendarTypes';
 import type { TimeEntry } from '@/packages/api/src';
 import { getLocalizedDayJs, getLocalizedDayJsFromMinutes } from '@/packages/ui/src/utils/time';
-import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
+import type {
+    OutlookAssignment,
+    OutlookCalendarLabels,
+    OutlookConversionResult,
+    OutlookMeeting,
+} from '@/m365/types';
 
 const DAY = '2026-10-20';
 const LANE = ghostLaneWidth(false);
@@ -53,10 +58,33 @@ const labels = {
     dismiss: 'Dismiss meeting',
     restore: 'Restore meeting',
     dismissed_suffix: ', dismissed',
+    // Phase 5
+    preassigned_suffix: ', pre-assigned to :project',
+    preassigned_eyebrow: 'Pre-assigned · Same series',
+    why_series: 'You logged this series to :project on :date.',
+    confirm: 'Confirm',
+    edit: 'Edit',
+    confirm_failed: 'Could not confirm this meeting',
+    tags_one: '1 Tag',
+    tags_many: ':count Tags',
+    billable: 'Billable',
+    non_billable: 'Non-Billable',
 } as OutlookCalendarLabels;
 
 const settings: CalendarSettings = { snapMinutes: 15, startHour: 0, endHour: 24, slotMinutes: 15 };
 const minutesToPixels = (minutes: number) => minutes;
+
+const assignment: OutlookAssignment = {
+    project_id: 'p-1',
+    project_name: 'Acme Website',
+    project_color: '#ef5350',
+    client_name: 'Acme',
+    task_id: null,
+    task_name: null,
+    tags: [],
+    billable: true,
+    converted_at: '2026-10-13T08:00:00Z',
+};
 
 function meeting(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
     return {
@@ -654,6 +682,132 @@ describe('ghost content by available height', () => {
         ghost = wrapper.find('[data-calendar-overlay]');
         expect(ghost.find('svg.lucide-video').exists()).toBe(false);
         expect(ghost.findAll('svg')).toHaveLength(1);
+    });
+
+    describe('pre-assigned meetings (Phase 5)', () => {
+        const preassigned = (minutes: number, overrides: Partial<OutlookMeeting> = {}) =>
+            lasting(minutes, { series_key: 'series-1', assignment, ...overrides });
+
+        function line(ghost: ReturnType<VueWrapper['find']>) {
+            return ghost.find('[data-testid="outlook-preassigned-line"]');
+        }
+
+        it('T3 shows the subject on one line and the project line instead of the time line', () => {
+            wrapper = mountLayer([preassigned(40)], false);
+
+            const ghost = wrapper.find('[data-calendar-overlay]');
+            expect(tierOf(ghost)).toBe('3');
+            expect(ghost.attributes('data-preassigned')).toBe('');
+            expect(ghost.find('[data-ghost-subject]').classes()).toContain('truncate');
+            expect(ghost.find('[data-ghost-time]').exists()).toBe(false);
+            const project = line(ghost);
+            expect(project.exists()).toBe(true);
+            expect(project.classes()).toContain('m365-meeting__meta');
+            expect(project.find('[data-testid="outlook-project-dot"]').exists()).toBe(true);
+            expect(project.text()).toBe('Acme Website');
+            expect(project.find('span.truncate').attributes('title')).toBe('Acme Website');
+            expect(ghost.attributes('aria-label')).toBe(
+                'Sprint planning, 10:00 to 10:40, Outlook meeting suggestion, pre-assigned to Acme Website'
+            );
+        });
+
+        it('the project colour reaches the dot only, never the block', () => {
+            wrapper = mountLayer([preassigned(40)], false);
+
+            const ghost = wrapper.find('[data-calendar-overlay]');
+            const dot = ghost.find('[data-testid="outlook-project-dot"]');
+            expect((dot.element as HTMLElement).style.backgroundColor).not.toBe('');
+            expect(ghost.attributes('style')).not.toContain('239, 83, 80');
+            expect(ghost.attributes('style')).not.toContain('#ef5350');
+            expect(line(ghost).attributes('style')).toBeUndefined();
+            expect(ghost.find('button').exists()).toBe(false);
+        });
+
+        it('T1 and T2 put the dot before the subject on the one line', () => {
+            wrapper = mountLayer([preassigned(10)], false);
+            let ghost = wrapper.find('[data-calendar-overlay]');
+            expect(tierOf(ghost)).toBe('1');
+            let html = ghost.html();
+            expect(html.indexOf('outlook-project-dot')).toBeGreaterThan(-1);
+            expect(html.indexOf('outlook-project-dot')).toBeLessThan(
+                html.indexOf('data-ghost-subject')
+            );
+            expect(line(ghost).exists()).toBe(false);
+            wrapper.unmount();
+
+            wrapper = mountLayer([preassigned(25)], false);
+            ghost = wrapper.find('[data-calendar-overlay]');
+            expect(tierOf(ghost)).toBe('2');
+            html = ghost.html();
+            expect(html.indexOf('outlook-project-dot')).toBeLessThan(
+                html.indexOf('data-ghost-subject')
+            );
+            expect(ghost.text()).toBe('Sprint planning');
+        });
+
+        it('T4 under 60px: subject on one line, time line, project line', () => {
+            wrapper = mountLayer([preassigned(50)], false);
+
+            const ghost = wrapper.find('[data-calendar-overlay]');
+            expect(tierOf(ghost)).toBe('4');
+            expect(ghost.find('[data-ghost-subject]').classes()).toContain('truncate');
+            expect(ghost.find('[data-ghost-subject]').classes()).not.toContain('line-clamp-2');
+            expect(ghost.find('[data-ghost-time]').text()).toBe('10:00 – 10:50');
+            const html = ghost.html();
+            expect(html.indexOf('outlook-preassigned-line')).toBeGreaterThan(
+                html.indexOf('data-ghost-time')
+            );
+        });
+
+        it('from 60px the subject takes up to two lines and the organizer line never shows', () => {
+            wrapper = mountLayer([preassigned(100)], true);
+
+            const ghost = wrapper.find('[data-calendar-overlay]');
+            expect(tierOf(ghost)).toBe('5');
+            expect(ghost.find('[data-ghost-subject]').classes()).toContain('line-clamp-2');
+            expect(ghost.find('[data-ghost-time]').exists()).toBe(true);
+            expect(line(ghost).exists()).toBe(true);
+            expect(ghost.find('[data-ghost-organizer]').exists()).toBe(false);
+            expect(ghost.text()).not.toContain('Ada Lovelace');
+        });
+
+        it('a long project name truncates in the line and keeps the full name in its title', () => {
+            const long = 'A very long project name that never fits into a narrow meeting block';
+            wrapper = mountLayer(
+                [preassigned(40, { assignment: { ...assignment, project_name: long } })],
+                false
+            );
+
+            const name = line(wrapper.find('[data-calendar-overlay]')).find('span.truncate');
+            expect(name.classes()).toContain('min-w-0');
+            expect(name.attributes('title')).toBe(long);
+        });
+
+        it('a plain meeting renders none of it', () => {
+            wrapper = mountLayer([lasting(40)], false);
+
+            const ghost = wrapper.find('[data-calendar-overlay]');
+            expect(ghost.attributes('data-preassigned')).toBeUndefined();
+            expect(line(ghost).exists()).toBe(false);
+            expect(ghost.find('[data-testid="outlook-project-dot"]').exists()).toBe(false);
+            expect(ghost.attributes('aria-label')).not.toContain('pre-assigned');
+        });
+
+        it('a dismissed occurrence shows the dismissed variant without a project line', () => {
+            wrapper = mountLayer([preassigned(40, { dismissed: true })], false);
+
+            const ghost = wrapper.find('[data-calendar-overlay]');
+            expect(ghost.classes()).toContain('m365-meeting--dismissed');
+            expect(ghost.attributes('data-preassigned')).toBeUndefined();
+            expect(line(ghost).exists()).toBe(false);
+            expect(ghost.attributes('aria-label')).toMatch(/, dismissed$/);
+        });
+
+        it('shows the line without an Outlook context (the server sent the assignment)', () => {
+            wrapper = mountLayer([preassigned(40)], false);
+
+            expect(line(wrapper.find('[data-calendar-overlay]')).exists()).toBe(true);
+        });
     });
 
     it('never fades meeting text with opacity', () => {
@@ -1949,5 +2103,281 @@ describe('OutlookGhostLayer multi-select', () => {
         hover(block('b'));
         await advance(400);
         expect(card()?.textContent).toContain('Meeting b');
+    });
+});
+
+// Phase 5: the pre-assigned panel (Confirm, Edit) against an injected context that mirrors the
+// composable: confirmOne marks the meeting pending, settles with the queued answer and removes a
+// created or existing meeting from the list.
+describe('OutlookGhostLayer pre-assigned meetings (Phase 5)', () => {
+    let wrapper: VueWrapper | null = null;
+
+    const FormStub = defineComponent({
+        name: 'OutlookConvertForm',
+        emits: ['done', 'cancel', 'busy'],
+        setup() {
+            return () => h('div', { 'data-testid': 'outlook-convert-form' });
+        },
+    });
+
+    const at = (id: string, hour: number, overrides: Partial<OutlookMeeting> = {}) =>
+        meeting({
+            id,
+            subject: 'Meeting ' + id,
+            start: `2026-10-20T${String(hour).padStart(2, '0')}:00:00Z`,
+            end: `2026-10-20T${String(hour + 1).padStart(2, '0')}:00:00Z`,
+            ...overrides,
+        });
+
+    const preassigned = (id: string, hour: number, overrides: Partial<OutlookMeeting> = {}) =>
+        at(id, hour, { series_key: 'series-' + id, assignment, ...overrides });
+
+    function created(id: string): OutlookConversionResult {
+        return { meeting_id: id, status: 'created', time_entry_id: 'te-' + id, error: null };
+    }
+
+    function failed(id: string, message: string): OutlookConversionResult {
+        return {
+            meeting_id: id,
+            status: 'failed',
+            time_entry_id: null,
+            error: message ? { key: 'project_archived', message } : null,
+        };
+    }
+
+    function mountPhase5(
+        initial: OutlookMeeting[],
+        options: { canAct?: boolean; includeDismissed?: boolean } = {}
+    ) {
+        const root = document.createElement('div');
+        root.className = 'fc';
+        document.body.appendChild(root);
+        const list = ref(initial);
+        const pending = ref<string[]>([]);
+        let settleConfirm: (result: OutlookConversionResult | null) => void = () => undefined;
+        const confirmOne = vi.fn(async (id: string) => {
+            pending.value = [...pending.value, id];
+            const result = await new Promise<OutlookConversionResult | null>((resolve) => {
+                settleConfirm = resolve;
+            });
+            pending.value = pending.value.filter((item) => item !== id);
+            if (result && (result.status === 'created' || result.status === 'existing')) {
+                list.value = list.value.filter((item) => item.id !== id);
+            }
+            return result;
+        });
+        const context = {
+            canAct: ref(options.canAct ?? true),
+            includeDismissed: ref(options.includeDismissed ?? false),
+            dismiss: vi.fn(),
+            restore: vi.fn(),
+            formRequest: ref(null),
+            confirmOne,
+            isConfirmPending: (id: string) => pending.value.includes(id),
+        } as unknown as OutlookMeetingsContext;
+        const Host = defineComponent({
+            setup() {
+                return () =>
+                    h('div', [
+                        h(OutlookGhostLayer, {
+                            meetings: list.value,
+                            labels,
+                            dayStr: DAY,
+                            isDayView: false,
+                            minutesToPixels,
+                            settings,
+                        }),
+                        h('button', { 'data-testid': 'outlook-sync-button' }, 'Sync'),
+                    ]);
+            },
+        });
+        wrapper = mount(Host, {
+            attachTo: root,
+            global: {
+                stubs: { OutlookConvertForm: FormStub },
+                provide: {
+                    [OUTLOOK_MEETINGS_KEY as symbol]: context,
+                    organization: computed(() => ({ time_format: '24-hours' })),
+                },
+            },
+        });
+        passMountTime();
+        return {
+            list,
+            context,
+            confirmOne,
+            answer: async (result: OutlookConversionResult | null) => {
+                settleConfirm(result);
+                await advance(20);
+            },
+        };
+    }
+
+    function block(id: string): HTMLElement {
+        return document.body.querySelector<HTMLElement>(`[data-ghost-id="${id}"]`)!;
+    }
+
+    function panel(): HTMLElement | null {
+        return document.body.querySelector('[data-testid="outlook-ghost-detail"]');
+    }
+
+    function byTestId(id: string): HTMLElement | null {
+        return document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    }
+
+    async function advance(ms: number) {
+        await vi.advanceTimersByTimeAsync(ms);
+        await nextTick();
+    }
+
+    async function openPanel(id: string) {
+        block(id).click();
+        await advance(20);
+        expect(panel()).not.toBeNull();
+    }
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        resetHoverCardDelay();
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('Europe/Madrid');
+    });
+
+    afterEach(() => {
+        wrapper?.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+        resetHoverCardDelay();
+        vi.useRealTimers();
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+    });
+
+    describe('panel Confirm', () => {
+        it('the panel of a pre-assigned meeting shows the full pre-assignment, Edit and Confirm', async () => {
+            mountPhase5([preassigned('a', 8)]);
+            await openPanel('a');
+
+            expect(byTestId('outlook-detail-preassignment')).not.toBeNull();
+            expect(byTestId('outlook-detail-why')).not.toBeNull();
+            expect(byTestId('outlook-detail-edit')).not.toBeNull();
+            expect(byTestId('outlook-detail-confirm')).not.toBeNull();
+        });
+
+        it('calls confirmOne once; created closes the panel and focuses the next meeting', async () => {
+            const mounted = mountPhase5([preassigned('a', 8), at('b', 10)]);
+            await openPanel('a');
+
+            byTestId('outlook-detail-confirm')!.click();
+            await advance(20);
+            expect(mounted.confirmOne).toHaveBeenCalledTimes(1);
+            expect(mounted.confirmOne).toHaveBeenCalledWith('a');
+            // Pessimistic: the panel stays open with the spinner while the request runs
+            expect(panel()).not.toBeNull();
+            expect((byTestId('outlook-detail-confirm') as HTMLButtonElement).disabled).toBe(true);
+            byTestId('outlook-detail-confirm')!.click();
+            expect(mounted.confirmOne).toHaveBeenCalledTimes(1);
+
+            await mounted.answer(created('a'));
+
+            expect(panel()).toBeNull();
+            expect(document.body.querySelector('[data-ghost-id="a"]')).toBeNull();
+            expect(document.activeElement).toBe(block('b'));
+        });
+
+        it('confirming the last meeting of the day focuses the Sync button', async () => {
+            const mounted = mountPhase5([preassigned('a', 8)]);
+            await openPanel('a');
+
+            byTestId('outlook-detail-confirm')!.click();
+            await advance(20);
+            await mounted.answer({ ...created('a'), status: 'existing' });
+
+            expect(panel()).toBeNull();
+            expect(document.activeElement).toBe(byTestId('outlook-sync-button'));
+        });
+
+        it('a failure keeps the panel open with the reason as an inline alert', async () => {
+            const mounted = mountPhase5([preassigned('a', 8)]);
+            await openPanel('a');
+
+            byTestId('outlook-detail-confirm')!.click();
+            await advance(20);
+            await mounted.answer(failed('a', 'This project is archived.'));
+
+            expect(panel()).not.toBeNull();
+            const alert = panel()!.querySelector('[role="alert"]');
+            expect(alert?.textContent?.trim()).toBe('This project is archived.');
+            expect((byTestId('outlook-detail-confirm') as HTMLButtonElement).disabled).toBe(false);
+            expect(block('a').hasAttribute('data-preassigned')).toBe(true);
+        });
+
+        it('a failure without a message shows "Could not confirm this meeting"', async () => {
+            const mounted = mountPhase5([preassigned('a', 8)]);
+            await openPanel('a');
+
+            byTestId('outlook-detail-confirm')!.click();
+            await advance(20);
+            await mounted.answer(failed('a', ''));
+
+            expect(panel()!.querySelector('[role="alert"]')?.textContent?.trim()).toBe(
+                'Could not confirm this meeting'
+            );
+        });
+
+        it('the inline reason is gone after the panel closes and opens again', async () => {
+            const mounted = mountPhase5([preassigned('a', 8)]);
+            await openPanel('a');
+            byTestId('outlook-detail-confirm')!.click();
+            await advance(20);
+            await mounted.answer(failed('a', 'This project is archived.'));
+            expect(panel()!.querySelector('[role="alert"]')).not.toBeNull();
+
+            keydown(document.body, 'Escape');
+            await advance(20);
+            expect(panel()).toBeNull();
+            passMountTime();
+            await openPanel('a');
+
+            expect(panel()!.querySelector('[role="alert"]')).toBeNull();
+        });
+
+        it('nothing sent (null answer) leaves the panel as it was', async () => {
+            const mounted = mountPhase5([preassigned('a', 8)]);
+            await openPanel('a');
+
+            byTestId('outlook-detail-confirm')!.click();
+            await advance(20);
+            await mounted.answer(null);
+
+            expect(panel()).not.toBeNull();
+            expect(panel()!.querySelector('[role="alert"]')).toBeNull();
+        });
+
+        it('Edit switches the panel to the form (the existing create path)', async () => {
+            const mounted = mountPhase5([preassigned('a', 8)]);
+            await openPanel('a');
+
+            byTestId('outlook-detail-edit')!.click();
+            await advance(20);
+
+            expect(panel()?.getAttribute('data-mode')).toBe('form');
+            expect(byTestId('outlook-convert-form')).not.toBeNull();
+            expect(mounted.confirmOne).not.toHaveBeenCalled();
+        });
+
+        it('without canAct: the line shows, but no pre-assignment block, Edit or Confirm', async () => {
+            mountPhase5([preassigned('a', 8)], { canAct: false });
+
+            expect(
+                block('a').querySelector('[data-testid="outlook-preassigned-line"]')
+            ).not.toBeNull();
+            // Read on the render that opens the panel: in happy-dom a panel without any focusable
+            // content closes again on the next focus pass (pre-existing, any meeting).
+            block('a').click();
+            await nextTick();
+            expect(panel()).not.toBeNull();
+            expect(byTestId('outlook-detail-preassignment')).toBeNull();
+            expect(byTestId('outlook-detail-edit')).toBeNull();
+            expect(byTestId('outlook-detail-confirm')).toBeNull();
+        });
     });
 });

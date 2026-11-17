@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, useId, watch } from 'vue';
-import { ClockPlus, ExternalLink } from '@lucide/vue';
+import { Check, CircleX, ClockPlus, ExternalLink, Pencil } from '@lucide/vue';
 import Button from '@/packages/ui/src/Buttons/Button.vue';
 import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
+import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
 import { Popover, PopoverContent, PopoverTrigger } from '@/packages/ui/src/popover';
 import { Separator } from '@/packages/ui/src/separator';
 import type { OutlookCalendarLabels, OutlookConversionResult, OutlookMeeting } from '@/m365/types';
 import OutlookConvertForm from './OutlookConvertForm.vue';
 import OutlookMeetingSummary from './OutlookMeetingSummary.vue';
+import OutlookPreassignment from './OutlookPreassignment.vue';
 import { safeHttpsUrl } from './safeUrl';
+import { isPreassigned } from './suggestions';
 
 // Detail panel of one ghost (non-modal popover). The default slot is the trigger (the ghost). It
 // owns no network code: Dismiss, Restore and "Create time entry" are emitted and the caller acts.
@@ -17,20 +20,27 @@ import { safeHttpsUrl } from './safeUrl';
 // anchor, shows the OutlookConvertForm instead; the form talks to the injected Outlook context and
 // this panel only relays its outcome (converted / cancel-form). Meeting values are only ever
 // rendered through text interpolation.
+// Phase 5 (UI-SPEC section 3): a pre-assigned meeting shows its full pre-assignment (with the why
+// line) and the footer [Edit] [Confirm]; Edit is the Phase 4 `create` (form mode, prefilled by the
+// series), Confirm is emitted and the caller runs it, passing `confirming` (spinner, the panel
+// cannot be dismissed) and, after a failure, `confirmError` (inline role=alert line).
 const props = withDefaults(
     defineProps<{
         meeting: OutlookMeeting;
         labels: OutlookCalendarLabels;
         canAct: boolean;
         mode?: 'detail' | 'form';
+        confirming?: boolean;
+        confirmError?: string | null;
     }>(),
-    { mode: 'detail' }
+    { mode: 'detail', confirming: false, confirmError: null }
 );
 
 const emit = defineEmits<{
     dismiss: [];
     restore: [];
     create: [];
+    confirm: [];
     converted: [results: OutlookConversionResult[]];
     'cancel-form': [];
 }>();
@@ -55,6 +65,15 @@ function onAction() {
 // The form is shown only while the caller may act (D-13: never in test-hook mode or impersonating).
 const showForm = computed(() => props.mode === 'form' && props.canAct);
 
+// The pre-assignment block and its Edit / Confirm footer only while the caller may act (T-05-36).
+const preassignment = computed(() =>
+    props.canAct && isPreassigned(props.meeting) ? (props.meeting.assignment ?? null) : null
+);
+
+function onConfirm(): void {
+    if (!props.confirming) emit('confirm');
+}
+
 // True while the form's request runs: the popover then cannot be dismissed (UI-SPEC section 3).
 const busy = ref(false);
 
@@ -75,7 +94,7 @@ function eventTarget(event: Event): Element | null {
 }
 
 function onInteractOutside(event: Event): void {
-    if (busy.value) {
+    if (busy.value || props.confirming) {
         event.preventDefault();
         return;
     }
@@ -83,7 +102,7 @@ function onInteractOutside(event: Event): void {
 }
 
 function onEscapeKeyDown(event: KeyboardEvent): void {
-    if (busy.value) event.preventDefault();
+    if (busy.value || props.confirming) event.preventDefault();
 }
 
 // Opened straight in form mode, the form moves focus itself (Create entry or the project picker).
@@ -137,8 +156,31 @@ function onOpenAutoFocus(event: Event): void {
                     <ExternalLink class="size-3" aria-hidden="true" />
                     <span class="sr-only">{{ labels.opens_new_tab }}</span>
                 </a>
+                <OutlookPreassignment
+                    v-if="preassignment"
+                    class="mt-4"
+                    :assignment="preassignment"
+                    :labels="labels"
+                    variant="full" />
                 <Separator class="mt-3" />
-                <div class="mt-4 flex justify-end gap-2">
+                <div v-if="preassignment" class="mt-4 flex justify-end gap-2">
+                    <SecondaryButton
+                        :icon="Pencil"
+                        data-testid="outlook-detail-edit"
+                        @click="emit('create')">
+                        {{ labels.edit }}
+                    </SecondaryButton>
+                    <PrimaryButton
+                        type="button"
+                        :icon="Check"
+                        :loading="confirming"
+                        data-testid="outlook-detail-confirm"
+                        @click="onConfirm">
+                        {{ labels.confirm }}
+                    </PrimaryButton>
+                    <slot name="actions" />
+                </div>
+                <div v-else class="mt-4 flex justify-end gap-2">
                     <Button
                         v-if="canAct"
                         type="button"
@@ -158,6 +200,14 @@ function onOpenAutoFocus(event: Event): void {
                     </PrimaryButton>
                     <slot name="actions" />
                 </div>
+                <p
+                    v-if="confirmError"
+                    role="alert"
+                    class="mt-2 flex items-center gap-1 text-xs text-destructive"
+                    data-testid="outlook-detail-alert">
+                    <CircleX class="size-3 shrink-0" aria-hidden="true" />
+                    <span>{{ confirmError }}</span>
+                </p>
                 <div v-if="$slots['footer-note']" class="mt-2 text-xs text-text-tertiary">
                     <slot name="footer-note" />
                 </div>

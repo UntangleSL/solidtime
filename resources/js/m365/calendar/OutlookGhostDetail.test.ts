@@ -4,7 +4,7 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import OutlookGhostDetail from './OutlookGhostDetail.vue';
 import OutlookMeetingSummary from './OutlookMeetingSummary.vue';
 import { safeHttpsUrl } from './safeUrl';
-import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
+import type { OutlookAssignment, OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 
 const labels = {
     no_subject: '(No subject)',
@@ -18,6 +18,15 @@ const labels = {
     dismiss: 'Dismiss meeting',
     restore: 'Restore meeting',
     create_entry: 'Create time entry',
+    edit: 'Edit',
+    confirm: 'Confirm',
+    confirm_failed: 'Could not confirm this meeting',
+    preassigned_eyebrow: 'Pre-assigned · Same series',
+    why_series: 'You logged this series to :project on :date.',
+    tags_one: '1 Tag',
+    tags_many: ':count Tags',
+    billable: 'Billable',
+    non_billable: 'Non-Billable',
 } as OutlookCalendarLabels;
 
 // The form talks to the Outlook context and the query caches; here only its events matter.
@@ -61,6 +70,22 @@ function meeting(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
     };
 }
 
+const assignment: OutlookAssignment = {
+    project_id: 'p-1',
+    project_name: 'Acme Website',
+    project_color: '#ef5350',
+    client_name: 'Acme',
+    task_id: null,
+    task_name: null,
+    tags: [],
+    billable: true,
+    converted_at: '2026-11-10T09:00:00Z',
+};
+
+function preassigned(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
+    return meeting({ series_key: 'series-1', assignment, ...overrides });
+}
+
 let wrapper: VueWrapper | null = null;
 
 // The panel is portaled to document.body, so it is mounted open and queried from the body.
@@ -68,11 +93,12 @@ function mountOpen(
     m: OutlookMeeting,
     canAct = true,
     slots: Record<string, string> = {},
-    mode: 'detail' | 'form' = 'detail'
+    mode: 'detail' | 'form' = 'detail',
+    extra: { confirming?: boolean; confirmError?: string | null } = {}
 ) {
     wrapper = mount(OutlookGhostDetail, {
         attachTo: document.body,
-        props: { meeting: m, labels, canAct, open: true, mode },
+        props: { meeting: m, labels, canAct, open: true, mode, ...extra },
         slots: { default: '<div class="trigger">ghost</div>', ...slots },
         global: { stubs: { OutlookConvertForm: FormStub } },
     });
@@ -465,6 +491,142 @@ describe('OutlookGhostDetail', () => {
             await settle();
 
             expect(w.emitted('update:open')).toBeUndefined();
+        });
+    });
+
+    describe('pre-assigned meeting (Phase 5)', () => {
+        function byTestId(id: string): HTMLElement | null {
+            return document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        }
+
+        async function settle() {
+            await nextTick();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            await nextTick();
+        }
+
+        it('shows the full pre-assignment with the why line after the summary', async () => {
+            mountOpen(preassigned());
+            await nextTick();
+
+            const block = byTestId('outlook-detail-preassignment');
+            expect(block).not.toBeNull();
+            expect(block!.textContent).toContain('Pre-assigned · Same series');
+            expect(block!.textContent).toContain('Acme Website');
+            expect(block!.textContent).toContain('Acme');
+            expect(block!.textContent).toContain('Billable');
+            expect(byTestId('outlook-detail-why')?.textContent?.trim()).toBe(
+                'You logged this series to Acme Website on Tue, Nov 10.'
+            );
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-detail-preassignment')).toBeGreaterThan(
+                html.indexOf('outlook-detail-time')
+            );
+        });
+
+        it('offers Edit and Confirm instead of Dismiss and Create time entry', async () => {
+            mountOpen(preassigned());
+            await nextTick();
+
+            const edit = byTestId('outlook-detail-edit');
+            const confirm = byTestId('outlook-detail-confirm');
+            expect(edit?.textContent?.trim()).toBe('Edit');
+            expect(edit?.querySelector('svg.lucide-pencil')).not.toBeNull();
+            expect(confirm?.textContent?.trim()).toBe('Confirm');
+            expect(confirm?.querySelector('svg.lucide-check')).not.toBeNull();
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-detail-confirm')).toBeGreaterThan(
+                html.indexOf('outlook-detail-edit')
+            );
+            expect(byTestId('outlook-detail-create')).toBeNull();
+            expect(byTestId('outlook-detail-action')).toBeNull();
+        });
+
+        it('Confirm emits confirm once; Edit emits create', async () => {
+            const w = mountOpen(preassigned());
+            await nextTick();
+
+            byTestId('outlook-detail-confirm')!.click();
+            expect(w.emitted('confirm')).toHaveLength(1);
+            expect(w.emitted('create')).toBeUndefined();
+
+            byTestId('outlook-detail-edit')!.click();
+            expect(w.emitted('create')).toHaveLength(1);
+            expect(w.emitted('confirm')).toHaveLength(1);
+        });
+
+        it('while confirming the button shows its spinner and emits nothing more', async () => {
+            const w = mountOpen(preassigned(), true, {}, 'detail', { confirming: true });
+            await nextTick();
+
+            const confirm = byTestId('outlook-detail-confirm') as HTMLButtonElement;
+            expect(confirm.disabled).toBe(true);
+            expect(confirm.querySelector('svg.animate-spin')).not.toBeNull();
+            confirm.click();
+            expect(w.emitted('confirm')).toBeUndefined();
+        });
+
+        it('while confirming neither Escape nor an outside pointer closes the panel', async () => {
+            const outside = document.createElement('div');
+            document.body.appendChild(outside);
+            const w = mountOpen(preassigned(), true, {}, 'detail', { confirming: true });
+            await settle();
+
+            document.body.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+            );
+            outside.dispatchEvent(
+                new PointerEvent('pointerdown', {
+                    bubbles: true,
+                    cancelable: true,
+                    button: 0,
+                    pointerType: 'mouse',
+                })
+            );
+            await settle();
+
+            expect(w.emitted('update:open')).toBeUndefined();
+        });
+
+        it('shows the confirm failure inline as an alert under the footer', async () => {
+            mountOpen(preassigned(), true, {}, 'detail', {
+                confirmError: 'This project is archived.',
+            });
+            await nextTick();
+
+            const alert = panel().querySelector<HTMLElement>('[role="alert"]');
+            expect(alert?.textContent?.trim()).toBe('This project is archived.');
+            expect(alert?.className).toContain('text-destructive');
+            expect(alert?.querySelector('svg.lucide-circle-x')).not.toBeNull();
+            const html = panel().innerHTML;
+            expect(html.indexOf('role="alert"')).toBeGreaterThan(
+                html.indexOf('outlook-detail-confirm')
+            );
+        });
+
+        it('renders no alert without a failure', async () => {
+            mountOpen(preassigned());
+            await nextTick();
+
+            expect(panel().querySelector('[role="alert"]')).toBeNull();
+        });
+
+        it('without canAct shows no pre-assignment and no Edit or Confirm', async () => {
+            mountOpen(preassigned(), false);
+            await nextTick();
+
+            expect(byTestId('outlook-detail-preassignment')).toBeNull();
+            expect(byTestId('outlook-detail-edit')).toBeNull();
+            expect(byTestId('outlook-detail-confirm')).toBeNull();
+        });
+
+        it('a dismissed occurrence is not pre-assigned: no pre-assignment, no Confirm', async () => {
+            mountOpen(preassigned({ dismissed: true }));
+            await nextTick();
+
+            expect(byTestId('outlook-detail-preassignment')).toBeNull();
+            expect(byTestId('outlook-detail-confirm')).toBeNull();
+            expect(byTestId('outlook-detail-create')).not.toBeNull();
         });
     });
 });
