@@ -14,6 +14,7 @@ import type {
     OutlookSyncResponse,
 } from '@/m365/types';
 import { OUTLOOK_MEETINGS_KEY, useOutlookMeetings, weekBucket } from './useOutlookMeetings';
+import { ghostLaneWidth } from './ghostLayout';
 
 const { pageProps, addNotification } = vi.hoisted(() => ({
     pageProps: {} as Record<string, unknown>,
@@ -404,8 +405,8 @@ describe('useOutlookMeetings', () => {
         expect(mounted.api.meetings.value).toEqual(injected);
         expect(mounted.api.labels.value?.no_subject).toBe('(No subject)');
         expect(mounted.api.labels.value?.layer_label).toBe('Outlook meetings, :day');
-        expect(mounted.api.dayOverlayLane('2026-11-05', false)).toBe('max(16px, 30%)');
-        expect(mounted.api.dayOverlayLane('2026-11-05', true)).toBe('min(240px, 25%)');
+        expect(mounted.api.dayOverlayLane('2026-11-05', false)).toBe(ghostLaneWidth(false));
+        expect(mounted.api.dayOverlayLane('2026-11-05', true)).toBe(ghostLaneWidth(true));
         expect(mounted.api.dayOverlayLane('2026-11-06', false)).toBeNull();
         expect(axiosGet).not.toHaveBeenCalled();
 
