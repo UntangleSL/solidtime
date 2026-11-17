@@ -27,6 +27,10 @@ const labels = {
     tags_many: ':count Tags',
     billable: 'Billable',
     non_billable: 'Non-Billable',
+    more_actions: 'More actions',
+    ignore_series: 'Always ignore this series',
+    unignore_series: 'Stop ignoring this series',
+    forget_series: 'Forget this series',
 } as OutlookCalendarLabels;
 
 // The form talks to the Outlook context and the query caches; here only its events matter.
@@ -416,11 +420,12 @@ describe('OutlookGhostDetail', () => {
             expect(createButton()).toBeNull();
         });
 
-        it('detail mode keeps w-80', async () => {
+        it('detail mode is w-96 as well, so switching to the form never resizes the panel', async () => {
             mountOpen(meeting());
             await nextTick();
 
-            expect(panel().className).toContain('w-80');
+            expect(panel().className).toContain('w-96');
+            expect(panel().className).not.toContain('w-80');
             expect(panel().getAttribute('data-mode')).toBe('detail');
         });
 
@@ -627,6 +632,173 @@ describe('OutlookGhostDetail', () => {
             expect(byTestId('outlook-detail-preassignment')).toBeNull();
             expect(byTestId('outlook-detail-confirm')).toBeNull();
             expect(byTestId('outlook-detail-create')).not.toBeNull();
+        });
+    });
+
+    describe('footer variants and More actions (Phase 5)', () => {
+        function byTestId(id: string): HTMLElement | null {
+            return document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        }
+
+        async function settle() {
+            await nextTick();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            await nextTick();
+        }
+
+        async function openMenu() {
+            byTestId('outlook-detail-more')!.click();
+            await settle();
+            const menu = document.body.querySelector<HTMLElement>('[role="menu"]');
+            expect(menu).not.toBeNull();
+            return menu!;
+        }
+
+        function itemIds(menu: HTMLElement): string[] {
+            return Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).map(
+                (item) => item.getAttribute('data-testid') ?? ''
+            );
+        }
+
+        const recurring = (overrides: Partial<OutlookMeeting> = {}) =>
+            meeting({ series_key: 'series-1', ...overrides });
+
+        it('a pre-assigned meeting focuses Confirm on open', async () => {
+            mountOpen(preassigned());
+            await settle();
+
+            expect(document.activeElement).toBe(byTestId('outlook-detail-confirm'));
+        });
+
+        it('other meetings keep the default focus (not Confirm)', async () => {
+            mountOpen(recurring());
+            await settle();
+
+            expect(byTestId('outlook-detail-confirm')).toBeNull();
+            expect(document.activeElement).not.toBe(document.body);
+        });
+
+        it('pre-assigned: More actions on the left, Edit and Confirm pushed right', async () => {
+            mountOpen(preassigned());
+            await nextTick();
+
+            const more = byTestId('outlook-detail-more')!;
+            expect(more.getAttribute('aria-label')).toBe('More actions');
+            expect(more.querySelector('svg.lucide-ellipsis')).not.toBeNull();
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-detail-more')).toBeLessThan(
+                html.indexOf('outlook-detail-edit')
+            );
+            expect(byTestId('outlook-detail-edit')!.parentElement!.className).toContain('ml-auto');
+            expect(byTestId('outlook-detail-action')).toBeNull();
+        });
+
+        it('pre-assigned menu: Dismiss, separator, Always ignore, Forget', async () => {
+            mountOpen(preassigned());
+            await settle();
+
+            const menu = await openMenu();
+            expect(itemIds(menu)).toEqual([
+                'outlook-more-dismiss',
+                'outlook-more-ignore-series',
+                'outlook-more-forget-series',
+            ]);
+            expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(1);
+            expect(menu.textContent).toContain('Dismiss meeting');
+            expect(menu.textContent).toContain('Always ignore this series');
+            expect(menu.textContent).toContain('Forget this series');
+            expect(
+                menu.querySelector('[data-testid="outlook-more-dismiss"] svg.lucide-eye-off')
+            ).not.toBeNull();
+            expect(
+                menu.querySelector(
+                    '[data-testid="outlook-more-ignore-series"] svg.lucide-calendar-off'
+                )
+            ).not.toBeNull();
+            expect(
+                menu.querySelector('[data-testid="outlook-more-forget-series"] svg.lucide-unlink')
+            ).not.toBeNull();
+        });
+
+        it('opening the menu does not close the panel', async () => {
+            const w = mountOpen(preassigned());
+            await settle();
+
+            await openMenu();
+
+            expect(w.emitted('update:open')).toBeUndefined();
+            expect(
+                document.body.querySelector('[data-testid="outlook-ghost-detail"]')
+            ).not.toBeNull();
+        });
+
+        it.each([
+            ['outlook-more-dismiss', 'dismiss'],
+            ['outlook-more-ignore-series', 'ignore-series'],
+            ['outlook-more-forget-series', 'forget-series'],
+        ])('%s emits %s and does not close the panel itself', async (testId, event) => {
+            const w = mountOpen(preassigned());
+            await settle();
+            await openMenu();
+
+            byTestId(testId)!.click();
+            await settle();
+
+            expect(w.emitted(event)).toHaveLength(1);
+            expect(w.emitted('update:open')).toBeUndefined();
+        });
+
+        it('recurring without assignment: More actions (Always ignore only), Dismiss, Create', async () => {
+            const w = mountOpen(recurring());
+            await settle();
+
+            expect(byTestId('outlook-detail-action')?.textContent?.trim()).toBe('Dismiss meeting');
+            expect(byTestId('outlook-detail-create')).not.toBeNull();
+            expect(byTestId('outlook-detail-confirm')).toBeNull();
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-detail-more')).toBeLessThan(
+                html.indexOf('outlook-detail-action')
+            );
+
+            const menu = await openMenu();
+            expect(itemIds(menu)).toEqual(['outlook-more-ignore-series']);
+            expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(0);
+            byTestId('outlook-more-ignore-series')!.click();
+            await settle();
+            expect(w.emitted('ignore-series')).toHaveLength(1);
+        });
+
+        it('an occurrence of an ignored series offers Stop ignoring instead of Always ignore', async () => {
+            const w = mountOpen(recurring({ series_ignored: true, dismissed: true }));
+            await settle();
+
+            expect(byTestId('outlook-detail-action')?.textContent?.trim()).toBe('Restore meeting');
+            const menu = await openMenu();
+            expect(itemIds(menu)).toEqual(['outlook-more-unignore-series']);
+            expect(menu.textContent).toContain('Stop ignoring this series');
+            expect(
+                menu.querySelector('[data-testid="outlook-more-unignore-series"] svg.lucide-undo-2')
+            ).not.toBeNull();
+
+            byTestId('outlook-more-unignore-series')!.click();
+            await settle();
+            expect(w.emitted('unignore-series')).toHaveLength(1);
+        });
+
+        it('a single meeting keeps the Phase 4 footer without More actions', async () => {
+            mountOpen(meeting());
+            await nextTick();
+
+            expect(byTestId('outlook-detail-more')).toBeNull();
+            expect(byTestId('outlook-detail-action')).not.toBeNull();
+            expect(byTestId('outlook-detail-create')).not.toBeNull();
+        });
+
+        it('without canAct there is no More actions', async () => {
+            mountOpen(preassigned(), false);
+            await nextTick();
+
+            expect(byTestId('outlook-detail-more')).toBeNull();
         });
     });
 });

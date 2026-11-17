@@ -14,6 +14,7 @@ import { fillLabel } from './labels';
 import OutlookGhostDetail from './OutlookGhostDetail.vue';
 import OutlookMeetingHoverCard from './OutlookMeetingHoverCard.vue';
 import OutlookProjectDot from './OutlookProjectDot.vue';
+import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
 import { isPreassigned } from './suggestions';
 import {
     HOVER_CLOSE_DELAY_MS,
@@ -329,6 +330,12 @@ async function onConverted(meeting: OutlookMeeting): Promise<void> {
     await focusAfterRemoval(neighbour);
 }
 
+// A confirm of this meeting runs, from any surface (panel, hover card, menu, bulk): the block shows
+// a spinner instead of the project dot, aria-busy and the progress cursor (UI-SPEC section 1).
+function isPending(id: string): boolean {
+    return context?.isConfirmPending?.(id) === true || confirmingIds.value.includes(id);
+}
+
 function confirmErrorOf(id: string): string | null {
     return confirmError.value?.id === id ? confirmError.value.message : null;
 }
@@ -576,7 +583,7 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                 @cancel-form="onCancelForm(box.meeting)">
                 <HoverCardTrigger as-child>
                     <div
-                        class="m365-ghost m365-meeting absolute pointer-events-auto select-none cursor-pointer rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"
+                        class="m365-ghost m365-meeting absolute pointer-events-auto select-none rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"
                         :class="{
                             'm365-meeting--dismissed': box.meeting.dismissed,
                             'm365-meeting--cascaded': box.cascade > 0,
@@ -584,6 +591,8 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                             'rounded-b-none': box.isClippedEnd,
                             'm365-meeting--selected ring-2 ring-accent-700 dark:ring-accent-200 ring-offset-0':
                                 isSelected(box.meeting.id),
+                            'cursor-progress': isPending(box.meeting.id),
+                            'cursor-pointer': !isPending(box.meeting.id),
                         }"
                         data-calendar-overlay
                         :data-ghost-id="box.meeting.id"
@@ -594,6 +603,7 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                         tabindex="0"
                         :aria-label="ariaLabelOf(box.meeting)"
                         :aria-pressed="ariaPressedOf(box.meeting.id)"
+                        :aria-busy="isPending(box.meeting.id) ? 'true' : undefined"
                         :style="blockStyle(box)"
                         @keydown.enter.prevent="onBlockEnter($event, box.meeting.id)"
                         @keydown.space.prevent="($event.currentTarget as HTMLElement).click()"
@@ -605,9 +615,15 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                             :class="tierOf(box) === 1 ? 'py-0' : 'py-0.5'"
                             :data-ghost-tier="tierOf(box)">
                             <div v-if="tierOf(box) <= 2" class="flex min-w-0 items-center gap-1">
-                                <OutlookProjectDot
-                                    v-if="preassignmentOf(box.meeting)"
-                                    :color="preassignmentOf(box.meeting)!.project_color" />
+                                <template v-if="preassignmentOf(box.meeting)">
+                                    <LoadingSpinner
+                                        v-if="isPending(box.meeting.id)"
+                                        class="m365-meeting__meta m-0 h-3 w-3 shrink-0"
+                                        data-testid="outlook-preassigned-spinner" />
+                                    <OutlookProjectDot
+                                        v-else
+                                        :color="preassignmentOf(box.meeting)!.project_color" />
+                                </template>
                                 <span
                                     class="m365-meeting__subject min-w-0 truncate"
                                     :class="{ 'font-semibold': !box.meeting.dismissed }"
@@ -658,7 +674,12 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                     v-if="preassignmentOf(box.meeting)"
                                     class="m365-meeting__meta flex min-w-0 items-center gap-1"
                                     data-testid="outlook-preassigned-line">
+                                    <LoadingSpinner
+                                        v-if="isPending(box.meeting.id)"
+                                        class="m-0 h-3 w-3 shrink-0 text-current"
+                                        data-testid="outlook-preassigned-spinner" />
                                     <OutlookProjectDot
+                                        v-else
                                         :color="preassignmentOf(box.meeting)!.project_color" />
                                     <span
                                         class="min-w-0 truncate"

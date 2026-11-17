@@ -2206,6 +2206,7 @@ describe('OutlookGhostLayer pre-assigned meetings (Phase 5)', () => {
             list,
             context,
             confirmOne,
+            pending,
             answer: async (result: OutlookConversionResult | null) => {
                 settleConfirm(result);
                 await advance(20);
@@ -2378,6 +2379,112 @@ describe('OutlookGhostLayer pre-assigned meetings (Phase 5)', () => {
             expect(byTestId('outlook-detail-preassignment')).toBeNull();
             expect(byTestId('outlook-detail-edit')).toBeNull();
             expect(byTestId('outlook-detail-confirm')).toBeNull();
+        });
+    });
+
+    describe('panel focus and pending block', () => {
+        function spinnerOf(id: string): Element | null {
+            return block(id).querySelector('[data-testid="outlook-preassigned-spinner"]');
+        }
+
+        function dotOf(id: string): Element | null {
+            return block(id).querySelector('[data-testid="outlook-project-dot"]');
+        }
+
+        it('Enter on a pre-assigned block opens the panel with focus on Confirm', async () => {
+            mountPhase5([preassigned('a', 8)]);
+            block('a').focus();
+
+            keydown(block('a'), 'Enter');
+            await advance(20);
+
+            expect(panel()).not.toBeNull();
+            expect(document.activeElement).toBe(byTestId('outlook-detail-confirm'));
+        });
+
+        it('the panel is w-96 for every meeting', async () => {
+            mountPhase5([at('a', 8)]);
+            await openPanel('a');
+
+            expect(panel()!.className).toContain('w-96');
+            expect(panel()!.className).not.toContain('w-80');
+        });
+
+        it('while the confirm runs the dot becomes a 12px spinner, aria-busy and cursor-progress', async () => {
+            const mounted = mountPhase5([preassigned('a', 8)]);
+            expect(dotOf('a')).not.toBeNull();
+            expect(block('a').hasAttribute('aria-busy')).toBe(false);
+            expect(block('a').classList.contains('cursor-pointer')).toBe(true);
+            await openPanel('a');
+
+            byTestId('outlook-detail-confirm')!.click();
+            await advance(20);
+
+            const spinner = spinnerOf('a');
+            expect(spinner).not.toBeNull();
+            expect(spinner!.getAttribute('class')).toContain('h-3');
+            expect(spinner!.getAttribute('class')).toContain('w-3');
+            expect(dotOf('a')).toBeNull();
+            expect(block('a').getAttribute('aria-busy')).toBe('true');
+            expect(block('a').classList.contains('cursor-progress')).toBe(true);
+            expect(block('a').classList.contains('cursor-pointer')).toBe(false);
+            // No opacity change on the text (the spinner's own arcs are not text)
+            expect(block('a').className).not.toMatch(/\bopacity-/);
+            expect(block('a').querySelector('[data-ghost-subject]')!.className).not.toMatch(
+                /\bopacity-/
+            );
+            expect(
+                block('a').querySelector('[data-testid="outlook-preassigned-line"]')!.className
+            ).not.toMatch(/\bopacity-/);
+
+            await mounted.answer(failed('a', 'This project is archived.'));
+
+            expect(spinnerOf('a')).toBeNull();
+            expect(dotOf('a')).not.toBeNull();
+            expect(block('a').hasAttribute('aria-busy')).toBe(false);
+            expect(block('a').classList.contains('cursor-pointer')).toBe(true);
+        });
+
+        it('a confirm running from another surface (context pending) shows the same state', async () => {
+            const mounted = mountPhase5([preassigned('a', 8), preassigned('b', 10)]);
+
+            mounted.pending.value = ['b'];
+            await nextTick();
+
+            expect(block('b').getAttribute('aria-busy')).toBe('true');
+            expect(spinnerOf('b')).not.toBeNull();
+            expect(block('a').hasAttribute('aria-busy')).toBe(false);
+            expect(spinnerOf('a')).toBeNull();
+        });
+
+        it('on one-line tiers the spinner replaces the dot before the subject', async () => {
+            const mounted = mountPhase5([
+                preassigned('a', 8, {
+                    end: '2026-10-20T08:20:00Z',
+                }),
+            ]);
+            expect(
+                block('a').querySelector('[data-ghost-tier]')!.getAttribute('data-ghost-tier')
+            ).toBe('2');
+
+            mounted.pending.value = ['a'];
+            await nextTick();
+
+            const html = block('a').innerHTML;
+            expect(html.indexOf('outlook-preassigned-spinner')).toBeGreaterThan(-1);
+            expect(html.indexOf('outlook-preassigned-spinner')).toBeLessThan(
+                html.indexOf('data-ghost-subject')
+            );
+            expect(dotOf('a')).toBeNull();
+        });
+
+        it('a plain meeting never shows the spinner', async () => {
+            const mounted = mountPhase5([at('a', 8)]);
+
+            mounted.pending.value = ['a'];
+            await nextTick();
+
+            expect(spinnerOf('a')).toBeNull();
         });
     });
 });
