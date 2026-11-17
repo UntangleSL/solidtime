@@ -33,6 +33,8 @@ use App\Models\Task;
 use App\Models\TimeEntry;
 use App\Models\User;
 use App\Service\BillingContract;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
@@ -40,6 +42,7 @@ use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Passport\Passport;
 use Mockery\MockInterface;
+use PDOException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use STS\FilamentImpersonate\ImpersonateManager;
@@ -738,6 +741,147 @@ class OutlookMeetingConversionTest extends TestCaseWithDatabase
         $response->assertOk();
         $this->assertSame([$meeting->id], $response->json('data.*.id'));
         $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_repeat_conversion_returns_the_existing_entry(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $otherProject = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'repeat');
+        $first = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+        $entryId = $first->json('results.0.time_entry_id');
+
+        // Act: the same occurrence again, twice, even with another project
+        $second = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $otherProject->getKey(),
+            'billable' => true,
+        ]);
+        $third = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert: neutral answer with the first entry, nothing new (D-06, D-16)
+        $first->assertOk();
+        $first->assertJsonPath('results.0.status', 'created');
+        foreach ([$second, $third] as $response) {
+            $response->assertOk();
+            $response->assertJsonCount(1, 'results');
+            $response->assertJsonPath('results.0.meeting_id', $meeting->id);
+            $response->assertJsonPath('results.0.status', 'existing');
+            $response->assertJsonPath('results.0.time_entry_id', $entryId);
+            $response->assertJsonPath('results.0.error', null);
+        }
+        $this->assertSame(1, TimeEntry::query()->count());
+        $this->assertSame(1, OutlookMeetingLink::query()->count());
+        $entry = TimeEntry::query()->findOrFail($entryId);
+        $this->assertSame($project->getKey(), $entry->project_id);
+        $this->assertFalse($entry->billable);
+    }
+
+    public function test_duplicate_link_insert_violates_the_unique_index(): void
+    {
+        // Arrange: two entries of the user, the first already linked to the occurrence
+        $data = $this->employee();
+        $entries = TimeEntry::factory()->forOrganization($data->organization)->forMember($data->member)->count(2)->create();
+        OutlookMeetingLink::query()->create([
+            'user_id' => $data->user->getKey(),
+            'graph_id' => 'unique-occurrence',
+            'time_entry_id' => $entries[0]->getKey(),
+            'meeting_starts_at' => '2026-10-20 09:00:00',
+            'meeting_ends_at' => '2026-10-20 10:00:00',
+        ]);
+
+        // Assert
+        $this->expectException(UniqueConstraintViolationException::class);
+
+        // Act: a second link for the same (user, occurrence)
+        OutlookMeetingLink::query()->create([
+            'user_id' => $data->user->getKey(),
+            'graph_id' => 'unique-occurrence',
+            'time_entry_id' => $entries[1]->getKey(),
+            'meeting_starts_at' => '2026-10-20 09:00:00',
+            'meeting_ends_at' => '2026-10-20 10:00:00',
+        ]);
+    }
+
+    public function test_unique_violation_never_answers_500(): void
+    {
+        // Arrange: core creates the entry, then the link insert loses a race (simulated by the double)
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'race');
+        $this->app->instance(CoreTimeEntryCreator::class, new class extends CoreTimeEntryCreator
+        {
+            public function create(Request $base, Organization $organization, array $payload): TimeEntry
+            {
+                parent::create($base, $organization, $payload);
+
+                throw new UniqueConstraintViolationException(
+                    'pgsql',
+                    'insert into "outlook_meeting_links" ("user_id", "graph_id") values (?, ?)',
+                    [],
+                    new PDOException('duplicate key value violates unique constraint'),
+                );
+            }
+        });
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert: a per-meeting answer, and the meeting's transaction left nothing behind
+        $response->assertOk();
+        $response->assertJsonCount(1, 'results');
+        $response->assertJsonPath('results.0.meeting_id', $meeting->id);
+        $response->assertJsonPath('results.0.status', 'failed');
+        $response->assertJsonPath('results.0.time_entry_id', null);
+        $response->assertJsonPath('results.0.error.key', 'conflict');
+        $response->assertJsonPath('results.0.error.message', __('microsoft365.calendar.error_generic'));
+        $this->assertSame(0, TimeEntry::query()->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_stale_link_is_replaced(): void
+    {
+        // Arrange: the linked entry now belongs to another user (reassigned in bulk, as core does)
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'stale');
+        $body = ['meeting_ids' => [$meeting->id], 'project_id' => $project->getKey(), 'billable' => false];
+        $oldEntryId = $this->convert($data->organization, $body)->json('results.0.time_entry_id');
+        $oldLinkId = OutlookMeetingLink::query()->sole()->getKey();
+        TimeEntry::query()->whereKey($oldEntryId)->update([
+            'user_id' => $data->owner->getKey(),
+            'member_id' => $data->ownerMember->getKey(),
+        ]);
+
+        // Act
+        $response = $this->convert($data->organization, $body);
+
+        // Assert: a new entry of the user, the stale link replaced by one link to it
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        $newEntryId = $response->json('results.0.time_entry_id');
+        $this->assertIsString($newEntryId);
+        $this->assertNotSame($oldEntryId, $newEntryId);
+        $this->assertSame($data->user->getKey(), TimeEntry::query()->findOrFail($newEntryId)->user_id);
+        $this->assertSame($data->owner->getKey(), TimeEntry::query()->findOrFail($oldEntryId)->user_id);
+        $this->assertNull(OutlookMeetingLink::query()->find($oldLinkId));
+        $link = OutlookMeetingLink::query()->sole();
+        $this->assertSame($newEntryId, $link->time_entry_id);
+        $this->assertSame('stale', $link->graph_id);
     }
 
     /**

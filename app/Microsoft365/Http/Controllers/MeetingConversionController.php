@@ -15,6 +15,7 @@ use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
@@ -29,6 +30,9 @@ use Illuminate\Validation\ValidationException;
  * - Each meeting is one transaction: the entry and its outlook_meeting_links row are written together,
  *   with the meeting row locked, so an occurrence is linked at most once (D-06).
  * - Converting a dismissed meeting brings it back from the dismissed state (D-11).
+ * - Repeats are safe (D-06, D-16): an occurrence already linked to an entry of the user answers 'existing'
+ *   with that entry and creates nothing; a link whose entry now belongs to someone else is stale and is
+ *   replaced; a unique-index race rolls the meeting back and answers with the winner's entry.
  * - The owner (member) and the subject are always read on the server; while an admin impersonates the
  *   user nothing is converted (D-13).
  */
@@ -63,6 +67,10 @@ class MeetingConversionController extends Controller
             // the meeting or the body is logged (Phase 3 D-15).
             try {
                 $results[] = DB::transaction(fn (): array => $this->convertOne($request, $organization, $member, $user, $creator, $meetingId));
+            } catch (UniqueConstraintViolationException) {
+                // A concurrent request linked the same occurrence first: this meeting's transaction is
+                // already rolled back (no entry, no link of its own), so answer with the winner's entry
+                $results[] = $this->afterConflict($user, $meetingId);
             } catch (ValidationException $exception) {
                 $first = collect($exception->errors())->flatten()->first();
                 $results[] = $this->failed($meetingId, 'validation', is_string($first) ? $first : $exception->getMessage());
@@ -96,6 +104,17 @@ class MeetingConversionController extends Controller
             ->first();
         if ($meeting === null) {
             return $this->failed($meetingId, 'meeting_not_found', $this->text('microsoft365.calendar.error_meeting_gone'));
+        }
+
+        // Already converted: the same entry again, nothing new (D-06, D-16). A link whose entry now belongs
+        // to another user (reassigned in bulk by core) is stale: it is dropped and the meeting converts
+        // again (RESEARCH Pitfall 4).
+        $link = $this->linkOf($user, $meeting->graph_id);
+        if ($link !== null) {
+            if ($this->ownedBy($link, $user)) {
+                return $this->existing($meetingId, $link->time_entry_id);
+            }
+            $link->delete();
         }
 
         $times = $request->isSingle() ? $request->customTimes() : null;
@@ -133,6 +152,53 @@ class MeetingConversionController extends Controller
             'meeting_id' => $meetingId,
             'status' => 'created',
             'time_entry_id' => (string) $entry->getKey(),
+            'error' => null,
+        ];
+    }
+
+    /**
+     * The answer after a unique-index violation: the winner's entry when it belongs to the user, else a
+     * neutral per-meeting failure. Never a 500 (ASGN-03).
+     *
+     * @return array{meeting_id: string, status: string, time_entry_id: string|null, error: array{key: string, message: string}|null}
+     */
+    private function afterConflict(User $user, string $meetingId): array
+    {
+        $graphId = OutlookMeeting::query()
+            ->where('user_id', '=', $user->getKey())
+            ->whereKey($meetingId)
+            ->value('graph_id');
+        $link = is_string($graphId) ? $this->linkOf($user, $graphId) : null;
+        if ($link !== null && $this->ownedBy($link, $user)) {
+            return $this->existing($meetingId, $link->time_entry_id);
+        }
+
+        return $this->failed($meetingId, 'conflict', $this->text('microsoft365.calendar.error_generic'));
+    }
+
+    private function linkOf(User $user, string $graphId): ?OutlookMeetingLink
+    {
+        return OutlookMeetingLink::query()
+            ->with('timeEntry')
+            ->where('user_id', '=', $user->getKey())
+            ->where('graph_id', '=', $graphId)
+            ->first();
+    }
+
+    private function ownedBy(OutlookMeetingLink $link, User $user): bool
+    {
+        return $link->timeEntry !== null && $link->timeEntry->user_id === $user->getKey();
+    }
+
+    /**
+     * @return array{meeting_id: string, status: string, time_entry_id: string, error: null}
+     */
+    private function existing(string $meetingId, string $timeEntryId): array
+    {
+        return [
+            'meeting_id' => $meetingId,
+            'status' => 'existing',
+            'time_entry_id' => $timeEntryId,
             'error' => null,
         ];
     }
