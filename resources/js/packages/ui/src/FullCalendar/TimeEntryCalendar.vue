@@ -569,6 +569,12 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                                         :break-seconds="
                                             dailyBreakTotals[day.format('YYYY-MM-DD')] || 0
                                         " />
+                                    <!-- Fork seam (m365, D-04): optional caption row per day -->
+                                    <slot
+                                        v-if="$slots['day-header-extra']"
+                                        name="day-header-extra"
+                                        :day-str="day.format('YYYY-MM-DD')"
+                                        :is-day-view="activeView === 'timeGridDay'" />
                                 </div>
                             </div>
                         </div>

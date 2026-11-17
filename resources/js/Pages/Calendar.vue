@@ -29,6 +29,7 @@ import { getCurrentOrganizationId } from '@/utils/useUser';
 import OutlookCalendarControls from '@/m365/calendar/OutlookCalendarControls.vue';
 import OutlookDismissedSetting from '@/m365/calendar/OutlookDismissedSetting.vue';
 import OutlookGhostLayer from '@/m365/calendar/OutlookGhostLayer.vue';
+import OutlookLaneCaption from '@/m365/calendar/OutlookLaneCaption.vue';
 import OutlookMeetingContextItems from '@/m365/calendar/OutlookMeetingContextItems.vue';
 import { useOutlookMeetings } from '@/m365/calendar/useOutlookMeetings';
 
@@ -161,6 +162,9 @@ function onRefresh() {
             </template>
             <template v-if="outlook.labels.value" #context-menu-overlay="{ element }">
                 <OutlookMeetingContextItems :element="element" />
+            </template>
+            <template v-if="outlook.labels.value" #day-header-extra="header">
+                <OutlookLaneCaption v-bind="header" />
             </template>
             <template v-if="outlook.calendar.value" #toolbar-extra>
                 <OutlookCalendarControls />
