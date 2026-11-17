@@ -253,7 +253,7 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
 
         // Assert
         $response->assertOk();
-        $response->assertExactJson(['data' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null]]);
+        $response->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null]]);
         Http::assertNothingSent();
     }
 
