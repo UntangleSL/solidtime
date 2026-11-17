@@ -1220,3 +1220,125 @@ describe('useOutlookMeetings selection and form channel', () => {
         mounted.wrapper.unmount();
     });
 });
+
+describe('useOutlookMeetings refresh after time-entry changes', () => {
+    const ENTRIES_KEY = ['timeEntries', 'calendar', { start: WEEK_A, end: WEEK_B }];
+    const NEXT_WEEK_KEY = ['timeEntries', 'calendar', { start: WEEK_B, end: WEEK_C }];
+
+    // A fetch of a time-entries query, like the calendar query does on load and after the core
+    // mutations invalidate ['timeEntries'] (staleTime 0, so every call fetches again).
+    async function fetchEntries(
+        queryClient: QueryClient,
+        key: readonly unknown[] = ENTRIES_KEY,
+        fail = false
+    ): Promise<void> {
+        await queryClient
+            .fetchQuery({
+                queryKey: key,
+                queryFn: () => (fail ? Promise.reject(new Error('HTTP 500')) : Promise.resolve([])),
+                staleTime: 0,
+                retry: false,
+            })
+            .catch(() => undefined);
+    }
+
+    function meetingReads(): number {
+        return axiosGet.mock.calls.filter((call) => call[0] === MEETINGS_URL).length;
+    }
+
+    async function mountSettled(): Promise<Mounted> {
+        const mounted = mountComposable();
+        await advance(1000);
+        axiosGet.mockClear();
+        return mounted;
+    }
+
+    it('refreshes the meetings read once, 500 ms after a refetch of loaded time entries', async () => {
+        const mounted = await mountSettled();
+        await fetchEntries(mounted.queryClient);
+        await advance(1000);
+        expect(meetingReads()).toBe(0);
+
+        // A delete (or any core mutation) invalidates ['timeEntries'] and the calendar refetches
+        await fetchEntries(mounted.queryClient);
+        await advance(499);
+        expect(meetingReads()).toBe(0);
+        await advance(1);
+        expect(meetingReads()).toBe(1);
+        await advance(2000);
+        expect(meetingReads()).toBe(1);
+        mounted.wrapper.unmount();
+    });
+
+    it('debounces a burst of refetches into one meetings read', async () => {
+        const mounted = await mountSettled();
+        await fetchEntries(mounted.queryClient);
+
+        await fetchEntries(mounted.queryClient);
+        await advance(150);
+        await fetchEntries(mounted.queryClient);
+        await advance(150);
+        await fetchEntries(mounted.queryClient);
+        await advance(499);
+        expect(meetingReads()).toBe(0);
+        await advance(1);
+        expect(meetingReads()).toBe(1);
+        await advance(2000);
+        expect(meetingReads()).toBe(1);
+        mounted.wrapper.unmount();
+    });
+
+    it('ignores the first load of a week (navigation)', async () => {
+        const mounted = await mountSettled();
+        await fetchEntries(mounted.queryClient, ENTRIES_KEY);
+        await fetchEntries(mounted.queryClient, NEXT_WEEK_KEY);
+        await advance(2000);
+
+        expect(meetingReads()).toBe(0);
+        mounted.wrapper.unmount();
+    });
+
+    it('ignores failed fetches, unrelated queries and direct cache writes', async () => {
+        const mounted = await mountSettled();
+        await fetchEntries(mounted.queryClient);
+        await fetchEntries(mounted.queryClient, ENTRIES_KEY, true);
+        await fetchEntries(mounted.queryClient, ['projects']);
+        await fetchEntries(mounted.queryClient, ['projects']);
+        mounted.queryClient.setQueryData(ENTRIES_KEY, []);
+        await advance(2000);
+
+        expect(meetingReads()).toBe(0);
+        mounted.wrapper.unmount();
+    });
+
+    it('does nothing in test-hook mode', async () => {
+        const mounted = await mountSettled();
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (meetings: OutlookMeeting[]) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__([]);
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        await fetchEntries(mounted.queryClient);
+        await fetchEntries(mounted.queryClient);
+        await advance(2000);
+
+        expect(invalidate).not.toHaveBeenCalled();
+        expect(meetingReads()).toBe(0);
+        mounted.wrapper.unmount();
+    });
+
+    it('drops a pending refresh and stops listening on unmount', async () => {
+        const mounted = await mountSettled();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        await fetchEntries(mounted.queryClient);
+        await fetchEntries(mounted.queryClient);
+        await advance(200);
+        mounted.wrapper.unmount();
+        await advance(1000);
+        await fetchEntries(mounted.queryClient);
+        await advance(1000);
+
+        expect(invalidate).not.toHaveBeenCalled();
+    });
+});

@@ -52,6 +52,8 @@ const SHOW_DISMISSED_STORAGE_KEY = 'solidtime:m365-show-dismissed';
 // The Sync button stays unavailable this long after a settled manual sync (a throttled or
 // unavailable answer with a larger retry_after wins). Automatic syncs never start it (D-08).
 const SYNC_COOLDOWN_MS = 10_000;
+// Delay of the meetings refresh that follows time-entry refetches (bursts collapse into one read).
+const ENTRIES_REFRESH_DEBOUNCE_MS = 500;
 
 // Why the Sync button is cooling down: right after a manual sync, or a back-off the server asked for.
 export type OutlookCooldownKind = 'manual' | 'backoff';
@@ -609,6 +611,33 @@ export function useOutlookMeetings(
         return results;
     }
 
+    // Core time-entry mutations (create, edit, move, delete, bulk) only invalidate ['timeEntries'] and
+    // ['goals']. Deleting an entry created from a meeting must bring the meeting back without a
+    // reload (ASGN-05), so a successful refetch of an already loaded time-entries query refreshes the
+    // meetings read once, debounced: drags and bulk edits fire bursts and the read is throttled at
+    // 60 per minute. The first load of a week (dataUpdateCount 1, navigation), failed fetches and
+    // direct cache writes (setQueryData) never trigger it; injected test meetings are not server rows.
+    let entriesRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function refreshAllowed(): boolean {
+        return !unmounted && calendar.value !== null && testMeetings.value === null;
+    }
+
+    const unsubscribeEntries = queryClient.getQueryCache().subscribe((event) => {
+        if (event.type !== 'updated' || event.action.type !== 'success') return;
+        if (event.action.manual === true) return;
+        if (event.query.queryKey[0] !== 'timeEntries') return;
+        if (event.query.state.dataUpdateCount < 2 || !refreshAllowed()) return;
+
+        if (entriesRefreshTimer !== undefined) clearTimeout(entriesRefreshTimer);
+        entriesRefreshTimer = setTimeout(() => {
+            entriesRefreshTimer = undefined;
+            if (refreshAllowed()) {
+                void queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
+            }
+        }, ENTRIES_REFRESH_DEBOUNCE_MS);
+    });
+
     // Local days that hold at least one meeting get the reserved Outlook lane (D-23). The overlap is
     // half-open like the ghost layout: a zero-length meeting belongs to the day containing it.
     function dayOverlayLane(dayStr: string, isDayView: boolean): string | null {
@@ -655,6 +684,9 @@ export function useOutlookMeetings(
         if (cooldownTimer !== undefined) clearTimeout(cooldownTimer);
         cooldownTimer = undefined;
         pending = null;
+        unsubscribeEntries();
+        if (entriesRefreshTimer !== undefined) clearTimeout(entriesRefreshTimer);
+        entriesRefreshTimer = undefined;
         delete (window as unknown as TestWindow).__TEST_SET_OUTLOOK_MEETINGS__;
     });
 
