@@ -274,6 +274,8 @@ describe('OutlookSelectionBar', () => {
             task_id: null,
             tags: [],
             billable: true,
+            prefill_source: 'last_used',
+            prefill_project_id: 'p-1',
         });
         // Every meeting was created: the meetings left the selection, the popover and bar are gone.
         expect(selection.selectedIds.value).toEqual([]);

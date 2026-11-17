@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, ref, useId, watch, type ComputedRef } from 'vue';
-import { CalendarDays, CircleX } from '@lucide/vue';
+import { CalendarDays, CircleX, Repeat } from '@lucide/vue';
 import { TagIcon } from '@heroicons/vue/20/solid';
 import type { Organization } from '@/packages/api/src';
 import { Button } from '@/packages/ui/src/Buttons';
@@ -47,7 +47,14 @@ import OutlookSuggestionPicks from './OutlookSuggestionPicks.vue';
 import { fillLabel } from './labels';
 import { readLastProject, rememberLastProject, resolvePrefillProject } from './lastProject';
 import { type PrefillReason, reasonIcon, reasonLabel } from './suggestionReason';
-import { type Prefill, quickPicks, resolveSinglePrefill } from './suggestions';
+import {
+    batchSeriesNote,
+    type Prefill,
+    quickPicks,
+    resolveBatchPrefill,
+    resolveSinglePrefill,
+    seriesNote,
+} from './suggestions';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
 // Mini form that turns Outlook meetings into time entries (Phase 4). Single mode (UI-SPEC section
@@ -121,7 +128,8 @@ const serverError = ref<string | null>(null);
 
 // --- Prefill. Phase 4 (D-02): last project used for a meeting conversion, else the latest entry's
 // project. Phase 5 puts the series pre-assignment and a confident learned suggestion before it
-// (resolveSinglePrefill); the meeting payload carries both, so the prefill never waits on a lookup.
+// (resolveSinglePrefill; batch: a shared assignment, else the majority candidate, D-08). The
+// meeting payload carries both, so the prefill never waits on a lookup.
 const storedProjectId = organizationId ? readLastProject(organizationId) : null;
 const recentProjectId = computed(() => {
     const entries = timeEntriesQuery.data.value?.pages.flatMap((page) => page.data) ?? [];
@@ -131,7 +139,9 @@ const prefillProjectId = computed(() =>
     resolvePrefillProject(storedProjectId, projects.value, recentProjectId.value)
 );
 const prefill = computed<Prefill>(() =>
-    resolveSinglePrefill(meeting.value, projects.value, prefillProjectId.value)
+    isBatch
+        ? resolveBatchPrefill(batchMeetings, projects.value, prefillProjectId.value)
+        : resolveSinglePrefill(meeting.value, projects.value, prefillProjectId.value)
 );
 
 const NO_PREFILL: Prefill = {
@@ -209,8 +219,42 @@ const singleCandidates = computed<OutlookSuggestion[]>(() =>
         ? []
         : (meeting.value.suggestions ?? []).filter((item) => usableProject(item.project_id))
 );
-const candidates = computed<PickCandidate[]>(() => singleCandidates.value);
-const picks = computed<PickCandidate[]>(() => quickPicks(singleCandidates.value, projectId.value));
+
+// Batch (UI-SPEC section 7): each meeting's top candidate, its series assignment counting as top,
+// most common first, ties to the earliest meeting (resolveBatchPrefill's order). Assignments are
+// candidates too (reason 'series'), so a project only named by some meetings' series can still be
+// picked in one click.
+const batchCandidates = computed<PickCandidate[]>(() => {
+    if (!isBatch) return [];
+    const tallies = new Map<string, { candidate: PickCandidate; count: number; first: number }>();
+    batchMeetings.forEach((item, index) => {
+        const top: PickCandidate | undefined = item.assignment
+            ? {
+                  project_id: item.assignment.project_id,
+                  project_name: item.assignment.project_name,
+                  project_color: item.assignment.project_color,
+                  client_name: item.assignment.client_name,
+                  reason: { kind: 'series' },
+              }
+            : item.suggestions?.[0];
+        if (top === undefined || !usableProject(top.project_id)) return;
+        const tally = tallies.get(top.project_id);
+        if (tally) tally.count++;
+        else tallies.set(top.project_id, { candidate: top, count: 1, first: index });
+    });
+    return [...tallies.values()]
+        .sort((a, b) => b.count - a.count || a.first - b.first)
+        .map((tally) => tally.candidate);
+});
+
+const candidates = computed<PickCandidate[]>(() =>
+    isBatch ? batchCandidates.value : singleCandidates.value
+);
+const picks = computed<PickCandidate[]>(() =>
+    isBatch
+        ? batchCandidates.value.filter((item) => item.project_id !== projectId.value).slice(0, 2)
+        : quickPicks(singleCandidates.value, projectId.value)
+);
 
 function onSuggestionPicked(id: string): void {
     projectTouched = true;
@@ -235,6 +279,18 @@ const currentReasonLabel = computed(() =>
 const currentReasonIcon = computed(() =>
     currentReason.value ? reasonIcon(currentReason.value.kind) : null
 );
+
+// What the conversion will do to the series (D-05): the first conversion of a recurring meeting
+// pre-assigns its series; a different project moves a pre-assigned series from now on.
+const seriesNoteText = computed<string | null>(() => {
+    const id = projectId.value;
+    if (!id) return null;
+    if (isBatch) return batchSeriesNote(batchMeetings) ? props.labels.batch_series_note : null;
+    const kind = seriesNote(meeting.value, id);
+    if (kind === 'new') return props.labels.series_note_new;
+    if (kind === 'change') return props.labels.series_note_change;
+    return null;
+});
 
 watch(projectId, (id) => {
     if (id) projectError.value = false;
@@ -475,6 +531,8 @@ async function submitBatch(): Promise<void> {
                 task_id: taskId.value,
                 tags: [...selectedTags.value],
                 billable: billable.value,
+                prefill_source: appliedPrefill.value.source,
+                prefill_project_id: appliedPrefill.value.projectId,
             });
         } finally {
             saving.value = false;
@@ -629,6 +687,13 @@ onMounted(() => {
                         :candidates="picks"
                         :labels="labels"
                         @pick="onSuggestionPicked" />
+                    <p
+                        v-if="seriesNoteText"
+                        class="mt-2 flex items-start gap-1 text-xs text-text-tertiary"
+                        data-testid="outlook-series-note">
+                        <Repeat class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+                        <span>{{ seriesNoteText }}</span>
+                    </p>
                 </div>
                 <FieldError v-if="projectError" class="text-xs">
                     {{ labels.error_project_required }}

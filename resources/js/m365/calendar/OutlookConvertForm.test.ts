@@ -171,6 +171,11 @@ function chipIds(): (string | null)[] {
     return chips().map((chip) => chip.getAttribute('data-project-id'));
 }
 
+function seriesNoteText(): string | null {
+    const note = document.body.querySelector('[data-testid="outlook-series-note"]');
+    return note ? (note.textContent?.trim() ?? '') : null;
+}
+
 function reasonText(): string | null {
     const line = document.body.querySelector('[data-testid="outlook-suggestion-reason"]');
     return line ? (line.textContent?.trim() ?? '') : null;
@@ -717,6 +722,47 @@ describe('OutlookConvertForm (series pre-assignment)', () => {
         expect(reasonText()).toBeNull();
     });
 
+    it('says the series will come pre-assigned on the first conversion of a recurring meeting', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+        mountForm(meeting({ series_key: 's-1' }));
+        await settle();
+
+        expect(seriesNoteText()).toBe(
+            'Other meetings in this series will come pre-assigned to this project.'
+        );
+    });
+
+    it('shows no series note for a one-off meeting or without a project', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+        mountForm(meeting({ series_key: null }));
+        await settle();
+        expect(seriesNoteText()).toBeNull();
+        wrapper!.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+
+        localStorage.clear();
+        mountForm(meeting({ series_key: 's-1' }));
+        await settle();
+        expect(seriesNoteText()).toBeNull();
+    });
+
+    it('warns that the series moves when Edit changes the pre-assigned project', async () => {
+        const w = mountForm(meeting({ series_key: 's-1', assignment: assignment() }));
+        await settle();
+        expect(seriesNoteText()).toBeNull();
+
+        pickProject(w, 'p-2');
+        await settle();
+        expect(seriesNoteText()).toBe(
+            'This series will use the new project from now on. Entries already created stay as they are.'
+        );
+
+        pickProject(w, 'p-1');
+        await settle();
+        expect(seriesNoteText()).toBeNull();
+    });
+
     it('keeps the series billable off under the billable-rates lock', async () => {
         locked.value = true;
         mountForm(meeting({ series_key: 's-1', assignment: assignment({ billable: true }) }));
@@ -963,6 +1009,8 @@ describe('OutlookConvertForm (batch)', () => {
             task_id: null,
             tags: [],
             billable: true,
+            prefill_source: 'last_used',
+            prefill_project_id: 'p-1',
         });
         for (const row of batchRows()) {
             expect(row.getAttribute('data-status')).toBe('pending');
@@ -1052,7 +1100,14 @@ describe('OutlookConvertForm (batch)', () => {
         expect(convert).toHaveBeenCalledTimes(2);
         expect(convert.mock.calls[1]).toEqual([
             ['m-3'],
-            { project_id: 'p-2', task_id: null, tags: [], billable: false },
+            {
+                project_id: 'p-2',
+                task_id: null,
+                tags: [],
+                billable: false,
+                prefill_source: 'last_used',
+                prefill_project_id: 'p-1',
+            },
         ]);
         expect(w.emitted('done')).toHaveLength(1);
         expect((w.emitted('done')![0]![0] as OutlookConversionResult[]).length).toBe(3);
@@ -1152,5 +1207,189 @@ describe('OutlookConvertForm (batch)', () => {
             'success',
             '20 time entries created successfully'
         );
+    });
+});
+
+describe('OutlookConvertForm (batch prefill)', () => {
+    beforeEach(() => {
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+        state.projects = [
+            project('p-1', { is_billable: true }),
+            project('p-2', { is_billable: true }),
+            project('p-3'),
+            project('p-4'),
+        ];
+    });
+
+    function three(
+        overrides: [Partial<OutlookMeeting>, Partial<OutlookMeeting>, Partial<OutlookMeeting>]
+    ): OutlookMeeting[] {
+        return [
+            meeting({ id: 'm-1', ...overrides[0] }),
+            meeting({
+                id: 'm-2',
+                start: '2026-10-27T13:00:00Z',
+                end: '2026-10-27T14:00:00Z',
+                ...overrides[1],
+            }),
+            meeting({
+                id: 'm-3',
+                start: '2026-10-28T09:00:00Z',
+                end: '2026-10-28T10:00:00Z',
+                ...overrides[2],
+            }),
+        ];
+    }
+
+    it('prefills every series value from a shared assignment and says "Same series"', async () => {
+        const shared = { series_key: 's-1' };
+        mountBatch(
+            three([
+                { ...shared, assignment: assignment({ project_id: 'p-2' }) },
+                { ...shared, assignment: assignment({ project_id: 'p-2', tags: [] }) },
+                { ...shared, assignment: assignment({ project_id: 'p-2', tags: [] }) },
+            ])
+        );
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-2');
+        expect(el('outlook-convert-billable').textContent).toContain('Non-Billable');
+        expect(el('outlook-convert-tags').textContent?.trim()).toBe('1 Tag');
+        expect(reasonText()).toBe('Same series');
+        expect(chips()).toHaveLength(0);
+        expect(seriesNoteText()).toBe(
+            'Recurring meetings here will use this project for their series from now on.'
+        );
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(convert).toHaveBeenCalledWith(['m-1', 'm-2', 'm-3'], {
+            project_id: 'p-2',
+            task_id: 'task-1',
+            tags: ['t-1'],
+            billable: false,
+            prefill_source: 'series',
+            prefill_project_id: 'p-2',
+        });
+    });
+
+    it('prefills the candidate of at least half of the meetings with "Suggested for 2 of 3 meetings"', async () => {
+        mountBatch(
+            three([
+                { series_key: 's-1', assignment: assignment({ project_id: 'p-2' }) },
+                {
+                    suggestions: [
+                        suggestion('p-2', {
+                            confident: true,
+                            reason: { kind: 'domain', count: 3, value: 'client.com' },
+                        }),
+                    ],
+                },
+                { suggestions: [suggestion('p-3')] },
+            ])
+        );
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-2');
+        // A suggestion prefills the project only: billable follows p-2, no task, no tags.
+        expect(el('outlook-convert-billable').textContent).not.toContain('Non-Billable');
+        expect(el('outlook-convert-tags').textContent?.trim()).toBe('Tags');
+        expect(reasonText()).toBe('Suggested for 2 of 3 meetings');
+        expect(chipIds()).toEqual(['p-3']);
+        expect(seriesNoteText()).toBe(
+            'Recurring meetings here will use this project for their series from now on.'
+        );
+    });
+
+    it('falls back to last used below half and offers the two most common candidates', async () => {
+        const meetings = [
+            ...three([
+                { series_key: 's-1', assignment: assignment({ project_id: 'p-2' }) },
+                {
+                    suggestions: [
+                        suggestion('p-3', {
+                            reason: { kind: 'person', count: 2, value: 'Ana López' },
+                        }),
+                    ],
+                },
+                { suggestions: [suggestion('p-3')] },
+            ]),
+            meeting({
+                id: 'm-4',
+                start: '2026-10-29T09:00:00Z',
+                end: '2026-10-29T10:00:00Z',
+                suggestions: [suggestion('p-4')],
+            }),
+        ];
+        mountBatch(meetings);
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-1');
+        expect(reasonText()).toBe('Last used');
+        expect(chipIds()).toEqual(['p-3', 'p-2']);
+        expect(chips()[1]!.getAttribute('title')).toBe('Same series');
+
+        chips()[0]!.click();
+        await settle();
+
+        expect(pickerTrigger().textContent).toContain('Project p-3');
+        expect(reasonText()).toBe('Like 2 meetings with Ana López');
+        expect(chipIds()).toEqual(['p-2', 'p-4']);
+        expect(document.activeElement).toBe(el('outlook-batch-submit'));
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(convert.mock.calls[0]![1]).toEqual({
+            project_id: 'p-3',
+            task_id: null,
+            tags: [],
+            billable: false,
+            prefill_source: 'last_used',
+            prefill_project_id: 'p-1',
+        });
+    });
+
+    it('shows no batch series note when no meeting is recurring', async () => {
+        mountBatch();
+        await settle();
+
+        expect(seriesNoteText()).toBeNull();
+    });
+
+    it('keeps sending the prefill fields on retry', async () => {
+        convert.mockResolvedValueOnce([
+            outcome('m-1', 'created'),
+            outcome('m-2', 'failed'),
+            outcome('m-3', 'created'),
+        ]);
+        mountBatch(
+            three([
+                { suggestions: [suggestion('p-2', { confident: true })] },
+                { suggestions: [suggestion('p-2', { confident: true })] },
+                {},
+            ])
+        );
+        await settle();
+        el('outlook-batch-submit').click();
+        await settle();
+
+        convert.mockResolvedValueOnce([outcome('m-2', 'created')]);
+        el('outlook-batch-retry').click();
+        await settle();
+
+        expect(convert.mock.calls[1]).toEqual([
+            ['m-2'],
+            {
+                project_id: 'p-2',
+                task_id: null,
+                tags: [],
+                billable: true,
+                prefill_source: 'suggestion',
+                prefill_project_id: 'p-2',
+            },
+        ]);
     });
 });
