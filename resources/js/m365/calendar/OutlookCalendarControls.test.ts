@@ -121,6 +121,9 @@ function fakeContext(initial: Partial<Record<string, unknown>> = {}) {
         cooldownUntil: ref(0),
         cooldownStartedAt: ref(0),
         cooldownKind: ref<'manual' | 'backoff' | null>(null),
+        // Phase 5 bulk confirm (OutlookConfirmAll): off unless a test opts in
+        canAct: ref(false),
+        preassignedInRange: ref<OutlookMeeting[]>([]),
     };
     for (const [key, value] of Object.entries(initial)) {
         (state as Record<string, Ref<unknown>>)[key]!.value = value;
@@ -133,6 +136,8 @@ function fakeContext(initial: Partial<Record<string, unknown>> = {}) {
         meetings: ref([]),
         announcement: ref(''),
         requestSync,
+        confirmPreassigned: vi.fn(async () => []),
+        announce: vi.fn(),
         dayOverlayLane: () => null,
     } as unknown as OutlookMeetingsContext;
     return { context, state, requestSync };
@@ -406,6 +411,151 @@ describe('OutlookCalendarControls', () => {
         // Collapsed or not, the persistent live region and the accessible name stay
         expect(statusRegion(wrapper).attributes('aria-live')).toBe('polite');
         expect(syncButton(wrapper).attributes('aria-label')).toBe('Sync Outlook meetings');
+        wrapper.unmount();
+    });
+});
+
+describe('OutlookCalendarControls bulk confirm', () => {
+    const preassigned: OutlookMeeting = {
+        id: 'pre-1',
+        subject: 'Weekly sync',
+        start: '2026-11-03T09:00:00Z',
+        end: '2026-11-03T10:00:00Z',
+        organizer_name: null,
+        is_organizer: false,
+        is_online_meeting: false,
+        web_link: null,
+        dismissed: false,
+        series_key: 'series-1',
+        assignment: {
+            project_id: 'p-1',
+            project_name: 'Internal',
+            project_color: '#ef5350',
+            client_name: null,
+            task_id: null,
+            task_name: null,
+            tags: [],
+            billable: false,
+            converted_at: '2026-10-27T09:00:00Z',
+        },
+        suggestions: [],
+    };
+    const confirmLabels = {
+        ...labels,
+        confirm_all_short: 'Confirm :count',
+        confirm_all_long: 'Confirm :count pre-assigned',
+        confirm_all_tooltip: 'Review and confirm the pre-assigned meetings in view',
+        confirm_all_title_one: 'Confirm 1 pre-assigned meeting',
+        confirm_all_title_many: 'Confirm :count pre-assigned meetings',
+    } as OutlookCalendarLabels;
+
+    function renderBlocks(ids: string[]): void {
+        const root = document.createElement('div');
+        root.className = 'fc';
+        ids.forEach((id) => {
+            const block = document.createElement('div');
+            block.dataset.ghostId = id;
+            root.appendChild(block);
+        });
+        document.body.appendChild(root);
+    }
+
+    function confirmContext(initial: Partial<Record<string, unknown>> = {}) {
+        const fake = fakeContext({ canAct: true, preassignedInRange: [preassigned], ...initial });
+        (fake.context as unknown as { labels: Ref<OutlookCalendarLabels> }).labels.value =
+            confirmLabels;
+        return fake;
+    }
+
+    const confirmButton = (wrapper: VueWrapper) =>
+        wrapper.find('[data-testid="outlook-confirm-all"]');
+    const settle = async () => {
+        await nextTick();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await nextTick();
+    };
+
+    beforeEach(() => {
+        renderBlocks(['pre-1']);
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    it('renders Confirm immediately before the Sync button while connected', async () => {
+        const { context } = confirmContext();
+        const wrapper = mountWithContext(context);
+        await settle();
+
+        const button = confirmButton(wrapper);
+        expect(button.exists()).toBe(true);
+        expect(button.attributes('aria-label')).toBe('Confirm 1 pre-assigned meeting');
+        // Each button sits in its tooltip trigger span; Confirm's span is right before Sync's
+        const syncSpan = syncButton(wrapper).element.parentElement!;
+        expect(syncSpan.previousElementSibling).toBe(button.element.parentElement);
+        // Status first, then Confirm, then Sync (Tab order: Confirm before Sync)
+        const root = wrapper.find('[data-testid="outlook-calendar-controls"]').element;
+        const order = Array.from(root.children).map(
+            (child) =>
+                child.getAttribute('data-testid') ??
+                child.querySelector('[data-testid]')?.getAttribute('data-testid')
+        );
+        expect(order.slice(0, 3)).toEqual([
+            'outlook-sync-status',
+            'outlook-confirm-all',
+            'outlook-sync-button',
+        ]);
+        wrapper.unmount();
+    });
+
+    it('renders no Confirm button when the count is 0 or without canAct', async () => {
+        for (const initial of [{ preassignedInRange: [] }, { canAct: false }]) {
+            const { context } = confirmContext(initial);
+            const wrapper = mountWithContext(context);
+            await settle();
+
+            expect(confirmButton(wrapper).exists()).toBe(false);
+            expect(syncButton(wrapper).exists()).toBe(true);
+            wrapper.unmount();
+        }
+    });
+
+    it('renders no Confirm button for reconnect and not_connected', async () => {
+        for (const state of ['reconnect', 'not_connected'] as const) {
+            const { context } = confirmContext({ connectionState: state });
+            const wrapper = mountWithContext(context);
+            await settle();
+
+            expect(confirmButton(wrapper).exists()).toBe(false);
+            wrapper.unmount();
+        }
+    });
+
+    it('renders only the Confirm button in the browser-test mode with actions', async () => {
+        const { context } = confirmContext({ calendar: null, connectionState: null });
+        const wrapper = mountWithContext(context);
+        await settle();
+
+        expect(wrapper.find('[data-testid="outlook-calendar-controls"]').exists()).toBe(true);
+        expect(confirmButton(wrapper).exists()).toBe(true);
+        expect(syncButton(wrapper).exists()).toBe(false);
+        expect(connectButton(wrapper).exists()).toBe(false);
+        expect(reconnectButton(wrapper).exists()).toBe(false);
+        expect(statusRegion(wrapper).exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it('renders nothing in the browser-test mode without actions', async () => {
+        const { context } = confirmContext({
+            calendar: null,
+            connectionState: null,
+            canAct: false,
+        });
+        const wrapper = mountWithContext(context);
+        await settle();
+
+        expect(wrapper.find('[data-testid="outlook-calendar-controls"]').exists()).toBe(false);
         wrapper.unmount();
     });
 });
@@ -1052,6 +1202,100 @@ describe('OutlookCalendarControls with the real composable', () => {
             wrapper.unmount();
             await advance(20_000);
         }
+    });
+
+    it('counts the rendered pre-assigned injected meetings in the browser-test mode with actions', async () => {
+        delete pageProps.microsoft;
+        const { wrapper } = mountPage(true);
+        await advance(0);
+        expect(wrapper.find('[data-testid="outlook-calendar-controls"]').exists()).toBe(false);
+
+        const assignment = {
+            project_id: 'p-1',
+            project_name: 'Internal',
+            project_color: '#ef5350',
+            client_name: null,
+            task_id: null,
+            task_name: null,
+            tags: [],
+            billable: false,
+            converted_at: '2026-10-27T09:00:00Z',
+        };
+        const base = CACHED[0]!;
+        const injected: OutlookMeeting[] = [
+            { ...base, id: 'pre-tue', series_key: 'a', assignment },
+            {
+                ...base,
+                id: 'pre-wed',
+                series_key: 'b',
+                assignment,
+                start: '2026-11-04T09:00:00Z',
+                end: '2026-11-04T10:00:00Z',
+            },
+            // Saturday of the week: hidden weekend, no block rendered
+            {
+                ...base,
+                id: 'pre-sat',
+                series_key: 'c',
+                assignment,
+                start: '2026-11-07T09:00:00Z',
+                end: '2026-11-07T10:00:00Z',
+            },
+            { ...base, id: 'dismissed', series_key: 'd', assignment, dismissed: true },
+            {
+                ...base,
+                id: 'suggested',
+                assignment: null,
+                suggestions: [
+                    {
+                        project_id: 'p-2',
+                        project_name: 'Client work',
+                        project_color: '#000000',
+                        client_name: null,
+                        confident: true,
+                        reason: { kind: 'subject', count: 3, value: null },
+                    },
+                ],
+            },
+        ];
+        const root = document.createElement('div');
+        root.className = 'fc';
+        for (const id of ['pre-tue', 'pre-wed', 'dismissed', 'suggested']) {
+            const block = document.createElement('div');
+            block.dataset.ghostId = id;
+            root.appendChild(block);
+        }
+        document.body.appendChild(root);
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (
+                    list: OutlookMeeting[],
+                    labels?: Partial<OutlookCalendarLabels>,
+                    options?: { actions?: boolean; convertUrl?: string }
+                ) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__(
+            injected,
+            {
+                ...labels,
+                confirm_all_short: 'Confirm :count',
+                confirm_all_long: 'Confirm :count pre-assigned',
+                confirm_all_title_one: 'Confirm 1 pre-assigned meeting',
+                confirm_all_title_many: 'Confirm :count pre-assigned meetings',
+            },
+            { actions: true, convertUrl: 'https://app.example.test/convert' }
+        );
+        await advance(0);
+        await advance(0);
+
+        expect(wrapper.find('[data-testid="outlook-calendar-controls"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="outlook-confirm-all"]').attributes('aria-label')).toBe(
+            'Confirm 2 pre-assigned meetings'
+        );
+        expect(syncButton(wrapper).exists()).toBe(false);
+        expect(connectButton(wrapper).exists()).toBe(false);
+        wrapper.unmount();
+        root.remove();
     });
 
     describe('connect notice', () => {

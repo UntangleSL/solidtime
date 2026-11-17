@@ -11,6 +11,7 @@ import {
     TooltipTrigger,
 } from '@/packages/ui/src/tooltip';
 import { navigateTo } from '@/m365/navigation';
+import OutlookConfirmAll from './OutlookConfirmAll.vue';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 import {
     cooldownProgress,
@@ -29,6 +30,9 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * 6;
 // there is no dialog, and meetings are only ever a status text and a spinning icon here. The
 // connection state picks the variant: Sync + status (connected), "Reconnect Microsoft" in the Sync
 // position (reconnect) or only "Connect Microsoft 365" (not connected); no error banner anywhere.
+// "Confirm N pre-assigned" (Phase 5, D-04) sits immediately before Sync while connected. In the
+// browser-test mode (integration off, injected meetings with actions) it is the only control: Sync,
+// Connect and Reconnect need the calendar prop.
 const context = inject(OUTLOOK_MEETINGS_KEY, null);
 const organization = inject<ComputedRef<Organization | undefined> | undefined>(
     'organization',
@@ -154,10 +158,11 @@ function onConnect() {
 
 <template>
     <div
-        v-if="context && context.calendar.value"
+        v-if="context && (context.calendar.value || context.canAct?.value)"
         data-testid="outlook-calendar-controls"
         class="flex items-center gap-2">
-        <template v-if="isConnected && labels">
+        <OutlookConfirmAll v-if="!context.calendar.value" />
+        <template v-else-if="isConnected && labels">
             <div
                 role="status"
                 aria-live="polite"
@@ -176,6 +181,7 @@ function onConnect() {
                     {{ context.announcement.value }}
                 </span>
             </div>
+            <OutlookConfirmAll />
             <TooltipProvider :delay-duration="300">
                 <Tooltip>
                     <TooltipTrigger as-child>
