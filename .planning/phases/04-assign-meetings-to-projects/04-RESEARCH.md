@@ -486,15 +486,15 @@ Impersonation: `if ($this->access->blocked()) throw (new ModelNotFoundException)
 | A3 | The owner accepts keeping links after Microsoft disconnect (they are entry metadata, not calendar cache) | Pattern 2 / Open Q1 | If links must be purged too, converted meetings re-surface after reconnect |
 | A4 | Postgres row lock + unique index is enough; no `Cache::lock` needed | Pattern 2 | Low: the unique index alone prevents duplicates |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Do links survive "Disconnect Microsoft"?**
+1. **Do links survive "Disconnect Microsoft"?** RESOLVED: yes, CONTEXT D-15.
    - What we know: Phase 3 D-21 purges meetings, dismissals and windows on disconnect. Links stored on meeting rows would vanish.
    - What's unclear: whether the owner considers the opaque `graph_id` link "Outlook data that must not outlive the connection".
    - Recommendation: keep links. They hold no subject and are deleted with the entry or the user, and they prevent double conversions after a reconnect. Confirm with the owner as a functional point.
-2. **Is "already converted" a failure in the multi-assign result?** D-06 says single repeats return the existing entry, while D-08 lists "already converted" as a failure reason. Recommendation: return `existing` and show it as "Already converted" in a neutral style, deselected like successes.
-3. **Hover-card action:** the hover card is pointer-only and transient. Recommendation: the button there opens the panel in form mode, rather than hosting the form in the card.
-4. **UI-SPEC:** `workflow.ui_phase` is true. The mini form, floating bar and badge are new visual surfaces, so the orchestrator may want `/gsd-ui-phase 4` before planning.
+2. **Is "already converted" a failure in the multi-assign result?** RESOLVED: no, neutral "Already had a time entry", CONTEXT D-16. D-06 says single repeats return the existing entry, while D-08 lists "already converted" as a failure reason. Recommendation: return `existing` and show it as "Already converted" in a neutral style, deselected like successes.
+3. **Hover-card action:** RESOLVED: opens the panel in form mode, CONTEXT D-17. the hover card is pointer-only and transient. Recommendation: the button there opens the panel in form mode, rather than hosting the form in the card.
+4. **UI-SPEC:** RESOLVED: 04-UI-SPEC.md written and checked. `workflow.ui_phase` is true. The mini form, floating bar and badge are new visual surfaces, so the orchestrator may want `/gsd-ui-phase 4` before planning.
 
 ## Environment Availability
 
