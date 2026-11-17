@@ -1221,6 +1221,232 @@ describe('useOutlookMeetings selection and form channel', () => {
     });
 });
 
+describe('useOutlookMeetings linked entries and the acting test hook', () => {
+    const first = meeting('m-1', '2026-11-03T09:00:00Z', '2026-11-03T10:00:00Z');
+    const second = meeting('m-2', '2026-11-03T11:00:00Z', '2026-11-03T12:00:00Z');
+    const fields = { project_id: 'p-1', task_id: null, tags: [], billable: true };
+    const TEST_CONVERT_URL = 'https://example.test/convert';
+
+    type HookOptions = { actions?: boolean; convertUrl?: string; linkedTimeEntryIds?: string[] };
+
+    function hook(
+        meetings: OutlookMeeting[],
+        labels?: Partial<OutlookCalendarLabels>,
+        options?: HookOptions
+    ): void {
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (
+                    meetings: OutlookMeeting[],
+                    labels?: Partial<OutlookCalendarLabels>,
+                    options?: HookOptions
+                ) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__(meetings, labels, options);
+    }
+
+    function linkedRead(
+        meetings: OutlookMeeting[],
+        linked: string[]
+    ): { data: OutlookMeetingsResponse } {
+        return {
+            data: {
+                data: meetings,
+                sync: { last_synced_at: null, retry_after: null },
+                linked_time_entry_ids: linked,
+            },
+        };
+    }
+
+    function created(id: string, entryId: string) {
+        return { meeting_id: id, status: 'created', time_entry_id: entryId, error: null };
+    }
+
+    function failed(id: string) {
+        return {
+            meeting_id: id,
+            status: 'failed',
+            time_entry_id: null,
+            error: { key: 'forbidden', message: 'No access.' },
+        };
+    }
+
+    function invalidatedKeys(spy: ReturnType<typeof vi.spyOn>): unknown[] {
+        return spy.mock.calls.map(
+            (call: unknown[]) => (call[0] as { queryKey?: unknown } | undefined)?.queryKey
+        );
+    }
+
+    it('follows the linked entry ids of the read for the current week', async () => {
+        axiosGet.mockImplementation((_url, config) =>
+            Promise.resolve(
+                (config as { params: { start: string } }).params.start === WEEK_A
+                    ? linkedRead([first], ['te-1'])
+                    : linkedRead([], ['te-9'])
+            )
+        );
+        const mounted = mountComposable();
+        await advance(500);
+        expect(mounted.api.linkedTimeEntryIds.value).toEqual(['te-1']);
+
+        await goTo(mounted, WEEK_B);
+        await advance(500);
+
+        expect(mounted.api.linkedTimeEntryIds.value).toEqual(['te-9']);
+        mounted.wrapper.unmount();
+    });
+
+    it('is empty while there is no read or the read has no ids', async () => {
+        const mounted = mountComposable(null);
+        expect(mounted.api.linkedTimeEntryIds.value).toEqual([]);
+        mounted.wrapper.unmount();
+
+        axiosGet.mockResolvedValue(readResponse([first]));
+        const loaded = mountComposable();
+        await advance(500);
+        expect(loaded.api.linkedTimeEntryIds.value).toEqual([]);
+        loaded.wrapper.unmount();
+    });
+
+    it('a server conversion adds the new entry ids to the cached reads at once', async () => {
+        axiosGet.mockResolvedValue(linkedRead([first, second], ['te-0']));
+        const mounted = mountComposable();
+        await advance(500);
+        axiosPost.mockResolvedValue({ data: { results: [created('m-1', 'te-1')] } });
+        // Keep the refetch from settling so the optimistic value is observed
+        axiosGet.mockReturnValue(new Promise(() => undefined));
+
+        await mounted.api.convert(['m-1'], fields);
+
+        expect(mounted.api.linkedTimeEntryIds.value).toEqual(['te-0', 'te-1']);
+        mounted.wrapper.unmount();
+    });
+
+    it('with two arguments the hook still cannot act and has no linked ids', async () => {
+        axiosGet.mockResolvedValue(linkedRead([first], ['te-1']));
+        const mounted = mountComposable();
+        await advance(500);
+
+        hook([first, second]);
+        await nextTick();
+
+        expect(mounted.api.canAct.value).toBe(false);
+        expect(mounted.api.linkedTimeEntryIds.value).toEqual([]);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        mounted.wrapper.unmount();
+    });
+
+    it('with actions it converts through the given url and updates the injected state', async () => {
+        const mounted = mountComposable();
+        await advance(500);
+        hook([first, second], undefined, {
+            actions: true,
+            convertUrl: TEST_CONVERT_URL,
+            linkedTimeEntryIds: ['e1'],
+        });
+        await nextTick();
+        expect(mounted.api.canAct.value).toBe(true);
+        expect(mounted.api.linkedTimeEntryIds.value).toEqual(['e1']);
+
+        axiosPost.mockClear();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosPost.mockResolvedValue({ data: { results: [created('m-1', 'te-1')] } });
+
+        const results = await mounted.api.convert(['m-1'], fields);
+
+        expect(results[0]?.status).toBe('created');
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+        expect(axiosPost.mock.calls[0]![0]).toBe(TEST_CONVERT_URL);
+        expect(axiosPost.mock.calls[0]![1]).toEqual({ meeting_ids: ['m-1'], ...fields });
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-2']);
+        expect(mounted.api.linkedTimeEntryIds.value).toEqual(['e1', 'te-1']);
+        const keys = invalidatedKeys(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        // Injected meetings are not server rows: the real read is left alone
+        expect(keys).not.toContainEqual(['m365', 'meetings']);
+        await advance(0);
+        expect(mounted.api.announcement.value).toBe('Time entry created');
+        mounted.wrapper.unmount();
+    });
+
+    it('with actions a failed result keeps the meeting', async () => {
+        const mounted = mountComposable();
+        await advance(500);
+        hook([first, second], undefined, { actions: true, convertUrl: TEST_CONVERT_URL });
+        await nextTick();
+        axiosPost.mockResolvedValue({ data: { results: [failed('m-1')] } });
+
+        const results = await mounted.api.convert(['m-1'], fields);
+
+        expect(results[0]?.error?.message).toBe('No access.');
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        expect(mounted.api.linkedTimeEntryIds.value).toEqual([]);
+        mounted.wrapper.unmount();
+    });
+
+    it('with actions selection and openForm work, and converted ids leave the selection', async () => {
+        const mounted = mountComposable();
+        await advance(500);
+        hook([first, second], undefined, { actions: true, convertUrl: TEST_CONVERT_URL });
+        await nextTick();
+
+        mounted.api.selection.toggle('m-1');
+        mounted.api.selection.toggle('m-2');
+        expect(mounted.api.selection.selectedIds.value).toEqual(['m-1', 'm-2']);
+
+        axiosPost.mockResolvedValue({
+            data: { results: [created('m-1', 'te-1'), failed('m-2')] },
+        });
+        await mounted.api.convert(['m-1', 'm-2'], fields);
+        expect(mounted.api.selection.selectedIds.value).toEqual(['m-2']);
+
+        mounted.api.openForm('m-2');
+        expect(mounted.api.formRequest.value?.id).toBe('m-2');
+        expect(mounted.api.selection.selectedIds.value).toEqual([]);
+        mounted.wrapper.unmount();
+    });
+
+    it('with actions it works without the calendar prop (integration off in CI)', async () => {
+        setPage(null);
+        const mounted = mountComposable();
+        await advance(500);
+        hook(
+            [first],
+            { error_generic: 'Failed.', created_announcement: 'Created.' },
+            {
+                actions: true,
+                convertUrl: TEST_CONVERT_URL,
+            }
+        );
+        await nextTick();
+        expect(mounted.api.canAct.value).toBe(true);
+        axiosPost.mockResolvedValue({ data: { results: [created('m-1', 'te-1')] } });
+
+        await mounted.api.convert(['m-1'], fields);
+
+        expect(axiosPost.mock.calls[0]![0]).toBe(TEST_CONVERT_URL);
+        expect(mounted.api.meetings.value).toEqual([]);
+        expect(mounted.api.linkedTimeEntryIds.value).toEqual(['te-1']);
+        mounted.wrapper.unmount();
+    });
+
+    it('with actions but no convert url it sends nothing', async () => {
+        const mounted = mountComposable();
+        await advance(500);
+        hook([first], undefined, { actions: true });
+        await nextTick();
+        axiosPost.mockClear();
+
+        const results = await mounted.api.convert(['m-1'], fields);
+
+        expect(axiosPost).not.toHaveBeenCalled();
+        expect(results[0]?.status).toBe('failed');
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-1']);
+        mounted.wrapper.unmount();
+    });
+});
+
 describe('useOutlookMeetings refresh after time-entry changes', () => {
     const ENTRIES_KEY = ['timeEntries', 'calendar', { start: WEEK_A, end: WEEK_B }];
     const NEXT_WEEK_KEY = ['timeEntries', 'calendar', { start: WEEK_B, end: WEEK_C }];
