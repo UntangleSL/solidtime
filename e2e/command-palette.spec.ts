@@ -379,7 +379,12 @@ test.describe('Command Palette', () => {
             // The button contains an SVG and a div with the org name
             const otherOrgItem = page.locator('form button').filter({ hasText: /.+/ }).first();
             await expect(otherOrgItem).toBeVisible();
-            const originalOrgName = (await otherOrgItem.innerText()).trim();
+            // The row also renders the organization icon (letter tile); keep only the name line.
+            const originalOrgName = (await otherOrgItem.innerText())
+                .trim()
+                .split('\n')
+                .pop()!
+                .trim();
             await page.keyboard.press('Escape'); // Close dropdown
 
             // Now use command palette to switch back to original org

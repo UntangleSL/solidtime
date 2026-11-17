@@ -15,6 +15,7 @@ use Illuminate\Support\Js;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\TestCaseWithDatabase;
+use Tighten\Ziggy\BladeRouteGenerator;
 
 /**
  * Rendered-HTML contract of resources/views/branding/early-theme.blade.php: the pre-paint
@@ -55,6 +56,9 @@ class AppearanceBootPartialTest extends TestCaseWithDatabase
     private function dashboardHtmlFor(User $user): string
     {
         $this->actingAs($user);
+        // Ziggy prints the full `const Ziggy=` script only once per PHP process;
+        // reset its flag so this assertion does not depend on test order.
+        BladeRouteGenerator::$generated = false;
         $response = $this->get('/dashboard');
         $response->assertSuccessful();
         $html = $response->getContent();
