@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, type ComputedRef } from 'vue';
+import { computed, inject, ref, watch, type ComputedRef } from 'vue';
+import { useIntervalFn } from '@vueuse/core';
 import { Link, RefreshCw, TriangleAlert } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
 import Button from '@/packages/ui/src/Buttons/Button.vue';
@@ -11,7 +12,15 @@ import {
 } from '@/packages/ui/src/tooltip';
 import { navigateTo } from '@/m365/navigation';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
-import { describeLastSynced, describeSyncStatus } from './syncStatus';
+import {
+    cooldownProgress,
+    describeLastSynced,
+    describeSyncStatus,
+    remainingCooldownSeconds,
+} from './syncStatus';
+
+// Circumference of the cooldown ring (radius 6 in a 16 x 16 viewBox).
+const RING_CIRCUMFERENCE = 2 * Math.PI * 6;
 
 // Sync half of the Outlook cluster in the calendar toolbar (rendered through the core `extra`
 // slot). It reads everything from the injected composable context and never blocks the grid:
@@ -62,7 +71,53 @@ const tooltipLines = computed(() => {
     return lines;
 });
 
+// Unavailable while syncing or cooling down. The button keeps focus (aria-disabled instead of the
+// disabled attribute, which would drop focus to <body> right after Enter) and ignores clicks.
+const canSync = computed(() => context?.canSync.value === true);
+const cooldownUntil = computed(() => context?.cooldownUntil.value ?? 0);
+const cooldownKind = computed(() => context?.cooldownKind.value ?? null);
+
+// Clock of the countdown: advanced by one 1 s interval that only runs while a cooldown does (it
+// pauses when the cooldown ends and is cleaned up with the component).
+const now = ref(Date.now());
+const ticker = useIntervalFn(
+    () => {
+        now.value = Date.now();
+        if (now.value >= cooldownUntil.value) ticker.pause();
+    },
+    1000,
+    { immediate: false }
+);
+
+watch(
+    [cooldownUntil, cooldownKind],
+    () => {
+        now.value = Date.now();
+        if (cooldownKind.value !== null && now.value < cooldownUntil.value) {
+            ticker.resume();
+        } else {
+            ticker.pause();
+        }
+    },
+    { immediate: true }
+);
+
+const remainingSeconds = computed(() => remainingCooldownSeconds(cooldownUntil.value, now.value));
+// A sync that runs during a cooldown (navigation) shows the spinner instead of the ring.
+const isCooling = computed(
+    () => cooldownKind.value !== null && remainingSeconds.value > 0 && !isSyncing.value
+);
+const ringOffset = computed(() => {
+    const progress = cooldownProgress(
+        context?.cooldownStartedAt.value ?? 0,
+        cooldownUntil.value,
+        now.value
+    );
+    return RING_CIRCUMFERENCE * (1 - progress);
+});
+
 function onSync() {
+    if (!canSync.value) return;
     context?.requestSync(true);
 }
 
@@ -106,12 +161,41 @@ function onConnect() {
                                 variant="outline"
                                 size="sm"
                                 data-testid="outlook-sync-button"
-                                class="w-8 p-0 md:w-auto md:px-3"
+                                class="w-8 p-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 md:w-auto md:min-w-[8rem] md:px-3"
                                 :aria-label="labels.sync_aria"
                                 :aria-busy="isSyncing ? 'true' : 'false'"
-                                :disabled="!context.canSync.value"
+                                :aria-disabled="canSync ? undefined : 'true'"
+                                :data-cooldown="isCooling ? (cooldownKind ?? undefined) : undefined"
                                 @click="onSync">
+                                <!-- Drains counter-clockwise from 12 o'clock as the cooldown runs -->
+                                <svg
+                                    v-if="isCooling"
+                                    data-testid="outlook-sync-cooldown-ring"
+                                    viewBox="0 0 16 16"
+                                    aria-hidden="true"
+                                    class="-rotate-90">
+                                    <circle
+                                        cx="8"
+                                        cy="8"
+                                        r="6"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        class="text-border" />
+                                    <circle
+                                        cx="8"
+                                        cy="8"
+                                        r="6"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        class="text-text-tertiary motion-safe:transition-[stroke-dashoffset] motion-safe:duration-1000 motion-safe:ease-linear"
+                                        :stroke-dasharray="RING_CIRCUMFERENCE"
+                                        :style="{ strokeDashoffset: ringOffset }" />
+                                </svg>
                                 <RefreshCw
+                                    v-else
+                                    data-testid="outlook-sync-icon"
                                     aria-hidden="true"
                                     :class="
                                         isSyncing

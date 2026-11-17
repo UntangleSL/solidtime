@@ -45,9 +45,12 @@ const AUTO_SYNC_FRESH_MS = 60_000;
 const MEETINGS_QUERY_KEY = ['m365', 'meetings'] as const;
 // View preference (per browser, not a server setting): show dismissed meetings and restore them.
 const SHOW_DISMISSED_STORAGE_KEY = 'solidtime:m365-show-dismissed';
-// The Sync button stays disabled this long after every settled sync (a throttled or unavailable
-// answer with a larger retry_after wins).
+// The Sync button stays unavailable this long after a settled manual sync (a throttled or
+// unavailable answer with a larger retry_after wins). Automatic syncs never start it (D-08).
 const SYNC_COOLDOWN_MS = 10_000;
+
+// Why the Sync button is cooling down: right after a manual sync, or a back-off the server asked for.
+export type OutlookCooldownKind = 'manual' | 'backoff';
 
 // What the toolbar controls (injected through a core slot, so not props of the calendar) read.
 export interface OutlookMeetingsContext {
@@ -69,6 +72,9 @@ export interface OutlookMeetingsContext {
     // False while syncing, during the cooldown / retry_after window, or without a connection.
     canSync: Readonly<Ref<boolean>>;
     cooldownUntil: Readonly<Ref<number>>;
+    // When the current cooldown started (ms timestamp) and why; the kind is null when none runs.
+    cooldownStartedAt: Readonly<Ref<number>>;
+    cooldownKind: Readonly<Ref<OutlookCooldownKind | null>>;
     requestSync: (force?: boolean) => void;
     // False in test-hook mode (injected meetings are not server rows): the panel then offers no action.
     canAct: Readonly<Ref<boolean>>;
@@ -164,6 +170,8 @@ export function useOutlookMeetings(
     // Cooldown of the manual Sync (ms timestamp). `now` is advanced by a single timeout so that
     // canSync re-evaluates exactly when the cooldown ends.
     const cooldownUntil = ref(0);
+    const cooldownStartedAt = ref(0);
+    const cooldownKind = ref<OutlookCooldownKind | null>(null);
     const now = ref(Date.now());
     let cooldownTimer: ReturnType<typeof setTimeout> | undefined;
     let unmounted = false;
@@ -171,15 +179,26 @@ export function useOutlookMeetings(
     function cooldownTick(): void {
         cooldownTimer = undefined;
         now.value = Date.now();
-        if (!unmounted && now.value < cooldownUntil.value) {
+        if (now.value >= cooldownUntil.value) {
+            cooldownKind.value = null;
+            return;
+        }
+        if (!unmounted) {
             cooldownTimer = setTimeout(cooldownTick, cooldownUntil.value - now.value);
         }
     }
 
-    function extendCooldown(ms: number): void {
+    // Start and kind only change when the cooldown actually moves forward, so a shorter request
+    // during a running cooldown neither restarts the ring nor relabels it.
+    function extendCooldown(ms: number, kind: OutlookCooldownKind): void {
         if (unmounted) return;
-        const until = Date.now() + ms;
-        if (until > cooldownUntil.value) cooldownUntil.value = until;
+        const startedAt = Date.now();
+        const until = startedAt + ms;
+        if (until > cooldownUntil.value) {
+            cooldownUntil.value = until;
+            cooldownStartedAt.value = startedAt;
+            cooldownKind.value = kind;
+        }
         now.value = Date.now();
         if (cooldownTimer !== undefined) clearTimeout(cooldownTimer);
         cooldownTimer = setTimeout(cooldownTick, Math.max(0, cooldownUntil.value - now.value));
@@ -282,7 +301,7 @@ export function useOutlookMeetings(
         () => {
             const retry = meetingsQuery.data.value?.sync?.retry_after;
             if (!meetingsQuery.isPlaceholderData.value && typeof retry === 'number' && retry > 0) {
-                extendCooldown(retry * 1000);
+                extendCooldown(retry * 1000, 'backoff');
             }
         }
     );
@@ -356,14 +375,21 @@ export function useOutlookMeetings(
             isSyncing.value = false;
         }
 
-        // Every settled sync starts the cooldown, including the synthetic unavailable answer of a
-        // rejected request; a back-off the server (or a 429 Retry-After header) asked for wins.
+        // Only a manual sync (target.force, also when a click was merged into a queued automatic
+        // request) or a back-off starts the cooldown; an automatic navigation sync never does, so
+        // Sync is available again as soon as it settles (D-08). The back-off is the retry_after of
+        // a throttled or unavailable answer, including the synthetic unavailable answer of a 429
+        // with a Retry-After header; the longer of the two wins.
         const settled = lastSync.value;
         const backoff =
             settled && (settled.status === 'throttled' || settled.status === 'unavailable')
                 ? (settled.retry_after ?? 0) * 1000
                 : 0;
-        extendCooldown(Math.max(SYNC_COOLDOWN_MS, backoff));
+        const manual = target.force ? SYNC_COOLDOWN_MS : 0;
+        const cooldown = Math.max(manual, backoff);
+        if (cooldown > 0) {
+            extendCooldown(cooldown, backoff > manual ? 'backoff' : 'manual');
+        }
 
         // Latest wins: run a queued request only if it targets another bucket (or is forced), and
         // leave it to the debounce timer when one is already counting down.
@@ -534,6 +560,8 @@ export function useOutlookMeetings(
         visibleCount,
         canSync,
         cooldownUntil,
+        cooldownStartedAt,
+        cooldownKind,
         requestSync,
         canAct,
         dismiss,

@@ -12,7 +12,13 @@ import type {
 } from '@/m365/types';
 import { getLocalizedDayJs } from '@/packages/ui/src/utils/time';
 import OutlookCalendarControls from './OutlookCalendarControls.vue';
-import { describeSyncStatus, type SyncStatusInput } from './syncStatus';
+import {
+    cooldownProgress,
+    describeSyncStatus,
+    formatCooldownSeconds,
+    remainingCooldownSeconds,
+    type SyncStatusInput,
+} from './syncStatus';
 import {
     OUTLOOK_MEETINGS_KEY,
     useOutlookMeetings,
@@ -109,6 +115,9 @@ function fakeContext(initial: Partial<Record<string, unknown>> = {}) {
         syncedAt: ref<string | null>(null),
         visibleCount: ref(0),
         canSync: ref(true),
+        cooldownUntil: ref(0),
+        cooldownStartedAt: ref(0),
+        cooldownKind: ref<'manual' | 'backoff' | null>(null),
     };
     for (const [key, value] of Object.entries(initial)) {
         (state as Record<string, Ref<unknown>>)[key]!.value = value;
@@ -119,7 +128,6 @@ function fakeContext(initial: Partial<Record<string, unknown>> = {}) {
         labels: ref(labels),
         bucket: ref(null),
         meetings: ref([]),
-        cooldownUntil: ref(0),
         announcement: ref(''),
         requestSync,
         dayOverlayLane: () => null,
@@ -163,6 +171,7 @@ describe('OutlookCalendarControls', () => {
         expect(syncButton(wrapper).text()).toBe('Sync Outlook');
         expect(syncButton(wrapper).attributes('aria-label')).toBe('Sync Outlook meetings');
         expect(syncButton(wrapper).attributes('disabled')).toBeUndefined();
+        expect(syncButton(wrapper).attributes('aria-disabled')).toBeUndefined();
         expect(statusRegion(wrapper).attributes('aria-live')).toBe('polite');
         wrapper.unmount();
     });
@@ -196,7 +205,18 @@ describe('OutlookCalendarControls', () => {
         wrapper.unmount();
     });
 
-    it('disables the button with aria-busy and a spinning accent icon while syncing', async () => {
+    it('ignores clicks while Sync is unavailable', async () => {
+        const { context, requestSync } = fakeContext({ canSync: false });
+        const wrapper = mountWithContext(context);
+
+        await syncButton(wrapper).trigger('click');
+
+        expect(syncButton(wrapper).attributes('aria-disabled')).toBe('true');
+        expect(requestSync).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it('marks the button aria-disabled with aria-busy and a spinning accent icon while syncing', async () => {
         const { context, state } = fakeContext();
         const wrapper = mountWithContext(context);
         const icon = () => syncButton(wrapper).find('svg');
@@ -207,7 +227,8 @@ describe('OutlookCalendarControls', () => {
         state.canSync.value = false;
         await wrapper.vm.$nextTick();
 
-        expect(syncButton(wrapper).attributes('disabled')).toBeDefined();
+        expect(syncButton(wrapper).attributes('aria-disabled')).toBe('true');
+        expect(syncButton(wrapper).attributes('disabled')).toBeUndefined();
         expect(syncButton(wrapper).attributes('aria-busy')).toBe('true');
         expect(icon().classes()).toContain('motion-safe:animate-spin');
         expect(icon().classes()).toContain('text-accent-500');
@@ -462,6 +483,34 @@ describe('describeSyncStatus', () => {
 });
 
 // The composable and the component together, against a mocked transport.
+describe('cooldown helpers', () => {
+    it('formats seconds under a minute and minutes with seconds from a minute on', () => {
+        expect(formatCooldownSeconds(8)).toBe('8s');
+        expect(formatCooldownSeconds(59)).toBe('59s');
+        expect(formatCooldownSeconds(60)).toBe('1m');
+        expect(formatCooldownSeconds(80)).toBe('1m 20s');
+        expect(formatCooldownSeconds(125)).toBe('2m 5s');
+    });
+
+    it('rounds the remaining seconds up and never below 0', () => {
+        expect(remainingCooldownSeconds(10_000, 0)).toBe(10);
+        expect(remainingCooldownSeconds(10_000, 1)).toBe(10);
+        expect(remainingCooldownSeconds(10_000, 1_000)).toBe(9);
+        expect(remainingCooldownSeconds(10_000, 9_999)).toBe(1);
+        expect(remainingCooldownSeconds(10_000, 10_000)).toBe(0);
+        expect(remainingCooldownSeconds(10_000, 12_000)).toBe(0);
+    });
+
+    it('reports the share of the cooldown still to run', () => {
+        expect(cooldownProgress(1_000, 11_000, 1_000)).toBe(1);
+        expect(cooldownProgress(1_000, 11_000, 6_000)).toBe(0.5);
+        expect(cooldownProgress(1_000, 11_000, 11_000)).toBe(0);
+        expect(cooldownProgress(1_000, 11_000, 20_000)).toBe(0);
+        expect(cooldownProgress(1_000, 11_000, 0)).toBe(1);
+        expect(cooldownProgress(5_000, 5_000, 5_000)).toBe(0);
+    });
+});
+
 describe('OutlookCalendarControls with the real composable', () => {
     const CACHED: OutlookMeeting[] = [
         {
@@ -514,7 +563,7 @@ describe('OutlookCalendarControls with the real composable', () => {
         api: OutlookMeetingsContext;
     }
 
-    function mountPage(): Mounted {
+    function mountPage(attach = false): Mounted {
         const start = ref(getLocalizedDayJs(WEEK_A));
         const end = ref(getLocalizedDayJs(WEEK_A).add(7, 'day'));
         let api!: OutlookMeetingsContext;
@@ -538,13 +587,24 @@ describe('OutlookCalendarControls with the real composable', () => {
                 plugins: [[VueQueryPlugin, { queryClient: new QueryClient() }]],
                 provide: { organization: computed(() => ({ time_format: '24-hours' })) },
             },
+            ...(attach ? { attachTo: document.body } : {}),
         });
         return { wrapper, api };
     }
 
     const advance = (ms: number) => vi.advanceTimersByTimeAsync(ms);
-    const disabled = (wrapper: VueWrapper) =>
-        syncButton(wrapper).attributes('disabled') !== undefined;
+    // Unavailable Sync uses aria-disabled (never the disabled attribute, which would drop focus)
+    const disabled = (wrapper: VueWrapper) => {
+        expect(syncButton(wrapper).attributes('disabled')).toBeUndefined();
+        return syncButton(wrapper).attributes('aria-disabled') === 'true';
+    };
+    const cooldown = (wrapper: VueWrapper) => syncButton(wrapper).attributes('data-cooldown');
+    const ring = (wrapper: VueWrapper) =>
+        syncButton(wrapper).find('[data-testid="outlook-sync-cooldown-ring"]');
+    const refreshIcon = (wrapper: VueWrapper) =>
+        syncButton(wrapper).find('[data-testid="outlook-sync-icon"]');
+    // A read whose last sync is hours old, so the debounced automatic sync runs
+    const staleRead = () => readResponse(CACHED, '2026-11-05T08:00:00Z');
     const meetingCount = (wrapper: VueWrapper) =>
         wrapper.find('[data-testid="meeting-count"]').text();
 
@@ -675,6 +735,7 @@ describe('OutlookCalendarControls with the real composable', () => {
 
         expect(statusRegion(wrapper).text()).toBe('Outlook unavailable, retry later');
         expect(meetingCount(wrapper)).toBe('1');
+        expect(cooldown(wrapper)).toBe('backoff');
         await advance(29_999);
         expect(disabled(wrapper)).toBe(true);
         await advance(1);
@@ -687,6 +748,128 @@ describe('OutlookCalendarControls with the real composable', () => {
         expect(disabled(wrapper)).toBe(true);
         await advance(1);
         expect(disabled(wrapper)).toBe(false);
+        wrapper.unmount();
+    });
+
+    it('an automatic navigation sync leaves Sync available once it settles', async () => {
+        axiosGet.mockImplementation(async () => staleRead());
+        let resolve!: (value: { data: OutlookSyncResponse }) => void;
+        axiosPost.mockReturnValue(
+            new Promise((res) => {
+                resolve = res;
+            })
+        );
+        const { wrapper, api } = mountPage();
+        await advance(0);
+        await advance(400);
+
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+        expect(axiosPost).toHaveBeenCalledWith(SYNC_URL, expect.objectContaining({ force: false }));
+        // Only while the automatic sync is in flight is the button unavailable
+        expect(disabled(wrapper)).toBe(true);
+        expect(cooldown(wrapper)).toBeUndefined();
+
+        resolve({ data: syncAnswer() });
+        await advance(0);
+        await advance(0);
+
+        expect(api.isSyncing.value).toBe(false);
+        expect(api.canSync.value).toBe(true);
+        expect(api.cooldownKind.value).toBeNull();
+        expect(syncButton(wrapper).attributes('aria-disabled')).toBeUndefined();
+        expect(cooldown(wrapper)).toBeUndefined();
+        expect(refreshIcon(wrapper).exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it('a manual sync starts a 10 s manual cooldown and keeps focus', async () => {
+        const { wrapper, api } = mountPage(true);
+        await advance(0);
+        const button = syncButton(wrapper).element as HTMLButtonElement;
+        button.focus();
+        expect(document.activeElement).toBe(button);
+
+        await press(wrapper);
+
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+        expect(disabled(wrapper)).toBe(true);
+        expect(cooldown(wrapper)).toBe('manual');
+        expect(api.cooldownKind.value).toBe('manual');
+        expect(document.activeElement).toBe(button);
+        expect(ring(wrapper).exists()).toBe(true);
+        expect(ring(wrapper).attributes('aria-hidden')).toBe('true');
+        expect(refreshIcon(wrapper).exists()).toBe(false);
+        expect(syncButton(wrapper).attributes('aria-label')).toBe('Sync Outlook meetings');
+
+        // A second press during the cooldown posts nothing
+        await syncButton(wrapper).trigger('click');
+        await advance(100);
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+
+        await advance(9_900);
+        expect(disabled(wrapper)).toBe(false);
+        expect(cooldown(wrapper)).toBeUndefined();
+        expect(api.cooldownKind.value).toBeNull();
+        expect(ring(wrapper).exists()).toBe(false);
+        expect(refreshIcon(wrapper).exists()).toBe(true);
+        expect(document.activeElement).toBe(button);
+        wrapper.unmount();
+    });
+
+    it('an automatic sync answering throttled with retry_after backs off', async () => {
+        axiosGet.mockImplementation(async () => staleRead());
+        axiosPost.mockResolvedValue({ data: syncAnswer({ status: 'throttled', retry_after: 20 }) });
+        const { wrapper, api } = mountPage();
+        await advance(0);
+        await advance(400);
+        await advance(0);
+
+        expect(axiosPost).toHaveBeenCalledWith(SYNC_URL, expect.objectContaining({ force: false }));
+        expect(disabled(wrapper)).toBe(true);
+        expect(cooldown(wrapper)).toBe('backoff');
+        expect(ring(wrapper).exists()).toBe(true);
+        await advance(19_000);
+        expect(cooldown(wrapper)).toBe('backoff');
+        await advance(1_000);
+        expect(disabled(wrapper)).toBe(false);
+        expect(cooldown(wrapper)).toBeUndefined();
+        expect(api.cooldownKind.value).toBeNull();
+        wrapper.unmount();
+    });
+
+    it('a read sync.retry_after starts a backoff cooldown', async () => {
+        axiosGet.mockImplementation(async () =>
+            readResponse(CACHED, new Date(Date.now() - 5_000).toISOString(), 15)
+        );
+        const { wrapper, api } = mountPage();
+        await advance(0);
+        await advance(0);
+
+        expect(api.cooldownKind.value).toBe('backoff');
+        expect(cooldown(wrapper)).toBe('backoff');
+        await advance(14_999);
+        expect(api.cooldownKind.value).toBe('backoff');
+        await advance(1);
+        expect(api.cooldownKind.value).toBeNull();
+        expect(cooldown(wrapper)).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    it('a manual sync answering unavailable with retry_after 3 still cools 10 s', async () => {
+        axiosPost.mockResolvedValue({
+            data: syncAnswer({ status: 'unavailable', retry_after: 3 }),
+        });
+        const { wrapper, api } = mountPage();
+        await advance(0);
+        await press(wrapper);
+
+        expect(api.cooldownKind.value).toBe('manual');
+        expect(cooldown(wrapper)).toBe('manual');
+        await advance(9_999);
+        expect(disabled(wrapper)).toBe(true);
+        await advance(1);
+        expect(disabled(wrapper)).toBe(false);
+        expect(api.cooldownKind.value).toBeNull();
         wrapper.unmount();
     });
 

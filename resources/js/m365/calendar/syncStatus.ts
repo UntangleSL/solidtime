@@ -84,3 +84,26 @@ export function describeSyncStatus(input: SyncStatusInput): SyncStatus {
 
     return { kind: 'none', text: '', tooltip: null, warning: false };
 }
+
+// Countdown of the Sync cooldown: "8s" under a minute, "1m 20s" (or "2m") from a minute on. The
+// same format is used in every language (the copy around it is translated).
+export function formatCooldownSeconds(seconds: number): string {
+    const total = Math.max(0, Math.ceil(seconds));
+    if (total < 60) return `${total}s`;
+    const minutes = Math.floor(total / 60);
+    const rest = total % 60;
+    return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
+}
+
+// Whole seconds left until `until` (ms timestamps), rounded up so the label never reads "0s" while
+// the button is still unavailable.
+export function remainingCooldownSeconds(until: number, now: number): number {
+    return Math.max(0, Math.ceil((until - now) / 1000));
+}
+
+// Share of the cooldown still to run (1 at the start, 0 at or after the end); drives the ring.
+export function cooldownProgress(startedAt: number, until: number, now: number): number {
+    if (until <= startedAt) return 0;
+    const share = (until - now) / (until - startedAt);
+    return Math.min(1, Math.max(0, share));
+}
