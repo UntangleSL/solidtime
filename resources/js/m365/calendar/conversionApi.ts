@@ -3,12 +3,17 @@ import type {
     OutlookConversionFields,
     OutlookConversionResult,
     OutlookConversionStatus,
+    OutlookSeriesConfirmFields,
 } from '@/m365/types';
 
 // Meeting conversion (Phase 4). Like meetingsApi.ts, the fork route is a web-group route (session
 // cookie + XSRF), so it uses the global axios instance and never the generated OpenAPI client.
 
-export type OutlookConversionBody = OutlookConversionFields & { meeting_ids: string[] };
+// Either explicit entry fields (forms), or { use_series_assignment: true } alone to confirm
+// pre-assigned meetings with their own series assignment (Phase 5).
+export type OutlookConversionBody = (OutlookConversionFields | OutlookSeriesConfirmFields) & {
+    meeting_ids: string[];
+};
 
 const STATUSES: readonly OutlookConversionStatus[] = ['created', 'existing', 'failed'];
 
@@ -77,6 +82,26 @@ export function failedResults(
         time_entry_id: null,
         error: { key, message },
     }));
+}
+
+// Series actions (Phase 5), keyed by a meeting id under the meetings URL like dismiss/restore. The
+// server answers 404 for any meeting that is not the user's own or has no series; every helper
+// rejects when the request fails.
+function ignoreUrl(meetingsUrl: string, id: string): string {
+    return `${meetingsUrl}/${encodeURIComponent(id)}/series/ignore`;
+}
+
+export async function ignoreSeries(meetingsUrl: string, id: string): Promise<void> {
+    await axios.post(ignoreUrl(meetingsUrl, id));
+}
+
+export async function unignoreSeries(meetingsUrl: string, id: string): Promise<void> {
+    await axios.delete(ignoreUrl(meetingsUrl, id));
+}
+
+// Drops the series pre-assignment; existing time entries are never touched.
+export async function forgetSeries(meetingsUrl: string, id: string): Promise<void> {
+    await axios.delete(`${meetingsUrl}/${encodeURIComponent(id)}/series/assignment`);
 }
 
 // The server's validation message of a 422 (already localized), else the fallback copy.

@@ -1,13 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
-import { conversionErrorMessage, failedResults, postConversion } from './conversionApi';
+import {
+    conversionErrorMessage,
+    failedResults,
+    forgetSeries,
+    ignoreSeries,
+    postConversion,
+    unignoreSeries,
+} from './conversionApi';
 
 vi.mock('axios', () => ({
-    default: { post: vi.fn() },
+    default: { post: vi.fn(), delete: vi.fn() },
 }));
 
 const axiosPost = vi.mocked(axios.post);
+const axiosDelete = vi.mocked(axios.delete);
 const URL = 'https://app.example.test/m365/organizations/org-1/meetings/time-entries';
+const MEETINGS_URL = 'https://app.example.test/m365/meetings';
 
 const body = {
     meeting_ids: ['m-1', 'm-2'],
@@ -19,6 +28,64 @@ const body = {
 
 beforeEach(() => {
     axiosPost.mockReset();
+    axiosDelete.mockReset();
+});
+
+describe('confirming pre-assigned meetings', () => {
+    it('posts only the meeting ids and use_series_assignment, and parses the results', async () => {
+        axiosPost.mockResolvedValue({
+            data: {
+                results: [
+                    { meeting_id: 'm-1', status: 'created', time_entry_id: 'te-1', error: null },
+                ],
+            },
+        });
+
+        const confirmBody = { meeting_ids: ['m-1'], use_series_assignment: true as const };
+        const results = await postConversion(URL, confirmBody);
+
+        expect(axiosPost).toHaveBeenCalledWith(URL, {
+            meeting_ids: ['m-1'],
+            use_series_assignment: true,
+        });
+        expect(results).toEqual([
+            { meeting_id: 'm-1', status: 'created', time_entry_id: 'te-1', error: null },
+        ]);
+    });
+});
+
+describe('series actions', () => {
+    it('ignores a series with a POST on the encoded meeting id', async () => {
+        axiosPost.mockResolvedValue({ data: {} });
+        await ignoreSeries(MEETINGS_URL, 'a b');
+        expect(axiosPost).toHaveBeenCalledWith(`${MEETINGS_URL}/a%20b/series/ignore`);
+    });
+
+    it('stops ignoring a series with a DELETE on the same url', async () => {
+        axiosDelete.mockResolvedValue({ data: {} });
+        await unignoreSeries(MEETINGS_URL, 'a b');
+        expect(axiosDelete).toHaveBeenCalledWith(`${MEETINGS_URL}/a%20b/series/ignore`);
+    });
+
+    it('forgets a series with a DELETE on its assignment', async () => {
+        axiosDelete.mockResolvedValue({ data: {} });
+        await forgetSeries(MEETINGS_URL, 'a b');
+        expect(axiosDelete).toHaveBeenCalledWith(`${MEETINGS_URL}/a%20b/series/assignment`);
+    });
+
+    it('encodes ids that contain slashes so they stay one path segment', async () => {
+        axiosPost.mockResolvedValue({ data: {} });
+        await ignoreSeries(MEETINGS_URL, 'AAMk/x==');
+        expect(axiosPost).toHaveBeenCalledWith(`${MEETINGS_URL}/AAMk%2Fx%3D%3D/series/ignore`);
+    });
+
+    it('rejects when the request fails', async () => {
+        axiosPost.mockRejectedValue(new Error('404'));
+        axiosDelete.mockRejectedValue(new Error('404'));
+        await expect(ignoreSeries(MEETINGS_URL, 'm-1')).rejects.toThrow('404');
+        await expect(unignoreSeries(MEETINGS_URL, 'm-1')).rejects.toThrow('404');
+        await expect(forgetSeries(MEETINGS_URL, 'm-1')).rejects.toThrow('404');
+    });
 });
 
 describe('postConversion', () => {
