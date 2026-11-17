@@ -37,16 +37,18 @@ import { useTasksQuery } from '@/utils/useTasksQuery';
 import { useTimeEntriesInfiniteQuery } from '@/utils/useTimeEntriesInfiniteQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
 import type { OutlookCalendarLabels, OutlookConversionResult, OutlookMeeting } from '@/m365/types';
+import OutlookAssignResults from './OutlookAssignResults.vue';
 import { fillLabel } from './labels';
 import { readLastProject, rememberLastProject, resolvePrefillProject } from './lastProject';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
-// Mini form that turns one Outlook meeting into a time entry (Phase 4, UI-SPEC section 3; D-02,
-// D-03). It lives in the meeting's detail panel (form mode) and talks only to the injected Outlook
+// Mini form that turns Outlook meetings into time entries (Phase 4). Single mode (UI-SPEC section
+// 3; D-02, D-03) lives in the meeting's detail panel (form mode); batch mode (section 7; D-07,
+// D-08) lives in the popover of the floating selection bar. Both talk only to the injected Outlook
 // context, which owns the request and the cache. Pickers are the core ones, imported unchanged.
 // Meeting values are only ever rendered through text interpolation and input values.
 const props = defineProps<{
-    mode: 'single';
+    mode: 'single' | 'batch';
     meetings: OutlookMeeting[];
     labels: OutlookCalendarLabels;
 }>();
@@ -76,20 +78,33 @@ const organizationId = getCurrentOrganizationId() ?? null;
 const currency = getOrganizationCurrencyString();
 const enableEstimatedTime = isAllowedToPerformPremiumAction();
 
+// The mode is fixed for the life of the form (the hosts mount one form per mode).
+const isBatch = props.mode === 'batch';
+
 const meeting = computed(() => props.meetings[0]!);
+
+function byStartThenId(a: OutlookMeeting, b: OutlookMeeting): number {
+    const diff = new Date(a.start).getTime() - new Date(b.start).getTime();
+    if (diff !== 0) return diff;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+// Batch: the meetings as they were when the form opened, in start order. Converted meetings leave
+// the selection (and so the host's list) while the form still has to show their row.
+const batchMeetings: OutlookMeeting[] = isBatch ? [...props.meetings].sort(byStartThenId) : [];
 
 const titleId = `outlook-convert-title-${useId()}`;
 const rootEl = ref<HTMLElement | null>(null);
 
-const description = ref(meeting.value.subject?.trim() ? meeting.value.subject : '');
+const description = ref(!isBatch && meeting.value.subject?.trim() ? meeting.value.subject : '');
 const projectId = ref<string | null>(null);
 const taskId = ref<string | null>(null);
 const selectedTags = ref<string[]>([]);
 const billable = ref(false);
 // Localized timestamps (TimePickerSimple edits hours and minutes only, so the dates stay the
 // meeting's own days, D-03).
-const localStart = ref(getLocalizedDayJs(meeting.value.start).format());
-const localEnd = ref(getLocalizedDayJs(meeting.value.end).format());
+const localStart = ref(isBatch ? '' : getLocalizedDayJs(meeting.value.start).format());
+const localEnd = ref(isBatch ? '' : getLocalizedDayJs(meeting.value.end).format());
 
 const saving = ref(false);
 const projectError = ref(false);
@@ -212,11 +227,17 @@ function focusPicker(): void {
     pickerTrigger()?.focus();
 }
 
+const submitTestId = isBatch ? 'outlook-batch-submit' : 'outlook-convert-submit';
+
 function focusSubmit(): void {
-    rootEl.value?.querySelector<HTMLElement>('[data-testid="outlook-convert-submit"]')?.focus();
+    rootEl.value?.querySelector<HTMLElement>(`[data-testid="${submitTestId}"]`)?.focus();
 }
 
-async function submit(): Promise<void> {
+function submit(): Promise<void> {
+    return isBatch ? submitBatch() : submitSingle();
+}
+
+async function submitSingle(): Promise<void> {
     if (saving.value) return;
     serverError.value = null;
 
@@ -273,6 +294,143 @@ async function submit(): Promise<void> {
     focusSubmit();
 }
 
+// --- Batch mode (D-07): one request for every listed meeting, no description and no times (each
+// meeting keeps its own time and its subject becomes the description, server side).
+const batchCount = computed(() => batchMeetings.length);
+
+function plural(one: string, many: string, count: number): string {
+    return count === 1 ? one : fillLabel(many, { count: String(count) });
+}
+
+const batchTitle = computed(() =>
+    plural(props.labels.assign_one, props.labels.assign_many, batchCount.value)
+);
+const batchSubmitLabel = computed(() =>
+    plural(props.labels.batch_submit_one, props.labels.batch_submit_many, batchCount.value)
+);
+
+// Per-meeting state of the batch (D-08): absent before the first submit, 'pending' while its
+// request runs, then the server's result. Kept across retries so done rows stay listed.
+type BatchState = Record<string, OutlookConversionResult | 'pending'>;
+const batchResults = ref<BatchState>({});
+// After a submit with at least one failure the form shows the outcome (header summary, Close and
+// Retry); every control stays usable so a retry can use other values.
+const resultView = ref(false);
+const summaryEl = ref<HTMLElement | null>(null);
+
+function isDone(value: OutlookConversionResult | 'pending' | undefined): boolean {
+    return value !== undefined && value !== 'pending' && value.status !== 'failed';
+}
+
+const doneCount = computed(
+    () => batchMeetings.filter((item) => isDone(batchResults.value[item.id])).length
+);
+const failedIds = computed(() =>
+    batchMeetings
+        .filter((item) => {
+            const value = batchResults.value[item.id];
+            return value !== undefined && value !== 'pending' && value.status === 'failed';
+        })
+        .map((item) => item.id)
+);
+
+const summaryText = computed(() =>
+    doneCount.value === 0
+        ? props.labels.batch_none
+        : fillLabel(props.labels.batch_summary, {
+              done: String(doneCount.value),
+              total: String(batchCount.value),
+          })
+);
+const retryLabel = computed(() =>
+    fillLabel(props.labels.retry_failed, { count: String(failedIds.value.length) })
+);
+
+function failed(id: string, message: string): OutlookConversionResult {
+    return {
+        meeting_id: id,
+        status: 'failed',
+        time_entry_id: null,
+        error: { key: 'request_failed', message },
+    };
+}
+
+// First submit: every listed meeting. In result view (Retry, Ctrl/Cmd+Enter): only the failed
+// ones, with the current values.
+async function submitBatch(): Promise<void> {
+    if (saving.value) return;
+
+    if (!projectId.value) {
+        projectError.value = true;
+        await nextTick();
+        focusPicker();
+        return;
+    }
+
+    const ids = resultView.value ? failedIds.value : batchMeetings.map((item) => item.id);
+    if (ids.length === 0) return;
+    const project = projectId.value;
+    const previous = batchResults.value;
+    const pending: BatchState = { ...previous };
+    ids.forEach((id) => (pending[id] = 'pending'));
+    batchResults.value = pending;
+
+    let results: OutlookConversionResult[] = [];
+    if (context) {
+        saving.value = true;
+        emit('busy', true);
+        try {
+            results = await context.convert(ids, {
+                project_id: project,
+                task_id: taskId.value,
+                tags: [...selectedTags.value],
+                billable: billable.value,
+            });
+        } finally {
+            saving.value = false;
+            emit('busy', false);
+        }
+        // Another conversion of one of these meetings is still running (the context sent nothing).
+        if (results.length === 0) {
+            batchResults.value = previous;
+            return;
+        }
+    }
+
+    const next: BatchState = { ...batchResults.value };
+    ids.forEach((id) => {
+        next[id] =
+            results.find((result) => result.meeting_id === id) ??
+            failed(id, props.labels.error_generic);
+    });
+    batchResults.value = next;
+    if (results.some((result) => result.status !== 'failed') && organizationId) {
+        rememberLastProject(organizationId, project);
+    }
+
+    if (failedIds.value.length === 0) {
+        // One toast and one announcement for the whole batch, never per row (UI-SPEC section 9).
+        const text =
+            doneCount.value === 1
+                ? props.labels.created_success
+                : fillLabel(props.labels.batch_success_many, { count: String(doneCount.value) });
+        useNotificationsStore().addNotification('success', text);
+        context?.announce(text);
+        emit(
+            'done',
+            batchMeetings
+                .map((item) => next[item.id])
+                .filter((value): value is OutlookConversionResult => isDone(value))
+        );
+        return;
+    }
+
+    resultView.value = true;
+    context?.announce(summaryText.value);
+    await nextTick();
+    summaryEl.value?.focus();
+}
+
 // Ctrl/Cmd+Enter submits from any field of the form. Open pickers render in their own layers
 // (portaled), so their Enter never reaches this handler.
 function onKeydown(event: KeyboardEvent): void {
@@ -305,14 +463,20 @@ onMounted(() => {
     <div
         ref="rootEl"
         class="space-y-4"
-        data-testid="outlook-convert-form"
+        :data-testid="isBatch ? 'outlook-batch-form' : 'outlook-convert-form'"
         :aria-busy="saving ? 'true' : undefined"
         @keydown="onKeydown">
         <div class="min-w-0">
-            <h3 :id="titleId" class="text-sm font-semibold text-text-primary">
-                {{ labels.create_entry }}
+            <h3
+                :id="titleId"
+                ref="summaryEl"
+                class="text-sm font-semibold text-text-primary focus:outline-none"
+                :tabindex="resultView ? -1 : undefined"
+                :data-testid="resultView ? 'outlook-batch-summary' : undefined">
+                {{ !isBatch ? labels.create_entry : resultView ? summaryText : batchTitle }}
             </h3>
             <p
+                v-if="!isBatch"
                 class="mt-1 flex min-w-0 items-center gap-1 text-xs text-text-tertiary tabular-nums"
                 data-testid="outlook-convert-context">
                 <CalendarDays class="size-3 shrink-0" aria-hidden="true" />
@@ -320,8 +484,15 @@ onMounted(() => {
             </p>
         </div>
 
+        <OutlookAssignResults
+            v-if="isBatch"
+            :meetings="batchMeetings"
+            :results="batchResults"
+            :labels="labels" />
+
         <fieldset :disabled="saving" class="m-0 min-w-0 space-y-4 border-0 p-0">
             <TextInput
+                v-if="!isBatch"
                 v-model="description"
                 type="text"
                 class="block w-full"
@@ -385,7 +556,7 @@ onMounted(() => {
                 </Select>
             </div>
 
-            <Field :data-invalid="timeError ? 'true' : undefined" class="gap-2">
+            <Field v-if="!isBatch" :data-invalid="timeError ? 'true' : undefined" class="gap-2">
                 <div class="grid grid-cols-2 gap-2">
                     <div class="min-w-0 space-y-2">
                         <FieldLabel class="text-sm font-normal" :for="`${titleId}-start`">
@@ -417,6 +588,8 @@ onMounted(() => {
             </Field>
         </fieldset>
 
+        <p v-if="isBatch" class="text-xs text-text-tertiary">{{ labels.batch_note }}</p>
+
         <p
             v-if="serverError"
             role="alert"
@@ -426,16 +599,32 @@ onMounted(() => {
             <span>{{ serverError }}</span>
         </p>
 
-        <div class="flex justify-end gap-2">
+        <div v-if="resultView" class="flex justify-end gap-2">
+            <SecondaryButton
+                type="button"
+                :disabled="saving"
+                data-testid="outlook-batch-close"
+                @click="emit('cancel')">
+                {{ labels.close }}
+            </SecondaryButton>
+            <PrimaryButton
+                type="button"
+                :loading="saving"
+                data-testid="outlook-batch-retry"
+                @click="submit">
+                {{ retryLabel }}
+            </PrimaryButton>
+        </div>
+        <div v-else class="flex justify-end gap-2">
             <SecondaryButton type="button" :disabled="saving" @click="emit('cancel')">
                 {{ labels.cancel }}
             </SecondaryButton>
             <PrimaryButton
                 type="button"
                 :loading="saving"
-                data-testid="outlook-convert-submit"
+                :data-testid="submitTestId"
                 @click="submit">
-                {{ labels.create_submit }}
+                {{ isBatch ? batchSubmitLabel : labels.create_submit }}
             </PrimaryButton>
         </div>
     </div>

@@ -31,6 +31,7 @@ import OutlookDismissedSetting from '@/m365/calendar/OutlookDismissedSetting.vue
 import OutlookGhostLayer from '@/m365/calendar/OutlookGhostLayer.vue';
 import OutlookLaneCaption from '@/m365/calendar/OutlookLaneCaption.vue';
 import OutlookMeetingContextItems from '@/m365/calendar/OutlookMeetingContextItems.vue';
+import OutlookSelectionBar from '@/m365/calendar/OutlookSelectionBar.vue';
 import { useOutlookMeetings } from '@/m365/calendar/useOutlookMeetings';
 
 const { organization } = useOrganizationQuery(getCurrentOrganizationId()!);
@@ -175,5 +176,6 @@ function onRefresh() {
                 <OutlookDismissedSetting />
             </template>
         </TimeEntryCalendar>
+        <OutlookSelectionBar v-if="outlook.labels.value" />
     </AppLayout>
 </template>
