@@ -35,7 +35,8 @@ use Illuminate\Support\Facades\DB;
  * carries the ids of the user's entries created from meetings instead (linked_time_entry_ids).
  * Each meeting of the read also carries its hints (Phase 5 D-02): an occurrence of a series the user
  * already converted comes pre-assigned to the project of the latest conversion. The read never converts
- * anything (D-03).
+ * anything (D-03). Occurrences of a series the user chose to ignore are left out like dismissed ones and
+ * come back only with include_dismissed (D-10).
  */
 class OutlookMeetingController extends Controller
 {
@@ -68,6 +69,15 @@ class OutlookMeetingController extends Controller
             // Dismissed meetings only come back when asked for (include_dismissed); gone ones never do
             ->when(! $request->includeDismissed(), fn (Builder $query): Builder => $query->whereNull('dismissed_at'))
             ->whereNull('gone_at')
+            // Occurrences of a series the user ignored leave the calendar (Phase 5 D-10); like dismissed
+            // ones they only come back when asked for (include_dismissed)
+            ->when(! $request->includeDismissed(), fn (Builder $query): Builder => $query->whereNotExists(function (QueryBuilder $settings): void {
+                $settings->selectRaw('1')
+                    ->from('outlook_series_settings')
+                    ->whereColumn('outlook_series_settings.user_id', 'outlook_meetings.user_id')
+                    ->whereColumn('outlook_series_settings.series_master_id', 'outlook_meetings.series_master_id')
+                    ->whereNotNull('outlook_series_settings.ignored_at');
+            }))
             // Converted meetings leave the suggestions while their entry exists and still belongs to the
             // user (Phase 4 D-04). An entry deleted anywhere drops its link (cascade); an entry moved to
             // another user no longer hides the meeting.
