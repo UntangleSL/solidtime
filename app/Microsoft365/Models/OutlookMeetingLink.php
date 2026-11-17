@@ -15,7 +15,11 @@ use Illuminate\Support\Carbon;
  * created from it (Phase 4 D-05, D-06). Keyed by the occurrence, not by an outlook_meetings row, so
  * it survives Disconnect and re-syncs.
  *
- * Deliberately not audited and not in Filament: it holds ids and times only, never the subject (D-13).
+ * It also carries the series of the occurrence (Phase 5 D-02, D-17): the series history lives on the
+ * links, so a recurring meeting stays pre-assigned after Disconnect and re-syncs.
+ *
+ * Deliberately not audited and not in Filament: it holds ids, times and keyed hashes only, never the
+ * subject or an address (D-13).
  *
  * @property string $id
  * @property string $user_id
@@ -23,6 +27,10 @@ use Illuminate\Support\Carbon;
  * @property string $time_entry_id
  * @property Carbon|null $meeting_starts_at
  * @property Carbon|null $meeting_ends_at
+ * @property string|null $series_master_id
+ * @property array<string, mixed>|null $signals
+ * @property string|null $prefill_source
+ * @property bool|null $prefill_kept
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read TimeEntry|null $timeEntry
@@ -45,6 +53,10 @@ class OutlookMeetingLink extends Model
         'time_entry_id',
         'meeting_starts_at',
         'meeting_ends_at',
+        'series_master_id',
+        'signals',
+        'prefill_source',
+        'prefill_kept',
     ];
 
     /**
@@ -55,6 +67,8 @@ class OutlookMeetingLink extends Model
     protected $casts = [
         'meeting_starts_at' => 'datetime',
         'meeting_ends_at' => 'datetime',
+        'signals' => 'array',
+        'prefill_kept' => 'boolean',
     ];
 
     /**

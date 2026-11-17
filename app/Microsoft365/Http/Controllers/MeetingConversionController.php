@@ -141,6 +141,8 @@ class MeetingConversionController extends Controller
             'time_entry_id' => $entry->getKey(),
             'meeting_starts_at' => $meeting->starts_at,
             'meeting_ends_at' => $meeting->ends_at,
+            // The series history lives on the link: Disconnect purges the meeting rows (Phase 5 D-17)
+            'series_master_id' => $meeting->series_master_id,
         ]);
 
         if ($meeting->dismissed_at !== null) {

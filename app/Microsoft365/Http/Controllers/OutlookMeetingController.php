@@ -11,6 +11,10 @@ use App\Microsoft365\Http\Resources\OutlookMeetingResource;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookSyncWindow;
+use App\Microsoft365\Suggestions\MeetingHints;
+use App\Microsoft365\Suggestions\SeriesAssignmentResolver;
+use App\Models\Member;
+use App\Models\Organization;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -29,6 +33,9 @@ use Illuminate\Support\Facades\DB;
  * the user nothing is served (D-22): an empty list, no sync, and a 404 for dismiss and restore.
  * A meeting converted into a time entry is not listed while that entry exists (Phase 4 D-04); the read
  * carries the ids of the user's entries created from meetings instead (linked_time_entry_ids).
+ * Each meeting of the read also carries its hints (Phase 5 D-02): an occurrence of a series the user
+ * already converted comes pre-assigned to the project of the latest conversion. The read never converts
+ * anything (D-03).
  */
 class OutlookMeetingController extends Controller
 {
@@ -38,7 +45,7 @@ class OutlookMeetingController extends Controller
      * Cache read: never calls Graph, so the calendar can always render what it has (SYNC-01).
      * The range is half-open [start, end): a meeting touching only a boundary is not part of it.
      */
-    public function index(MeetingRangeRequest $request): AnonymousResourceCollection
+    public function index(MeetingRangeRequest $request, SeriesAssignmentResolver $resolver): AnonymousResourceCollection
     {
         $user = $this->sessionUser($request->user());
         $start = $request->rangeStart();
@@ -83,7 +90,22 @@ class OutlookMeetingController extends Controller
             ->where('window_end', '=', $end->format('Y-m-d H:i:s'))
             ->first();
 
-        return OutlookMeetingResource::collection($meetings)->additional([
+        // Series pre-assignment, resolved once for every visible series of the read (T-05-05). Only the
+        // current organization counts, the same one the convert URL targets (RESEARCH Pitfall 5); without
+        // one there is nothing to pre-assign. Dismissed occurrences never carry an assignment (D-03).
+        $organization = $this->currentOrganization($user);
+        $assignments = $organization === null ? [] : $resolver->forMeetings(
+            $user,
+            $organization,
+            $meetings->filter(fn (OutlookMeeting $meeting): bool => $meeting->series_master_id !== null && $meeting->dismissed_at === null),
+        );
+
+        $resources = $meetings->map(fn (OutlookMeeting $meeting): OutlookMeetingResource => new OutlookMeetingResource(
+            $meeting,
+            new MeetingHints(assignment: $assignments[$meeting->id] ?? null),
+        ));
+
+        return OutlookMeetingResource::collection($resources)->additional([
             'sync' => [
                 'last_synced_at' => $window?->synced_at->utc()->format('Y-m-d\TH:i:s\Z'),
                 // Seconds Graph is still backed off for (D-12): a reload keeps the Sync control waiting
@@ -187,6 +209,29 @@ class OutlookMeetingController extends Controller
             ->whereKey($id)
             ->whereNull('gone_at')
             ->firstOrFail();
+    }
+
+    /**
+     * The session user's current organization (current_team_id), or null when there is none or the user
+     * is no longer a member of it.
+     */
+    private function currentOrganization(User $user): ?Organization
+    {
+        if ($user->current_team_id === null) {
+            return null;
+        }
+
+        $organization = Organization::query()->find($user->current_team_id);
+        if ($organization === null) {
+            return null;
+        }
+
+        $isMember = Member::query()
+            ->where('organization_id', '=', $organization->getKey())
+            ->where('user_id', '=', $user->getKey())
+            ->exists();
+
+        return $isMember ? $organization : null;
     }
 
     private function sessionUser(?Authenticatable $user): User

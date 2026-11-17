@@ -377,7 +377,7 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
         $item = $response->json('data.0');
         $keys = array_keys($item);
         sort($keys);
-        $expected = ['dismissed', 'end', 'id', 'is_online_meeting', 'is_organizer', 'organizer_name', 'start', 'subject', 'web_link'];
+        $expected = ['assignment', 'dismissed', 'end', 'id', 'is_online_meeting', 'is_organizer', 'organizer_name', 'series_ignored', 'series_key', 'start', 'subject', 'suggestions', 'web_link'];
         $this->assertSame($expected, $keys);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $item['start']);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $item['end']);
