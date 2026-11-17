@@ -1,0 +1,158 @@
+/*
+ * Accent presets for the fork (Phase 3.2, D-04). GENERATED from the "Light mode
+ * scales" and "Dark mode scales" tables of 03.2-UI-SPEC.md; do not hand-edit
+ * single steps, regenerate the file.
+ *
+ * - Untangle is the baseline: its scales live in untangle-theme.css on
+ *   html:root.light / html:root.dark, so a missing or unknown accent renders
+ *   Untangle. This file only holds the five other presets.
+ * - The selector is a class on <html> (accent-<id>), not a data attribute:
+ *   useCssVariable only observes `class` mutations, so charts and calendar
+ *   colours recompute when the accent switches.
+ * - Values are decimal "R, G, B" triplets (the format of styles.css), steps 50
+ *   to 950, one block per mode.
+ * - Adding a preset means one block per mode here, one entry in
+ *   resources/js/branding/accentPresets.ts and one case in
+ *   App\Appearance\AccentPreset; contrast.test.ts then gates it.
+ * - Rose and gold are not presets: the brand reserves them for charts.
+ */
+
+html:root.light.accent-azure {
+    --color-accent-50: 239, 248, 255;
+    --color-accent-100: 224, 241, 255;
+    --color-accent-200: 191, 228, 255;
+    --color-accent-300: 40, 152, 216;
+    --color-accent-400: 4, 116, 171;
+    --color-accent-500: 7, 100, 147;
+    --color-accent-600: 5, 84, 124;
+    --color-accent-700: 2, 67, 101;
+    --color-accent-800: 0, 50, 78;
+    --color-accent-900: 0, 35, 56;
+    --color-accent-950: 0, 20, 36;
+}
+
+html:root.dark.accent-azure {
+    --color-accent-50: 223, 235, 244;
+    --color-accent-100: 203, 229, 248;
+    --color-accent-200: 170, 219, 254;
+    --color-accent-300: 115, 197, 254;
+    --color-accent-400: 50, 176, 250;
+    --color-accent-500: 10, 151, 220;
+    --color-accent-600: 7, 122, 180;
+    --color-accent-700: 1, 98, 146;
+    --color-accent-800: 3, 75, 112;
+    --color-accent-900: 0, 53, 82;
+    --color-accent-950: 0, 35, 56;
+}
+
+html:root.light.accent-indigo {
+    --color-accent-50: 244, 246, 255;
+    --color-accent-100: 234, 237, 255;
+    --color-accent-200: 213, 220, 254;
+    --color-accent-300: 125, 136, 239;
+    --color-accent-400: 91, 97, 209;
+    --color-accent-500: 77, 80, 191;
+    --color-accent-600: 64, 63, 172;
+    --color-accent-700: 50, 46, 148;
+    --color-accent-800: 37, 32, 121;
+    --color-accent-900: 26, 21, 91;
+    --color-accent-950: 14, 10, 62;
+}
+
+html:root.dark.accent-indigo {
+    --color-accent-50: 232, 235, 250;
+    --color-accent-100: 220, 226, 255;
+    --color-accent-200: 204, 212, 254;
+    --color-accent-300: 174, 185, 254;
+    --color-accent-400: 147, 159, 254;
+    --color-accent-500: 120, 129, 245;
+    --color-accent-600: 95, 101, 214;
+    --color-accent-700: 75, 78, 183;
+    --color-accent-800: 56, 58, 148;
+    --color-accent-900: 39, 40, 110;
+    --color-accent-950: 25, 25, 77;
+}
+
+html:root.light.accent-violet {
+    --color-accent-50: 250, 244, 255;
+    --color-accent-100: 246, 233, 255;
+    --color-accent-200: 237, 210, 255;
+    --color-accent-300: 181, 119, 217;
+    --color-accent-400: 149, 79, 186;
+    --color-accent-500: 132, 62, 168;
+    --color-accent-600: 115, 45, 151;
+    --color-accent-700: 96, 29, 129;
+    --color-accent-800: 77, 16, 105;
+    --color-accent-900: 57, 9, 78;
+    --color-accent-950: 38, 4, 54;
+}
+
+html:root.dark.accent-violet {
+    --color-accent-50: 244, 235, 249;
+    --color-accent-100: 241, 223, 252;
+    --color-accent-200: 235, 204, 254;
+    --color-accent-300: 222, 169, 254;
+    --color-accent-400: 207, 136, 248;
+    --color-accent-500: 181, 111, 221;
+    --color-accent-600: 153, 84, 191;
+    --color-accent-700: 127, 62, 162;
+    --color-accent-800: 100, 44, 130;
+    --color-accent-900: 74, 29, 97;
+    --color-accent-950: 51, 18, 68;
+}
+
+html:root.light.accent-ember {
+    --color-accent-50: 255, 244, 239;
+    --color-accent-100: 255, 234, 223;
+    --color-accent-200: 255, 211, 190;
+    --color-accent-300: 217, 117, 60;
+    --color-accent-400: 181, 80, 0;
+    --color-accent-500: 156, 69, 4;
+    --color-accent-600: 133, 58, 4;
+    --color-accent-700: 109, 46, 2;
+    --color-accent-800: 86, 33, 0;
+    --color-accent-900: 63, 22, 0;
+    --color-accent-950: 43, 11, 0;
+}
+
+html:root.dark.accent-ember {
+    --color-accent-50: 249, 234, 227;
+    --color-accent-100: 253, 222, 207;
+    --color-accent-200: 254, 204, 179;
+    --color-accent-300: 255, 168, 124;
+    --color-accent-400: 249, 135, 70;
+    --color-accent-500: 221, 109, 41;
+    --color-accent-600: 188, 83, 0;
+    --color-accent-700: 152, 67, 5;
+    --color-accent-800: 119, 51, 2;
+    --color-accent-900: 88, 35, 0;
+    --color-accent-950: 62, 21, 0;
+}
+
+html:root.light.accent-graphite {
+    --color-accent-50: 245, 247, 248;
+    --color-accent-100: 235, 239, 241;
+    --color-accent-200: 216, 223, 228;
+    --color-accent-300: 133, 145, 153;
+    --color-accent-400: 98, 111, 119;
+    --color-accent-500: 83, 95, 103;
+    --color-accent-600: 68, 80, 88;
+    --color-accent-700: 53, 64, 71;
+    --color-accent-800: 39, 48, 54;
+    --color-accent-900: 26, 33, 38;
+    --color-accent-950: 14, 19, 23;
+}
+
+html:root.dark.accent-graphite {
+    --color-accent-50: 232, 234, 235;
+    --color-accent-100: 222, 226, 228;
+    --color-accent-200: 207, 214, 218;
+    --color-accent-300: 177, 191, 200;
+    --color-accent-400: 155, 169, 177;
+    --color-accent-500: 131, 144, 153;
+    --color-accent-600: 104, 117, 126;
+    --color-accent-700: 83, 94, 102;
+    --color-accent-800: 62, 72, 79;
+    --color-accent-900: 43, 51, 56;
+    --color-accent-950: 28, 34, 37;
+}
