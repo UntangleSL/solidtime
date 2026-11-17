@@ -38,6 +38,11 @@ Make converting Outlook meetings mostly a matter of confirming: recurring meetin
 - **D-14:** Privacy and impersonation rules unchanged (Phase 3 D-15/D-16/D-22): impersonation returns no suggestions and cannot confirm.
 - **D-15:** Release ends with an owner-free deploy: the system is not in production yet, so the orchestrator deploys as soon as CI is green unless the owner must act first (owner, 2026-11-17).
 
+### Decided after research (2026-11-17, orchestrator under owner delegation)
+- **D-16:** Measure the engine: each link records how the form was prefilled (`prefill_source`: series / suggestion / last_used / none) and whether the user kept that project (`prefill_kept`), so the hit rate that gates PROD-05 is one SQL query. No UI for it in this phase.
+- **D-17:** Series settings (ignore/forget) hold ids only and survive Disconnect, like links (Phase 4 D-15). Learned signals on links are keyed hashes (no readable addresses or subject words outlive the meeting cache).
+- **D-18:** Converting a meeting of an ignored series does not un-ignore the series; "Stop ignoring" is explicit.
+
 ### Claude's Discretion
 - Storage shape for series assignments and learned signals (derive from `outlook_meeting_links` + stored meeting fields vs separate tables), confidence threshold, weights, tokenisation (Spanish + English stop words), how the reason text is built.
 - Exact lane visuals for pre-assigned meetings, confirm/edit affordances, bulk-confirm placement (selection bar or toolbar), wording.
