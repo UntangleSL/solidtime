@@ -50,7 +50,7 @@ class OutlookCalendarPropTest extends TestCaseWithDatabase
             ->where('microsoft.calendar.state', 'connected')
             ->where('microsoft.calendar.urls.meetings', route('microsoft.meetings.index'))
             ->where('microsoft.calendar.urls.sync', route('microsoft.meetings.sync'))
-            ->has('microsoft.calendar.labels', 34)
+            ->has('microsoft.calendar.labels', 40)
             ->where('microsoft.calendar.labels.no_subject', '(No subject)')
             ->where('microsoft.calendar.labels.last_synced', 'Last synced :time')
             ->where('microsoft.calendar.labels.sync', 'Sync Outlook')
@@ -160,7 +160,7 @@ class OutlookCalendarPropTest extends TestCaseWithDatabase
         $response->assertStatus(200);
         $response->assertInertia(fn (AssertableInertia $page) => $page
             ->where('microsoft.calendar.state', 'not_connected')
-            ->has('microsoft.calendar.labels', 34)
+            ->has('microsoft.calendar.labels', 40)
             ->etc());
     }
 
@@ -286,7 +286,7 @@ class OutlookCalendarPropTest extends TestCaseWithDatabase
         foreach ([$first, $second] as $response) {
             $response->assertInertia(fn (AssertableInertia $page) => $page
                 ->where('microsoft.calendar.state', 'connected')
-                ->has('microsoft.calendar.labels', 34)
+                ->has('microsoft.calendar.labels', 40)
                 ->etc());
         }
     }
