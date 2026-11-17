@@ -148,3 +148,65 @@ No 03.2 commit edits these, so they cannot conflict because of this phase:
 - `app/Http/Controllers/Web/OrganizationController.php`
 - `resources/js/m365/calendar/`
 - `resources/js/packages/ui/src/FullCalendar/`
+
+## Phase 4 (Assign meetings to projects)
+
+Built from `git log --grep="(04-" --name-only 10e21212~1..HEAD` and `git diff --name-status` over the
+same range (merge commits included); 04-09 reconciles it against the final phase diff. Every core edit
+is additive: optional slots and slot fills, no props, no logic, nothing rendered without fork content.
+
+### Core files edited
+
+| File | Change | Plan | Merge note |
+| --- | --- | --- | --- |
+| `resources/js/packages/ui/src/FullCalendar/FullCalendarEventContent.vue` | One `<slot name="title-prefix" />` in the title row, after the break icon and before the title span. | 04-07 | Re-add the one slot line after taking upstream's file; it renders nothing without content (guarded by `FullCalendarEventContent.test.ts`). |
+| `resources/js/packages/ui/src/FullCalendar/CalendarDayColumn.vue` | The self-closing `FullCalendarEventContent` element opened up to fill `#title-prefix` with `<slot name="event-extra" :time-entry="dayEvent.event.timeEntry" />`, behind `v-if="$slots['event-extra']"`. | 04-07 | Re-apply the open tag, the template and the closing tag around upstream's props. |
+| `resources/js/packages/ui/src/FullCalendar/TimeEntryCalendar.vue` | `CalendarDayColumn` forwards `event-extra` (`<template v-if="$slots['event-extra']" #event-extra="slotProps"><slot name="event-extra" v-bind="slotProps" /></template>`) beside the `day-overlay` forwarding. | 04-07 | Re-add the template next to the `day-overlay` forwarding. |
+| `resources/js/Pages/Calendar.vue` | Import of `OutlookSelectionBar` and `<OutlookSelectionBar v-if="outlook.labels.value" />` after `TimeEntryCalendar` (2 lines). | 04-05 | Re-add the import and the element after the calendar. |
+| `resources/js/Pages/Calendar.vue` | Import of `OutlookEntryBadge` and the `#event-extra="{ timeEntry }"` fill rendering `<OutlookEntryBadge :time-entry-id="timeEntry.id" />`, gated by `outlook.labels.value`, among the other fork slot fills. | 04-07 | Re-add the import and the slot fill. |
+
+Accessibility note (04-07 assumption): the core event block carries its own `aria-label` (the entry
+title), so the badge's `sr-only` text is not part of the entry's accessible name; the visible icon and
+its `title` tooltip ("Created from an Outlook meeting") carry the origin. Changing the core `aria-label`
+would add a second core touch, so the UI-SPEC's "accessible name ends with it" is accepted as not met.
+
+### New files inside core directories
+
+| File | Purpose |
+| --- | --- |
+| `resources/js/packages/ui/src/FullCalendar/FullCalendarEventContent.test.ts` | Seam guard: without `title-prefix` content the title row renders exactly as upstream; with content it comes first. |
+
+`lang/en/microsoft365.php` and `lang/es/microsoft365.php` (fork files from earlier phases, inside the
+core `lang/` directory) gained 44 calendar keys each (conversion form, multi-select, selection bar, batch
+results, `from_meeting`).
+
+### Fork-owned paths
+
+| Path | Content |
+| --- | --- |
+| `app/Microsoft365/database/migrations/2026_11_17_000001_create_outlook_meeting_links_table.php` | `outlook_meeting_links` table (meeting to time entry link). |
+| `app/Microsoft365/Models/OutlookMeetingLink.php` | Link model. |
+| `app/Microsoft365/TimeEntries/CoreTimeEntryCreator.php` | Adapter that creates entries through the core time-entry path (contract-guarded). |
+| `app/Microsoft365/Http/Requests/MeetingConversionRequest.php`, `app/Microsoft365/Http/Controllers/MeetingConversionController.php` | Single and batch conversion endpoint. |
+| `app/Microsoft365/Http/Controllers/OutlookMeetingController.php`, `app/Microsoft365/Http/Middleware/ShareMicrosoftInertiaData.php`, `app/Microsoft365/routes/microsoft365.php` | Edited fork files: converted meetings leave the read and it returns `linked_time_entry_ids`; the shared `urls.convert`; the `microsoft.meetings.convert` route (web group, so `openapi.json` stays untouched). |
+| `resources/js/m365/calendar/` | New: `OutlookConvertForm`, `OutlookAssignResults`, `OutlookSelectionBar`, `OutlookEntryBadge`, `useOutlookSelection`, `conversionApi`, `lastProject` (with tests); edited: ghost layer, ghost detail, hover card, context items, `meetingsApi`, `useOutlookMeetings` and `resources/js/m365/types.ts`. |
+| `tests/Feature/Microsoft365/` | New `OutlookMeetingConversionTest`, `OutlookMeetingLinkLifecycleTest`; extended `OutlookCalendarPropTest`, `OutlookMeetingEndpointTest`, `OutlookMeetingPrivacyTest`. |
+| `tests/Unit/Microsoft365/CoreTimeEntryCreatorContractTest.php` | Guard on the core time-entry contract the adapter relies on. |
+| `e2e/outlook-convert.spec.ts` | Browser tests of single and batch conversion and the entry marker (04-08). |
+
+### Hot files deliberately not touched
+
+No Phase 4 commit edits these, so they cannot conflict because of this phase:
+
+- `app/Http/Controllers/Api/V1/TimeEntryController.php`
+- `app/Http/Requests/V1/TimeEntry/TimeEntryStoreRequest.php`
+- `app/Models/TimeEntry.php`
+- `app/Service/DeletionService.php`
+- `app/Service/MemberService.php`
+- `routes/api.php`
+- `routes/web.php`
+- `openapi.json`
+- `resources/js/utils/useTimeEntriesMutations.ts`
+- `resources/js/packages/ui/src/TimeEntry/TimeEntryCreateModal.vue`
+- `resources/js/packages/ui/src/TimeTracker/TimeTrackerProjectTaskDropdown.vue`
+- `resources/js/packages/ui/src/Tag/TagDropdown.vue`
