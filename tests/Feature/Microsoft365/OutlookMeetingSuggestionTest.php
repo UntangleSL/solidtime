@@ -39,11 +39,15 @@ use App\Models\Client;
 use App\Models\Member;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\ProjectMember;
+use App\Models\TimeEntry;
 use App\Models\User;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use STS\FilamentImpersonate\ImpersonateManager;
 use Tests\Feature\Microsoft365\Support\InteractsWithGraphFixtures;
 use Tests\Feature\Microsoft365\Support\InteractsWithMicrosoft365;
 use Tests\TestCaseWithDatabase;
@@ -247,6 +251,33 @@ class OutlookMeetingSuggestionTest extends TestCaseWithDatabase
         $this->convertTo($organization, $this->single($user, 'hist-2', $day.' 11:00:00', $people), $project);
     }
 
+    private function startImpersonation(): void
+    {
+        // The session key of stechstudio/filament-impersonate: the id of the admin who impersonates
+        session()->put(ImpersonateManager::SESSION_KEY, 1);
+    }
+
+    /**
+     * Every time entry and link as stored, to prove a read changes nothing (D-12).
+     *
+     * @return array{entries: list<array<string, mixed>>, links: list<array<string, mixed>>}
+     */
+    private function storedSnapshot(): array
+    {
+        return [
+            'entries' => array_values(TimeEntry::query()
+                ->orderBy('id')
+                ->get(['id', 'start', 'end', 'description', 'project_id', 'task_id', 'tags', 'billable', 'user_id', 'member_id', 'organization_id', 'updated_at'])
+                ->map(fn (TimeEntry $entry): array => $entry->getAttributes())
+                ->all()),
+            'links' => array_values(OutlookMeetingLink::query()
+                ->orderBy('id')
+                ->get()
+                ->map(fn (OutlookMeetingLink $link): array => $link->getAttributes())
+                ->all()),
+        ];
+    }
+
     public function test_two_conversions_with_a_client_domain_suggest_that_project(): void
     {
         // Arrange: two conversions to P with people at client.test, four to Q with people at other.test
@@ -301,5 +332,246 @@ class OutlookMeetingSuggestionTest extends TestCaseWithDatabase
         $this->assertSame([], $this->suggestionsOf($read, $b));
         $this->assertNull($this->item($read, $single)['assignment']);
         $this->assertSame([$p->getKey()], $this->suggestedProjectIds($read, $single));
+    }
+
+    public function test_other_users_conversions_never_influence_the_ranking(): void
+    {
+        // Arrange: the user's own history, then a colleague of the same organization with ten
+        // conversions of client.test meetings to a public project R
+        $data = $this->employee();
+        $p = $this->publicProject($data->organization);
+        $r = $this->publicProject($data->organization);
+        $this->twoClientConversions($data->organization, $data->user, $p);
+        $people = [['eva@client.test', 'Eva'], ['ana@client.test', 'Ana']];
+        $next = $this->single($data->user, 'next', '2026-10-22 09:00:00', $people);
+        $before = $this->read();
+        $colleague = User::factory()->create();
+        Member::factory()->forUser($colleague)->forOrganization($data->organization)->role(Role::Employee)->create();
+        $colleague->currentOrganization()->associate($data->organization);
+        $colleague->save();
+        $this->connectedAccount($colleague, objectId: '00000000-0000-4000-8000-0000000009c2');
+        $this->actingAs($colleague);
+        foreach (range(0, 9) as $index) {
+            $meeting = $this->single($colleague, 'colleague-'.$index, '2026-10-2'.intdiv($index, 5).' '.(9 + $index % 5).':00:00', $people);
+            $this->convertTo($data->organization, $meeting, $r);
+        }
+
+        // Act
+        $this->actingAs($data->user);
+        $after = $this->read();
+
+        // Assert: the same answer, and R never shows up
+        $before->assertOk();
+        $after->assertOk();
+        $this->assertSame([$p->getKey()], $this->suggestedProjectIds($before, $next));
+        $this->assertSame($this->suggestionsOf($before, $next), $this->suggestionsOf($after, $next));
+        $this->assertSame(12, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_other_organizations_and_reassigned_entries_are_ignored(): void
+    {
+        // Arrange: two conversions in a second organization, and one in the current organization whose
+        // entry core then moved to another member
+        $data = $this->employee();
+        $otherOrganization = Organization::factory()->create();
+        Member::factory()->forUser($data->user)->forOrganization($otherOrganization)->role(Role::Employee)->create();
+        $x = $this->publicProject($otherOrganization);
+        $p = $this->publicProject($data->organization);
+        $this->twoClientConversions($otherOrganization, $data->user, $x);
+        $reassigned = $this->single($data->user, 'reassigned', '2026-10-20 09:00:00', [['ana@client.test', 'Ana']]);
+        $entryId = $this->convertTo($data->organization, $reassigned, $p);
+        TimeEntry::query()->whereKey($entryId)->update([
+            'user_id' => $data->owner->getKey(),
+            'member_id' => $data->ownerMember->getKey(),
+        ]);
+        $next = $this->single($data->user, 'next', '2026-10-22 09:00:00', [['eva@client.test', 'Eva'], ['ana@client.test', 'Ana']]);
+
+        // Act
+        $inCurrent = $this->read();
+        $data->user->current_team_id = $otherOrganization->getKey();
+        $data->user->save();
+        $inOther = $this->read();
+
+        // Assert: nothing in the current organization; the other organization's history only counts there
+        $inCurrent->assertOk();
+        $this->assertContains($reassigned->id, $inCurrent->json('data.*.id'));
+        foreach ($inCurrent->json('data') as $item) {
+            $this->assertSame([], $item['suggestions']);
+        }
+        $inOther->assertOk();
+        $this->assertSame([$x->getKey()], $this->suggestedProjectIds($inOther, $next));
+    }
+
+    public function test_archived_and_unbookable_projects_are_never_suggested(): void
+    {
+        // Arrange: P (public) learned from client.test, S (private, the employee a member) from partner.test
+        $data = $this->employee();
+        $p = $this->publicProject($data->organization);
+        $s = Project::factory()->forOrganization($data->organization)->isPrivate()->create();
+        $projectMember = ProjectMember::factory()->forProject($s)->forMember($data->member)->create();
+        $this->twoClientConversions($data->organization, $data->user, $p);
+        foreach ([0, 1] as $index) {
+            $partner = $this->single($data->user, 'partner-'.$index, '2026-10-20 '.(9 + 2 * $index).':00:00', [['bo@partner.test', 'Bo']]);
+            $this->convertTo($data->organization, $partner, $s);
+        }
+        $next = $this->single($data->user, 'next', '2026-10-22 09:00:00', [['eva@client.test', 'Eva'], ['ida@partner.test', 'Ida']]);
+        $before = $this->read();
+
+        // Act: P is archived and the employee leaves S
+        $p->archived_at = Carbon::now();
+        $p->save();
+        ProjectMember::query()->whereKey($projectMember->getKey())->delete();
+        $after = $this->read();
+
+        // Assert
+        $before->assertOk();
+        $this->assertEqualsCanonicalizing([$p->getKey(), $s->getKey()], $this->suggestedProjectIds($before, $next));
+        $after->assertOk();
+        $this->assertSame([], $this->suggestionsOf($after, $next));
+    }
+
+    public function test_impersonation_returns_no_suggestions(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $p = $this->publicProject($data->organization);
+        $this->twoClientConversions($data->organization, $data->user, $p);
+        $this->single($data->user, 'next', '2026-10-22 09:00:00', [['eva@client.test', 'Eva']]);
+
+        // Act
+        $this->startImpersonation();
+        $read = $this->read();
+
+        // Assert: the existing empty answer, nothing about meetings or suggestions (D-14)
+        $read->assertOk();
+        $read->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null]]);
+    }
+
+    public function test_suggestions_carry_no_personal_data(): void
+    {
+        // Arrange: Eva has no display name, in the history and in the next meeting
+        $data = $this->employee();
+        $p = $this->publicProject($data->organization);
+        foreach ([0, 1] as $index) {
+            $past = $this->single($data->user, 'past-'.$index, '2026-10-19 '.(9 + 2 * $index).':00:00', [['eva@client.test', null]]);
+            $this->convertTo($data->organization, $past, $p);
+        }
+        $next = $this->single($data->user, 'next', '2026-10-22 09:00:00', [['eva@client.test', null]]);
+
+        // Act
+        $read = $this->read();
+
+        // Assert: Eva is explained by her domain; no score, no attendee data, no address anywhere
+        $read->assertOk();
+        $suggestions = $this->suggestionsOf($read, $next);
+        $this->assertCount(1, $suggestions);
+        $this->assertSame($p->getKey(), $suggestions[0]['project_id']);
+        $this->assertSame(['kind' => 'domain', 'count' => 2, 'value' => 'client.test'], $suggestions[0]['reason']);
+        $this->assertSame(['project_id', 'confident', 'reason', 'project_name', 'project_color', 'client_name'], array_keys($suggestions[0]));
+        $json = (string) $read->getContent();
+        foreach (['"score"', '"attendees"', '"organizer_address"', '"attendee_count"', '"signals"'] as $forbidden) {
+            $this->assertStringNotContainsString($forbidden, $json, $forbidden);
+        }
+        $this->assertDoesNotMatchRegularExpression('/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/', $json);
+    }
+
+    public function test_dismissed_and_ignored_meetings_have_no_suggestions(): void
+    {
+        // Arrange: P learned from client.test; a dismissed meeting, an occurrence of an ignored series and
+        // a plain meeting, all with people from client.test
+        $data = $this->employee();
+        $p = $this->publicProject($data->organization);
+        $this->twoClientConversions($data->organization, $data->user, $p);
+        $people = [['eva@client.test', 'Eva']];
+        $dismissed = $this->single($data->user, 'dismissed', '2026-10-21 14:00:00', $people, ['dismissed_at' => '2026-10-19 08:00:00']);
+        $ignored = $this->occurrence($data->user, 'occ-ignored', '2026-10-22', $people);
+        $plain = $this->single($data->user, 'plain', '2026-10-23 09:00:00', $people);
+        $this->postJson(route('microsoft.meetings.series.ignore', ['meeting' => $ignored->id], false))->assertNoContent();
+
+        // Act
+        $read = $this->read(extra: ['include_dismissed' => '1']);
+
+        // Assert
+        $read->assertOk();
+        $this->assertTrue($this->item($read, $dismissed)['dismissed']);
+        $this->assertSame([], $this->suggestionsOf($read, $dismissed));
+        $this->assertTrue($this->item($read, $ignored)['series_ignored']);
+        $this->assertSame([], $this->suggestionsOf($read, $ignored));
+        $this->assertSame([$p->getKey()], $this->suggestedProjectIds($read, $plain));
+    }
+
+    public function test_history_window_is_bounded(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $p = $this->publicProject($data->organization);
+        $this->twoClientConversions($data->organization, $data->user, $p);
+        $next = $this->single($data->user, 'next', '2026-10-22 09:00:00', [['eva@client.test', 'Eva']]);
+        $before = $this->read();
+
+        // Act: the links are now 400 days old, past the 365-day window
+        OutlookMeetingLink::query()->update(['created_at' => Carbon::now()->subDays(400)]);
+        $after = $this->read();
+
+        // Assert
+        $this->assertSame([$p->getKey()], $this->suggestedProjectIds($before, $next));
+        $after->assertOk();
+        $this->assertSame([], $this->suggestionsOf($after, $next));
+    }
+
+    public function test_read_query_count_is_constant(): void
+    {
+        // Arrange: one meeting without assignment in the first week, fifteen in the second one
+        $data = $this->employee();
+        $p = $this->publicProject($data->organization);
+        $this->twoClientConversions($data->organization, $data->user, $p);
+        $people = [['eva@client.test', 'Eva']];
+        $this->single($data->user, 'w1', '2026-10-22 09:00:00', $people);
+        foreach (range(0, 14) as $index) {
+            $this->single($data->user, 'w2-'.$index, '2026-10-2'.(6 + intdiv($index, 5)).' '.(9 + $index % 5).':00:00', $people);
+        }
+        $this->read()->assertOk();
+
+        // Act
+        $this->enableQueryLog();
+        $small = $this->read();
+        $smallQueries = count($this->getQueryLog());
+        DB::flushQueryLog();
+        $large = $this->read('2026-10-26T00:00:00Z', '2026-11-02T00:00:00Z');
+        $largeQueries = count($this->getQueryLog());
+        DB::disableQueryLog();
+
+        // Assert: every meeting got its suggestion, at the same cost (D-12, T-05-34)
+        $small->assertOk();
+        $large->assertOk();
+        $this->assertCount(1, $small->json('data'));
+        $this->assertCount(15, $large->json('data'));
+        foreach ([$small, $large] as $read) {
+            foreach ($read->json('data') as $item) {
+                $this->assertSame($p->getKey(), $item['suggestions'][0]['project_id'] ?? null);
+            }
+        }
+        $this->assertSame($smallQueries, $largeQueries);
+    }
+
+    public function test_reading_suggestions_never_changes_time_entries(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $p = $this->publicProject($data->organization);
+        $this->twoClientConversions($data->organization, $data->user, $p);
+        $next = $this->single($data->user, 'next', '2026-10-22 09:00:00', [['eva@client.test', 'Eva']]);
+        $before = $this->storedSnapshot();
+        $this->travel(1)->minutes();
+
+        // Act
+        $first = $this->read();
+        $second = $this->read();
+
+        // Assert: suggested, but nothing converted, changed or linked (D-08, D-12)
+        $this->assertSame([$p->getKey()], $this->suggestedProjectIds($first, $next));
+        $this->assertSame([$p->getKey()], $this->suggestedProjectIds($second, $next));
+        $this->assertSame($before, $this->storedSnapshot());
+        $this->assertSame(2, TimeEntry::query()->count());
     }
 }
