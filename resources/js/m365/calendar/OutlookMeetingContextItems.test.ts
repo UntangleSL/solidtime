@@ -428,7 +428,7 @@ describe('OutlookMeetingContextItems pre-assigned meetings', () => {
             'outlook-menu-label',
             'outlook-menu-confirm',
             'outlook-project-dot',
-            'outlook-menu-confirm-project',
+            'outlook-menu-project-hint',
             'outlook-menu-edit',
             'outlook-menu-select',
             'outlook-menu-open',
@@ -440,7 +440,7 @@ describe('OutlookMeetingContextItems pre-assigned meetings', () => {
         const confirm = item('outlook-menu-confirm') as HTMLElement;
         expect(confirm.textContent).toContain('Confirm');
         expect(confirm.querySelector('svg')?.getAttribute('class')).toContain('lucide-check');
-        const hint = item('outlook-menu-confirm-project') as HTMLElement;
+        const hint = item('outlook-menu-project-hint') as HTMLElement;
         expect(hint.textContent?.trim()).toBe('Acme Website');
         expect(hint.className).toContain('max-w-32');
         expect(hint.className).toContain('truncate');
@@ -464,7 +464,7 @@ describe('OutlookMeetingContextItems pre-assigned meetings', () => {
         ]);
         await openMenu(block!, context);
 
-        const hint = item('outlook-menu-confirm-project') as HTMLElement;
+        const hint = item('outlook-menu-project-hint') as HTMLElement;
         expect(hint.textContent?.trim()).toBe('<img src=x onerror=alert(1)>');
         expect(hint.querySelector('img')).toBeNull();
     });

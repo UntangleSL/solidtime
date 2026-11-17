@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref } from 'vue';
-import { ClockPlus, ExternalLink, Eye, EyeOff, ListChecks, X } from '@lucide/vue';
+import { Check, ClockPlus, ExternalLink, Eye, EyeOff, ListChecks, Pencil, X } from '@lucide/vue';
 import {
     ContextMenuItem,
     ContextMenuLabel,
     ContextMenuSeparator,
 } from '@/packages/ui/src/context-menu';
 import type { OutlookMeeting } from '@/m365/types';
+import OutlookProjectDot from './OutlookProjectDot.vue';
 import { safeHttpsUrl } from './safeUrl';
+import { isPreassigned } from './suggestions';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
 // Items of the meeting context menu (UI-SPEC 3.1 section 4, D-06; Phase 4 UI-SPEC section 4),
@@ -16,6 +18,8 @@ import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 // panel once the menu has closed), opens Outlook or dismisses / restores the meeting; it never
 // changes or deletes a time entry itself. It always acts on the right-clicked meeting only. Meeting
 // values are only ever rendered through text interpolation.
+// Phase 5 (UI-SPEC section 4): a pre-assigned meeting offers Confirm (with its project as a hint)
+// and Edit in place of "Create time entry".
 const props = defineProps<{
     element: HTMLElement;
 }>();
@@ -40,6 +44,20 @@ const link = computed(() => (meeting.value ? safeHttpsUrl(meeting.value.web_link
 const canAct = computed(() => meeting.value !== null && context?.canAct.value === true);
 
 const rootEl = ref<HTMLElement | null>(null);
+
+// Pre-assigned and not faded (a dismissed or series-ignored occurrence is never pre-assigned).
+const assignment = computed(() =>
+    canAct.value && meeting.value !== null && isPreassigned(meeting.value)
+        ? (meeting.value.assignment ?? null)
+        : null
+);
+const confirmPending = computed(
+    () => meeting.value !== null && context?.isConfirmPending(meeting.value.id) === true
+);
+
+function menuOf(): Element | null {
+    return rootEl.value?.closest('[role="menu"]') ?? null;
+}
 
 // Select / Deselect: the keyboard and discoverable path to multi-select (D-07), always for the
 // right-clicked meeting only, even while other meetings are selected.
@@ -118,6 +136,24 @@ async function onCreate(): Promise<void> {
     context.openForm(current.id);
 }
 
+// Confirm from the menu: the menu closes first, then the request runs with the block's pending
+// state; confirmOne says the outcome by toast and announcement.
+async function onConfirm(): Promise<void> {
+    const current = meeting.value;
+    if (!context || !current || assignment.value === null) return;
+    const menu = menuOf();
+    await afterMenuClosed(menu);
+    void context.confirmOne(current.id);
+}
+
+async function onEdit(): Promise<void> {
+    const current = meeting.value;
+    if (!context || !current || assignment.value === null) return;
+    const menu = menuOf();
+    await afterMenuClosed(menu);
+    context.openForm(current.id);
+}
+
 async function onRestore(): Promise<void> {
     const current = meeting.value;
     if (!context || !current) return;
@@ -139,8 +175,30 @@ async function onRestore(): Promise<void> {
             data-testid="outlook-menu-label">
             {{ subject }}
         </ContextMenuLabel>
+        <template v-if="assignment">
+            <ContextMenuItem
+                class="gap-3"
+                data-testid="outlook-menu-confirm"
+                :disabled="confirmPending"
+                @select="onConfirm()">
+                <Check class="w-4 h-4 shrink-0 text-icon-default" aria-hidden="true" />
+                <span>{{ labels.confirm }}</span>
+                <span class="ml-auto flex min-w-0 items-center gap-1.5 pl-2">
+                    <OutlookProjectDot :color="assignment.project_color" />
+                    <span
+                        class="max-w-32 truncate text-xs text-text-tertiary"
+                        data-testid="outlook-menu-project-hint">
+                        {{ assignment.project_name }}
+                    </span>
+                </span>
+            </ContextMenuItem>
+            <ContextMenuItem class="space-x-3" data-testid="outlook-menu-edit" @select="onEdit()">
+                <Pencil class="w-4 h-4 text-icon-default" aria-hidden="true" />
+                <span>{{ labels.edit }}</span>
+            </ContextMenuItem>
+        </template>
         <ContextMenuItem
-            v-if="canAct && meeting"
+            v-else-if="canAct && meeting"
             class="space-x-3"
             data-testid="outlook-menu-create"
             @select="onCreate()">
