@@ -4,7 +4,7 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import OutlookGhostDetail from './OutlookGhostDetail.vue';
 import OutlookMeetingSummary from './OutlookMeetingSummary.vue';
 import { safeHttpsUrl } from './safeUrl';
-import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
+import type { OutlookAssignment, OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 
 const labels = {
     no_subject: '(No subject)',
@@ -18,6 +18,19 @@ const labels = {
     dismiss: 'Dismiss meeting',
     restore: 'Restore meeting',
     create_entry: 'Create time entry',
+    edit: 'Edit',
+    confirm: 'Confirm',
+    confirm_failed: 'Could not confirm this meeting',
+    preassigned_eyebrow: 'Pre-assigned · Same series',
+    why_series: 'You logged this series to :project on :date.',
+    tags_one: '1 Tag',
+    tags_many: ':count Tags',
+    billable: 'Billable',
+    non_billable: 'Non-Billable',
+    more_actions: 'More actions',
+    ignore_series: 'Always ignore this series',
+    unignore_series: 'Stop ignoring this series',
+    forget_series: 'Forget this series',
 } as OutlookCalendarLabels;
 
 // The form talks to the Outlook context and the query caches; here only its events matter.
@@ -61,6 +74,22 @@ function meeting(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
     };
 }
 
+const assignment: OutlookAssignment = {
+    project_id: 'p-1',
+    project_name: 'Acme Website',
+    project_color: '#ef5350',
+    client_name: 'Acme',
+    task_id: null,
+    task_name: null,
+    tags: [],
+    billable: true,
+    converted_at: '2026-11-10T09:00:00Z',
+};
+
+function preassigned(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
+    return meeting({ series_key: 'series-1', assignment, ...overrides });
+}
+
 let wrapper: VueWrapper | null = null;
 
 // The panel is portaled to document.body, so it is mounted open and queried from the body.
@@ -68,11 +97,12 @@ function mountOpen(
     m: OutlookMeeting,
     canAct = true,
     slots: Record<string, string> = {},
-    mode: 'detail' | 'form' = 'detail'
+    mode: 'detail' | 'form' = 'detail',
+    extra: { confirming?: boolean; confirmError?: string | null } = {}
 ) {
     wrapper = mount(OutlookGhostDetail, {
         attachTo: document.body,
-        props: { meeting: m, labels, canAct, open: true, mode },
+        props: { meeting: m, labels, canAct, open: true, mode, ...extra },
         slots: { default: '<div class="trigger">ghost</div>', ...slots },
         global: { stubs: { OutlookConvertForm: FormStub } },
     });
@@ -390,11 +420,12 @@ describe('OutlookGhostDetail', () => {
             expect(createButton()).toBeNull();
         });
 
-        it('detail mode keeps w-80', async () => {
+        it('detail mode is w-96 as well, so switching to the form never resizes the panel', async () => {
             mountOpen(meeting());
             await nextTick();
 
-            expect(panel().className).toContain('w-80');
+            expect(panel().className).toContain('w-96');
+            expect(panel().className).not.toContain('w-80');
             expect(panel().getAttribute('data-mode')).toBe('detail');
         });
 
@@ -465,6 +496,309 @@ describe('OutlookGhostDetail', () => {
             await settle();
 
             expect(w.emitted('update:open')).toBeUndefined();
+        });
+    });
+
+    describe('pre-assigned meeting (Phase 5)', () => {
+        function byTestId(id: string): HTMLElement | null {
+            return document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        }
+
+        async function settle() {
+            await nextTick();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            await nextTick();
+        }
+
+        it('shows the full pre-assignment with the why line after the summary', async () => {
+            mountOpen(preassigned());
+            await nextTick();
+
+            const block = byTestId('outlook-detail-preassignment');
+            expect(block).not.toBeNull();
+            expect(block!.textContent).toContain('Pre-assigned · Same series');
+            expect(block!.textContent).toContain('Acme Website');
+            expect(block!.textContent).toContain('Acme');
+            expect(block!.textContent).toContain('Billable');
+            expect(byTestId('outlook-detail-why')?.textContent?.trim()).toBe(
+                'You logged this series to Acme Website on Tue, Nov 10.'
+            );
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-detail-preassignment')).toBeGreaterThan(
+                html.indexOf('outlook-detail-time')
+            );
+        });
+
+        it('offers Edit and Confirm instead of Dismiss and Create time entry', async () => {
+            mountOpen(preassigned());
+            await nextTick();
+
+            const edit = byTestId('outlook-detail-edit');
+            const confirm = byTestId('outlook-detail-confirm');
+            expect(edit?.textContent?.trim()).toBe('Edit');
+            expect(edit?.querySelector('svg.lucide-pencil')).not.toBeNull();
+            expect(confirm?.textContent?.trim()).toBe('Confirm');
+            expect(confirm?.querySelector('svg.lucide-check')).not.toBeNull();
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-detail-confirm')).toBeGreaterThan(
+                html.indexOf('outlook-detail-edit')
+            );
+            expect(byTestId('outlook-detail-create')).toBeNull();
+            expect(byTestId('outlook-detail-action')).toBeNull();
+        });
+
+        it('Confirm emits confirm once; Edit emits create', async () => {
+            const w = mountOpen(preassigned());
+            await nextTick();
+
+            byTestId('outlook-detail-confirm')!.click();
+            expect(w.emitted('confirm')).toHaveLength(1);
+            expect(w.emitted('create')).toBeUndefined();
+
+            byTestId('outlook-detail-edit')!.click();
+            expect(w.emitted('create')).toHaveLength(1);
+            expect(w.emitted('confirm')).toHaveLength(1);
+        });
+
+        it('while confirming the button shows its spinner and emits nothing more', async () => {
+            const w = mountOpen(preassigned(), true, {}, 'detail', { confirming: true });
+            await nextTick();
+
+            const confirm = byTestId('outlook-detail-confirm') as HTMLButtonElement;
+            expect(confirm.disabled).toBe(true);
+            expect(confirm.querySelector('svg.animate-spin')).not.toBeNull();
+            confirm.click();
+            expect(w.emitted('confirm')).toBeUndefined();
+        });
+
+        it('while confirming neither Escape nor an outside pointer closes the panel', async () => {
+            const outside = document.createElement('div');
+            document.body.appendChild(outside);
+            const w = mountOpen(preassigned(), true, {}, 'detail', { confirming: true });
+            await settle();
+
+            document.body.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+            );
+            outside.dispatchEvent(
+                new PointerEvent('pointerdown', {
+                    bubbles: true,
+                    cancelable: true,
+                    button: 0,
+                    pointerType: 'mouse',
+                })
+            );
+            await settle();
+
+            expect(w.emitted('update:open')).toBeUndefined();
+        });
+
+        it('shows the confirm failure inline as an alert under the footer', async () => {
+            mountOpen(preassigned(), true, {}, 'detail', {
+                confirmError: 'This project is archived.',
+            });
+            await nextTick();
+
+            const alert = panel().querySelector<HTMLElement>('[role="alert"]');
+            expect(alert?.textContent?.trim()).toBe('This project is archived.');
+            expect(alert?.className).toContain('text-destructive');
+            expect(alert?.querySelector('svg.lucide-circle-x')).not.toBeNull();
+            const html = panel().innerHTML;
+            expect(html.indexOf('role="alert"')).toBeGreaterThan(
+                html.indexOf('outlook-detail-confirm')
+            );
+        });
+
+        it('renders no alert without a failure', async () => {
+            mountOpen(preassigned());
+            await nextTick();
+
+            expect(panel().querySelector('[role="alert"]')).toBeNull();
+        });
+
+        it('without canAct shows no pre-assignment and no Edit or Confirm', async () => {
+            mountOpen(preassigned(), false);
+            await nextTick();
+
+            expect(byTestId('outlook-detail-preassignment')).toBeNull();
+            expect(byTestId('outlook-detail-edit')).toBeNull();
+            expect(byTestId('outlook-detail-confirm')).toBeNull();
+        });
+
+        it('a dismissed occurrence is not pre-assigned: no pre-assignment, no Confirm', async () => {
+            mountOpen(preassigned({ dismissed: true }));
+            await nextTick();
+
+            expect(byTestId('outlook-detail-preassignment')).toBeNull();
+            expect(byTestId('outlook-detail-confirm')).toBeNull();
+            expect(byTestId('outlook-detail-create')).not.toBeNull();
+        });
+    });
+
+    describe('footer variants and More actions (Phase 5)', () => {
+        function byTestId(id: string): HTMLElement | null {
+            return document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        }
+
+        async function settle() {
+            await nextTick();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            await nextTick();
+        }
+
+        async function openMenu() {
+            byTestId('outlook-detail-more')!.click();
+            await settle();
+            const menu = document.body.querySelector<HTMLElement>('[role="menu"]');
+            expect(menu).not.toBeNull();
+            return menu!;
+        }
+
+        function itemIds(menu: HTMLElement): string[] {
+            return Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).map(
+                (item) => item.getAttribute('data-testid') ?? ''
+            );
+        }
+
+        const recurring = (overrides: Partial<OutlookMeeting> = {}) =>
+            meeting({ series_key: 'series-1', ...overrides });
+
+        it('a pre-assigned meeting focuses Confirm on open', async () => {
+            mountOpen(preassigned());
+            await settle();
+
+            expect(document.activeElement).toBe(byTestId('outlook-detail-confirm'));
+        });
+
+        it('other meetings keep the default focus (not Confirm)', async () => {
+            mountOpen(recurring());
+            await settle();
+
+            expect(byTestId('outlook-detail-confirm')).toBeNull();
+            expect(document.activeElement).not.toBe(document.body);
+        });
+
+        it('pre-assigned: More actions on the left, Edit and Confirm pushed right', async () => {
+            mountOpen(preassigned());
+            await nextTick();
+
+            const more = byTestId('outlook-detail-more')!;
+            expect(more.getAttribute('aria-label')).toBe('More actions');
+            expect(more.querySelector('svg.lucide-ellipsis')).not.toBeNull();
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-detail-more')).toBeLessThan(
+                html.indexOf('outlook-detail-edit')
+            );
+            expect(byTestId('outlook-detail-edit')!.parentElement!.className).toContain('ml-auto');
+            expect(byTestId('outlook-detail-action')).toBeNull();
+        });
+
+        it('pre-assigned menu: Dismiss, separator, Always ignore, Forget', async () => {
+            mountOpen(preassigned());
+            await settle();
+
+            const menu = await openMenu();
+            expect(itemIds(menu)).toEqual([
+                'outlook-more-dismiss',
+                'outlook-more-ignore-series',
+                'outlook-more-forget-series',
+            ]);
+            expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(1);
+            expect(menu.textContent).toContain('Dismiss meeting');
+            expect(menu.textContent).toContain('Always ignore this series');
+            expect(menu.textContent).toContain('Forget this series');
+            expect(
+                menu.querySelector('[data-testid="outlook-more-dismiss"] svg.lucide-eye-off')
+            ).not.toBeNull();
+            expect(
+                menu.querySelector(
+                    '[data-testid="outlook-more-ignore-series"] svg.lucide-calendar-off'
+                )
+            ).not.toBeNull();
+            expect(
+                menu.querySelector('[data-testid="outlook-more-forget-series"] svg.lucide-unlink')
+            ).not.toBeNull();
+        });
+
+        it('opening the menu does not close the panel', async () => {
+            const w = mountOpen(preassigned());
+            await settle();
+
+            await openMenu();
+
+            expect(w.emitted('update:open')).toBeUndefined();
+            expect(
+                document.body.querySelector('[data-testid="outlook-ghost-detail"]')
+            ).not.toBeNull();
+        });
+
+        it.each([
+            ['outlook-more-dismiss', 'dismiss'],
+            ['outlook-more-ignore-series', 'ignore-series'],
+            ['outlook-more-forget-series', 'forget-series'],
+        ])('%s emits %s and does not close the panel itself', async (testId, event) => {
+            const w = mountOpen(preassigned());
+            await settle();
+            await openMenu();
+
+            byTestId(testId)!.click();
+            await settle();
+
+            expect(w.emitted(event)).toHaveLength(1);
+            expect(w.emitted('update:open')).toBeUndefined();
+        });
+
+        it('recurring without assignment: More actions (Always ignore only), Dismiss, Create', async () => {
+            const w = mountOpen(recurring());
+            await settle();
+
+            expect(byTestId('outlook-detail-action')?.textContent?.trim()).toBe('Dismiss meeting');
+            expect(byTestId('outlook-detail-create')).not.toBeNull();
+            expect(byTestId('outlook-detail-confirm')).toBeNull();
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-detail-more')).toBeLessThan(
+                html.indexOf('outlook-detail-action')
+            );
+
+            const menu = await openMenu();
+            expect(itemIds(menu)).toEqual(['outlook-more-ignore-series']);
+            expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(0);
+            byTestId('outlook-more-ignore-series')!.click();
+            await settle();
+            expect(w.emitted('ignore-series')).toHaveLength(1);
+        });
+
+        it('an occurrence of an ignored series offers Stop ignoring instead of Always ignore', async () => {
+            const w = mountOpen(recurring({ series_ignored: true, dismissed: true }));
+            await settle();
+
+            expect(byTestId('outlook-detail-action')?.textContent?.trim()).toBe('Restore meeting');
+            const menu = await openMenu();
+            expect(itemIds(menu)).toEqual(['outlook-more-unignore-series']);
+            expect(menu.textContent).toContain('Stop ignoring this series');
+            expect(
+                menu.querySelector('[data-testid="outlook-more-unignore-series"] svg.lucide-undo-2')
+            ).not.toBeNull();
+
+            byTestId('outlook-more-unignore-series')!.click();
+            await settle();
+            expect(w.emitted('unignore-series')).toHaveLength(1);
+        });
+
+        it('a single meeting keeps the Phase 4 footer without More actions', async () => {
+            mountOpen(meeting());
+            await nextTick();
+
+            expect(byTestId('outlook-detail-more')).toBeNull();
+            expect(byTestId('outlook-detail-action')).not.toBeNull();
+            expect(byTestId('outlook-detail-create')).not.toBeNull();
+        });
+
+        it('without canAct there is no More actions', async () => {
+            mountOpen(preassigned(), false);
+            await nextTick();
+
+            expect(byTestId('outlook-detail-more')).toBeNull();
         });
     });
 });

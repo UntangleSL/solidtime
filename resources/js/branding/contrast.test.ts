@@ -431,6 +431,29 @@ function meetingCases(id: string, mode: ThemeMode): Case[] {
         { name: `${p} bar vs lane wash`, fg: bar, bg: lane, min: NON_TEXT },
         { name: `${p} open ring vs hover fill`, fg: ring, bg: hover, min: NON_TEXT },
         { name: `${p} dismissed dotted border vs grid`, fg: tertiary, bg: grid, min: NON_TEXT },
+        ...projectDotRingCases(t, p, fill, hover, mode),
+    ];
+}
+
+/**
+ * Phase 5 project dot (OutlookProjectDot): its 1px --color-text-tertiary ring keeps a 3:1 boundary
+ * whatever the project colour (a teal project on the teal Untangle tint included), on the meeting
+ * fill, the hover fill and the popover surface (hover card, panel, menus): --color-bg-elevated in
+ * dark, the page --color-bg-primary in light (--popover in packages/ui/styles.css).
+ */
+function projectDotRingCases(
+    t: Tokens,
+    p: string,
+    fill: Rgba,
+    hover: Rgba,
+    mode: ThemeMode
+): Case[] {
+    const ring = token(t, '--color-text-tertiary');
+    const popover = token(t, mode === 'dark' ? '--color-bg-elevated' : '--color-bg-primary');
+    return [
+        { name: `${p} project dot ring vs fill`, fg: ring, bg: fill, min: NON_TEXT },
+        { name: `${p} project dot ring vs hover fill`, fg: ring, bg: hover, min: NON_TEXT },
+        { name: `${p} project dot ring vs popover`, fg: ring, bg: popover, min: NON_TEXT },
     ];
 }
 

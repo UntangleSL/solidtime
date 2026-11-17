@@ -8,6 +8,7 @@ const labels = {
     no_subject: '(No subject)',
     eyebrow: 'Outlook meeting',
     eyebrow_dismissed: 'Outlook meeting · Dismissed',
+    eyebrow_series_ignored: 'Outlook meeting · Series ignored',
     organized_by: 'Organized by :name',
     you_organize: 'You are the organizer',
     online: 'Online meeting',
@@ -87,6 +88,33 @@ describe('OutlookMeetingSummary', () => {
 
         mountSummary(meeting({ dismissed: true }));
         expect(wrapper?.text()).toContain('Outlook meeting · Dismissed');
+    });
+
+    it('shows the series-ignored eyebrow with EyeOff, winning over the dismissed one', () => {
+        mountSummary(meeting({ series_key: 's-1', series_ignored: true }));
+        let eyebrow = byId('outlook-hover-eyebrow');
+        expect(eyebrow?.textContent?.trim()).toBe('Outlook meeting · Series ignored');
+        expect(eyebrow?.querySelector('svg.lucide-eye-off')).not.toBeNull();
+        expect(eyebrow?.querySelector('svg.lucide-calendar-days')).toBeNull();
+        wrapper?.unmount();
+
+        mountSummary(meeting({ series_key: 's-1', series_ignored: true, dismissed: true }));
+        eyebrow = byId('outlook-hover-eyebrow');
+        expect(eyebrow?.textContent?.trim()).toBe('Outlook meeting · Series ignored');
+        expect(wrapper?.text()).not.toContain('Dismissed');
+    });
+
+    it('keeps the CalendarDays eyebrow for plain and dismissed meetings', () => {
+        mountSummary(meeting({ series_ignored: false }));
+        expect(
+            byId('outlook-hover-eyebrow')?.querySelector('svg.lucide-calendar-days')
+        ).not.toBeNull();
+        wrapper?.unmount();
+
+        mountSummary(meeting({ dismissed: true }));
+        expect(
+            byId('outlook-hover-eyebrow')?.querySelector('svg.lucide-calendar-days')
+        ).not.toBeNull();
     });
 
     it('falls back to the no-subject label', () => {

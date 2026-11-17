@@ -4,10 +4,18 @@ import { CalendarDays, Check, EyeOff, User, Video } from '@lucide/vue';
 import { HoverCardRoot, HoverCardTrigger } from 'reka-ui';
 import type { Organization } from '@/packages/api/src';
 import { formatTime, getLocalizedDayJsFromMinutes } from '@/packages/ui/src/utils/time';
-import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
+import type {
+    OutlookAssignment,
+    OutlookCalendarLabels,
+    OutlookConversionResult,
+    OutlookMeeting,
+} from '@/m365/types';
 import { fillLabel } from './labels';
 import OutlookGhostDetail from './OutlookGhostDetail.vue';
 import OutlookMeetingHoverCard from './OutlookMeetingHoverCard.vue';
+import OutlookProjectDot from './OutlookProjectDot.vue';
+import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
+import { isFaded, isPreassigned } from './suggestions';
 import {
     HOVER_CLOSE_DELAY_MS,
     hoverOpenDelay,
@@ -74,8 +82,14 @@ const openId = ref<string | null>(null);
 // it equals openId; closing the panel resets it.
 const formId = ref<string | null>(null);
 
+// Panel Confirm (Phase 5, UI-SPEC section 3): the ids whose panel confirm runs, and the inline
+// failure reason of the open panel. Any panel change clears the reason.
+const confirmingIds = ref<string[]>([]);
+const confirmError = ref<{ id: string; message: string } | null>(null);
+
 watch(openId, (id) => {
     if (id === null || formId.value !== id) formId.value = null;
+    if (confirmError.value?.id !== id) confirmError.value = null;
 });
 
 function setOpen(id: string, value: boolean): void {
@@ -278,11 +292,19 @@ async function onRestore(meeting: OutlookMeeting): Promise<void> {
     await keepFocusOn(meeting.id);
 }
 
-// The ghost after `id` in this day (the previous one for the last), read before it leaves.
-function neighbourOf(id: string): string | null {
+// The ghost after `id` in this day (the previous one for the last), read before it leaves. Ghosts
+// for which `leaves` is true (e.g. the other occurrences of a series being ignored) are skipped.
+function neighbourOf(
+    id: string,
+    leaves: (meeting: OutlookMeeting) => boolean = (meeting) => meeting.id === id
+): string | null {
     const list = boxes.value;
     const index = list.findIndex((box) => box.meeting.id === id);
-    return (list[index + 1] ?? list[index - 1] ?? null)?.meeting.id ?? null;
+    if (index < 0) return null;
+    const stays = (box: GhostBox) => !leaves(box.meeting);
+    const after = list.slice(index + 1).find(stays);
+    const before = list.slice(0, index).reverse().find(stays);
+    return (after ?? before)?.meeting.id ?? null;
 }
 
 // Focus after a ghost left the lane: its neighbour, or the Sync button when the day has none.
@@ -308,12 +330,87 @@ async function onDismiss(meeting: OutlookMeeting): Promise<void> {
     await focusAfterRemoval(neighbour);
 }
 
+// Series actions from the panel's More actions menu (Phase 5, D-10 / D-11). The context is
+// optimistic and owns the feedback (toasts, announcements, revert on failure); the panel closes.
+// Ignore hides every occurrence of the series (or fades them while dismissed meetings are shown):
+// focus follows the Dismiss rule, skipping the other occurrences that leave with it.
+async function onIgnoreSeries(meeting: OutlookMeeting): Promise<void> {
+    const stays = context?.includeDismissed.value === true;
+    const series = meeting.series_key ?? null;
+    const neighbour = neighbourOf(
+        meeting.id,
+        (other) => other.id === meeting.id || (series !== null && other.series_key === series)
+    );
+    openId.value = null;
+    void context?.ignoreSeries(meeting.id);
+
+    if (stays) {
+        await keepFocusOn(meeting.id);
+        return;
+    }
+
+    await focusAfterRemoval(neighbour);
+}
+
+// Stop ignoring and Forget keep the meeting in the lane (normal or plain look): focus stays on it.
+async function onUnignoreSeries(meeting: OutlookMeeting): Promise<void> {
+    openId.value = null;
+    void context?.unignoreSeries(meeting.id);
+    await keepFocusOn(meeting.id);
+}
+
+async function onForgetSeries(meeting: OutlookMeeting): Promise<void> {
+    openId.value = null;
+    void context?.forgetSeries(meeting.id);
+    await keepFocusOn(meeting.id);
+}
+
 // The form created (or found) the entry: the panel closes and focus follows the Dismiss rule.
 async function onConverted(meeting: OutlookMeeting): Promise<void> {
     if (openId.value !== meeting.id) return;
     const neighbour = neighbourOf(meeting.id);
     openId.value = null;
     await focusAfterRemoval(neighbour);
+}
+
+// A confirm of this meeting runs, from any surface (panel, hover card, menu, bulk): the block shows
+// a spinner instead of the project dot, aria-busy and the progress cursor (UI-SPEC section 1).
+function isPending(id: string): boolean {
+    return context?.isConfirmPending?.(id) === true || confirmingIds.value.includes(id);
+}
+
+function confirmErrorOf(id: string): string | null {
+    return confirmError.value?.id === id ? confirmError.value.message : null;
+}
+
+// Confirm from the panel (pessimistic): the panel stays open with the button spinner until the
+// request settles. Created or existing: the meeting has left the cache, the panel closes and focus
+// follows the conversion rule. Failed: the panel stays open with the reason inline (the context
+// already showed the toast). Nothing sent (cannot act, already pending): nothing changes.
+async function onConfirm(meeting: OutlookMeeting): Promise<void> {
+    const id = meeting.id;
+    if (!canAct.value || !context || openId.value !== id || confirmingIds.value.includes(id)) {
+        return;
+    }
+    const neighbour = neighbourOf(id);
+    confirmError.value = null;
+    confirmingIds.value = [...confirmingIds.value, id];
+    let result: OutlookConversionResult | null = null;
+    try {
+        result = await context.confirmOne(id);
+    } finally {
+        confirmingIds.value = confirmingIds.value.filter((item) => item !== id);
+    }
+    if (result === null) return;
+
+    if (result.status === 'created' || result.status === 'existing') {
+        if (openId.value === id) openId.value = null;
+        await focusAfterRemoval(neighbour);
+        return;
+    }
+    if (openId.value === id) {
+        confirmError.value = { id, message: result.error?.message || props.labels.confirm_failed };
+    }
 }
 
 async function onCancelForm(meeting: OutlookMeeting): Promise<void> {
@@ -442,6 +539,18 @@ function tierOf(box: GhostBox): ContentTier {
     return 4;
 }
 
+// Phase 5 (UI-SPEC section 1): a pre-assigned block adds a project line. T3 drops the time line
+// (the grid position gives the time) and keeps the subject on one line; T4 under 60px keeps the
+// subject on one line; from 60px the subject may take two lines. Never the organizer line.
+function subjectLinesOf(box: GhostBox): 1 | 2 {
+    if (preassignmentOf(box.meeting)) return box.height >= TIER_5_MIN_HEIGHT ? 2 : 1;
+    return tierOf(box) >= 4 ? 2 : 1;
+}
+
+function showsTimeLine(box: GhostBox): boolean {
+    return !(preassignmentOf(box.meeting) && tierOf(box) === 3);
+}
+
 function timeRangeOf(meeting: OutlookMeeting): string {
     return `${formatTime(meeting.start, timeFormat.value)} – ${formatTime(meeting.end, timeFormat.value)}`;
 }
@@ -455,14 +564,26 @@ function subjectOf(meeting: OutlookMeeting): string {
     return meeting.subject?.trim() ? meeting.subject : props.labels.no_subject;
 }
 
+// The series pre-assignment shown in the block (Phase 5 D-03): only on a non-faded meeting that the
+// server sent with an assignment. The project colour reaches the dot only.
+function preassignmentOf(meeting: OutlookMeeting): OutlookAssignment | null {
+    return isPreassigned(meeting) ? (meeting.assignment ?? null) : null;
+}
+
 function ariaLabelOf(meeting: OutlookMeeting): string {
-    const label = fillLabel(props.labels.ghost_label, {
+    let label = fillLabel(props.labels.ghost_label, {
         subject: subjectOf(meeting),
         start: formatTime(meeting.start, timeFormat.value),
         end: formatTime(meeting.end, timeFormat.value),
     });
-    const dismissed = meeting.dismissed ? label + props.labels.dismissed_suffix : label;
-    return isSelected(meeting.id) ? dismissed + props.labels.selected_suffix : dismissed;
+    const assignment = preassignmentOf(meeting);
+    if (assignment) {
+        label += fillLabel(props.labels.preassigned_suffix, { project: assignment.project_name });
+    }
+    // An occurrence of an ignored series reads as such instead of ", dismissed" (UI-SPEC section 5).
+    if (meeting.series_ignored === true) label += props.labels.series_ignored_suffix;
+    else if (meeting.dismissed) label += props.labels.dismissed_suffix;
+    return isSelected(meeting.id) ? label + props.labels.selected_suffix : label;
 }
 
 // aria-pressed only while a selection exists, so the blocks read as plain buttons otherwise.
@@ -496,31 +617,41 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                 :can-act="canAct"
                 :open="openId === box.meeting.id"
                 :mode="modeOf(box.meeting.id)"
+                :confirming="confirmingIds.includes(box.meeting.id)"
+                :confirm-error="confirmErrorOf(box.meeting.id)"
                 @update:open="(value: boolean) => setOpen(box.meeting.id, value)"
                 @dismiss="onDismiss(box.meeting)"
                 @restore="onRestore(box.meeting)"
                 @create="onCreate(box.meeting)"
+                @confirm="onConfirm(box.meeting)"
+                @ignore-series="onIgnoreSeries(box.meeting)"
+                @unignore-series="onUnignoreSeries(box.meeting)"
+                @forget-series="onForgetSeries(box.meeting)"
                 @converted="onConverted(box.meeting)"
                 @cancel-form="onCancelForm(box.meeting)">
                 <HoverCardTrigger as-child>
                     <div
-                        class="m365-ghost m365-meeting absolute pointer-events-auto select-none cursor-pointer rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"
+                        class="m365-ghost m365-meeting absolute pointer-events-auto select-none rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"
                         :class="{
-                            'm365-meeting--dismissed': box.meeting.dismissed,
+                            'm365-meeting--dismissed': isFaded(box.meeting),
                             'm365-meeting--cascaded': box.cascade > 0,
                             'rounded-t-none': box.isClippedStart,
                             'rounded-b-none': box.isClippedEnd,
                             'm365-meeting--selected ring-2 ring-accent-700 dark:ring-accent-200 ring-offset-0':
                                 isSelected(box.meeting.id),
+                            'cursor-progress': isPending(box.meeting.id),
+                            'cursor-pointer': !isPending(box.meeting.id),
                         }"
                         data-calendar-overlay
                         :data-ghost-id="box.meeting.id"
                         :data-panel-open="openId === box.meeting.id ? '' : undefined"
                         :data-selected="isSelected(box.meeting.id) ? '' : undefined"
+                        :data-preassigned="preassignmentOf(box.meeting) ? '' : undefined"
                         role="button"
                         tabindex="0"
                         :aria-label="ariaLabelOf(box.meeting)"
                         :aria-pressed="ariaPressedOf(box.meeting.id)"
+                        :aria-busy="isPending(box.meeting.id) ? 'true' : undefined"
                         :style="blockStyle(box)"
                         @keydown.enter.prevent="onBlockEnter($event, box.meeting.id)"
                         @keydown.space.prevent="($event.currentTarget as HTMLElement).click()"
@@ -532,9 +663,18 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                             :class="tierOf(box) === 1 ? 'py-0' : 'py-0.5'"
                             :data-ghost-tier="tierOf(box)">
                             <div v-if="tierOf(box) <= 2" class="flex min-w-0 items-center gap-1">
+                                <template v-if="preassignmentOf(box.meeting)">
+                                    <LoadingSpinner
+                                        v-if="isPending(box.meeting.id)"
+                                        class="m365-meeting__meta m-0 h-3 w-3 shrink-0"
+                                        data-testid="outlook-preassigned-spinner" />
+                                    <OutlookProjectDot
+                                        v-else
+                                        :color="preassignmentOf(box.meeting)!.project_color" />
+                                </template>
                                 <span
                                     class="m365-meeting__subject min-w-0 truncate"
-                                    :class="{ 'font-semibold': !box.meeting.dismissed }"
+                                    :class="{ 'font-semibold': !isFaded(box.meeting) }"
                                     data-ghost-subject>
                                     {{ subjectOf(box.meeting) }}
                                 </span>
@@ -553,18 +693,19 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                 <span
                                     class="m365-meeting__subject min-w-0 break-words"
                                     :class="{
-                                        'font-semibold': !box.meeting.dismissed,
-                                        truncate: tierOf(box) === 3,
-                                        'line-clamp-2': tierOf(box) >= 4,
+                                        'font-semibold': !isFaded(box.meeting),
+                                        truncate: subjectLinesOf(box) === 1,
+                                        'line-clamp-2': subjectLinesOf(box) === 2,
                                     }"
                                     data-ghost-subject>
                                     {{ subjectOf(box.meeting) }}
                                 </span>
                                 <div
+                                    v-if="showsTimeLine(box)"
                                     class="m365-meeting__meta flex min-w-0 items-center gap-1"
                                     data-ghost-time>
                                     <EyeOff
-                                        v-if="box.meeting.dismissed"
+                                        v-if="isFaded(box.meeting)"
                                         class="size-3 shrink-0"
                                         aria-hidden="true" />
                                     <CalendarDays
@@ -578,7 +719,24 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                         aria-hidden="true" />
                                 </div>
                                 <div
-                                    v-if="tierOf(box) === 5 && organizerOf(box.meeting)"
+                                    v-if="preassignmentOf(box.meeting)"
+                                    class="m365-meeting__meta flex min-w-0 items-center gap-1"
+                                    data-testid="outlook-preassigned-line">
+                                    <LoadingSpinner
+                                        v-if="isPending(box.meeting.id)"
+                                        class="m-0 h-3 w-3 shrink-0 text-current"
+                                        data-testid="outlook-preassigned-spinner" />
+                                    <OutlookProjectDot
+                                        v-else
+                                        :color="preassignmentOf(box.meeting)!.project_color" />
+                                    <span
+                                        class="min-w-0 truncate"
+                                        :title="preassignmentOf(box.meeting)!.project_name"
+                                        >{{ preassignmentOf(box.meeting)!.project_name }}</span
+                                    >
+                                </div>
+                                <div
+                                    v-else-if="tierOf(box) === 5 && organizerOf(box.meeting)"
                                     class="m365-meeting__meta flex min-w-0 items-center gap-1"
                                     data-ghost-organizer>
                                     <User class="size-3 shrink-0" aria-hidden="true" />
