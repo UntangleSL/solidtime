@@ -8,7 +8,15 @@ use App\Enums\Role;
 use App\Http\Controllers\Api\V1\TimeEntryController;
 use App\Http\Requests\V1\TimeEntry\TimeEntryStoreRequest;
 use App\Microsoft365\Graph\GraphAccessGuard;
+use App\Microsoft365\Graph\GraphCalendarClient;
+use App\Microsoft365\Graph\MicrosoftTokenService;
+use App\Microsoft365\Graph\OutlookMeetingEligibility;
+use App\Microsoft365\Graph\OutlookMeetingSyncService;
+use App\Microsoft365\Graph\SyncOutcome;
+use App\Microsoft365\Graph\SyncStatus;
 use App\Microsoft365\Http\Controllers\MeetingConversionController;
+use App\Microsoft365\Http\Controllers\MicrosoftAccountController;
+use App\Microsoft365\Http\Controllers\MicrosoftAuthController;
 use App\Microsoft365\Http\Controllers\OutlookMeetingController;
 use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
 use App\Microsoft365\Http\Requests\MeetingConversionRequest;
@@ -36,6 +44,9 @@ use App\Models\Task;
 use App\Models\TimeEntry;
 use App\Models\User;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\TestResponse;
 use Laravel\Passport\Passport;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -71,6 +82,14 @@ use Tests\TestCaseWithDatabase;
 #[UsesClass(Microsoft365ServiceProvider::class)]
 #[UsesClass(TimeEntryController::class)]
 #[UsesClass(TimeEntryStoreRequest::class)]
+#[UsesClass(GraphCalendarClient::class)]
+#[UsesClass(MicrosoftTokenService::class)]
+#[UsesClass(OutlookMeetingEligibility::class)]
+#[UsesClass(OutlookMeetingSyncService::class)]
+#[UsesClass(SyncOutcome::class)]
+#[UsesClass(SyncStatus::class)]
+#[UsesClass(MicrosoftAccountController::class)]
+#[UsesClass(MicrosoftAuthController::class)]
 class OutlookSeriesAssignmentTest extends TestCaseWithDatabase
 {
     use InteractsWithGraphFixtures;
@@ -544,5 +563,151 @@ class OutlookSeriesAssignmentTest extends TestCaseWithDatabase
         $read->assertOk();
         $this->assertNull($this->assignmentOf($read, $b));
         $this->assertNull($this->assignmentOf($read, $c));
+    }
+
+    public function test_link_records_the_series_of_the_occurrence(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $occurrence = $this->occurrence($data->user, 'occ-a', '2026-10-20');
+        $single = $this->meeting($data->user, 'single-d', ['starts_at' => '2026-10-21 11:00:00', 'ends_at' => '2026-10-21 12:00:00']);
+
+        // Act
+        $this->convertTo($data->organization, $occurrence, $project);
+        $this->convertTo($data->organization, $single, $project);
+
+        // Assert
+        $this->assertSame(self::SERIES, OutlookMeetingLink::query()->where('graph_id', '=', 'occ-a')->sole()->series_master_id);
+        $this->assertNull(OutlookMeetingLink::query()->where('graph_id', '=', 'single-d')->sole()->series_master_id);
+    }
+
+    public function test_backfill_fills_the_series_of_existing_links(): void
+    {
+        // Arrange: two Phase 4 links (no series recorded); the meeting of the second one was purged
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $cached = $this->occurrence($data->user, 'occ-cached', '2026-10-20', 'series-9');
+        $purged = $this->occurrence($data->user, 'occ-purged', '2026-10-21', 'series-8');
+        $this->convertTo($data->organization, $cached, $project);
+        $this->convertTo($data->organization, $purged, $project);
+        OutlookMeetingLink::query()->update(['series_master_id' => null]);
+        OutlookMeeting::query()->whereKey($purged->getKey())->delete();
+
+        // Act
+        $migration = require base_path('app/Microsoft365/database/migrations/2026_11_18_000001_add_series_and_signals_to_outlook_meeting_links.php');
+        $this->assertIsObject($migration);
+        $this->assertTrue(method_exists($migration, 'backfill'));
+        $migration->backfill();
+
+        // Assert
+        $this->assertSame('series-9', OutlookMeetingLink::query()->where('graph_id', '=', 'occ-cached')->sole()->series_master_id);
+        $this->assertNull(OutlookMeetingLink::query()->where('graph_id', '=', 'occ-purged')->sole()->series_master_id);
+    }
+
+    public function test_series_assignment_survives_disconnect_and_resync(): void
+    {
+        // Arrange: round A synced, one occurrence of its recurring series converted
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $this->fakeRoundA(2);
+        $this->postSync()->assertOk()->assertJsonPath('status', 'ok');
+        $occurrences = OutlookMeeting::query()
+            ->where('user_id', '=', $data->user->getKey())
+            ->whereNotNull('series_master_id')
+            ->orderBy('starts_at')
+            ->get();
+        $this->assertGreaterThanOrEqual(2, $occurrences->count());
+        $converted = $occurrences->first();
+        $this->assertInstanceOf(OutlookMeeting::class, $converted);
+        $series = $converted->series_master_id;
+        $otherGraphIds = $occurrences
+            ->filter(fn (OutlookMeeting $meeting): bool => $meeting->series_master_id === $series && $meeting->graph_id !== $converted->graph_id)
+            ->pluck('graph_id')
+            ->all();
+        $this->assertNotEmpty($otherGraphIds);
+        $this->convertTo($data->organization, $converted, $project);
+
+        // Act: Disconnect Microsoft (purges the cached meetings), reconnect and sync round A again
+        $this->delete(route('microsoft.account.destroy', [], false))->assertRedirect(route('profile.show', [], false));
+        $meetingsAfterDisconnect = OutlookMeeting::query()->where('user_id', '=', $data->user->getKey())->count();
+        $this->fakeMicrosoftGateway()->willReturn($this->microsoftIdentity());
+        $this->get(route('microsoft.redirect', ['intent' => 'connect'], false))->assertRedirect();
+        $this->get(route('microsoft.callback', ['code' => 'fake-code', 'state' => 'fake-state'], false))->assertRedirect();
+        $this->travel(61)->seconds();
+        $sync = $this->postSync();
+        $read = $this->getJson(route('microsoft.meetings.index', $this->fixtureWindow(), false));
+
+        // Assert: the re-created occurrences of the series still come pre-assigned (RESEARCH Pitfall 1)
+        $this->assertSame(0, $meetingsAfterDisconnect);
+        $sync->assertOk()->assertJsonPath('status', 'ok');
+        $read->assertOk();
+        $recreated = OutlookMeeting::query()
+            ->where('user_id', '=', $data->user->getKey())
+            ->whereIn('graph_id', $otherGraphIds)
+            ->get();
+        $this->assertCount(count($otherGraphIds), $recreated);
+        foreach ($recreated as $meeting) {
+            $this->assertSame($project->getKey(), $this->assignmentOf($read, $meeting)['project_id'] ?? null);
+        }
+    }
+
+    public function test_read_query_count_does_not_grow_with_meetings(): void
+    {
+        // Arrange: week 1 has 2 pre-assigned occurrences of one series; week 2 has 20 of 4 series
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $weekOne = [];
+        foreach (['2026-10-20', '2026-10-21', '2026-10-22'] as $index => $day) {
+            $weekOne[] = $this->occurrence($data->user, 'w1-'.$index, $day, 'series-small');
+        }
+        $this->convertTo($data->organization, $weekOne[0], $project);
+        foreach (['s-a', 's-b', 's-c', 's-d'] as $series) {
+            $first = null;
+            foreach (['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31'] as $index => $day) {
+                $meeting = $this->occurrence($data->user, 'w2-'.$series.'-'.$index, $day, $series);
+                $first ??= $meeting;
+            }
+            $this->convertTo($data->organization, $first, $project);
+        }
+        $this->read()->assertOk();
+
+        // Act
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $small = $this->read();
+        $smallQueries = count(DB::getQueryLog());
+        DB::flushQueryLog();
+        $large = $this->read('2026-10-26T00:00:00Z', '2026-11-02T00:00:00Z');
+        $largeQueries = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        // Assert
+        $small->assertOk();
+        $large->assertOk();
+        $this->assertCount(2, array_filter($small->json('data.*.assignment')));
+        $this->assertCount(20, $large->json('data'));
+        $this->assertCount(20, array_filter($large->json('data.*.assignment')));
+        $this->assertSame($smallQueries, $largeQueries);
+    }
+
+    private function postSync(): TestResponse
+    {
+        return $this->postJson(route('microsoft.meetings.sync', [], false), $this->fixtureWindow());
+    }
+
+    /**
+     * Graph answers round A as many times as asked, in one Http::fake.
+     */
+    private function fakeRoundA(int $times): void
+    {
+        Config::set('microsoft365.graph.max_pages', 30);
+        $sequence = Http::sequence();
+        for ($i = 0; $i < $times; $i++) {
+            foreach ($this->graphPages('A') as $page) {
+                $sequence->push($page);
+            }
+        }
+        Http::fake(['https://graph.microsoft.com/v1.0/me/calendarView*' => $sequence]);
     }
 }
