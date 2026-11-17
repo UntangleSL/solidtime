@@ -1,0 +1,1 @@
+No external API integration: Phase 4 calls no external service; it reuses the app's own core time-entry create action in-process and adds fork web routes and UI, while Microsoft Graph (integrated and synced in Phase 3) is not called by any Phase 4 code.

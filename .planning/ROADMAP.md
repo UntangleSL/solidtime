@@ -251,7 +251,26 @@ Plans:
   5. Entries created from meetings stay normal time entries the user can edit or delete; deleting one brings the meeting back as a suggestion.
   6. The "create time entry" / assign action is available directly from the meeting hover tooltip and detail panel (owner request after the Phase 3 UAT, 2026-11-10).
 
-**Plans**: TBD
+**Plans**: 9 plans
+
+Plans:
+**Wave 1**
+- [ ] 04-01-PLAN.md — Server conversion through the core create action: outlook_meeting_links, convert endpoint with per-meeting results, core-rule matrix, converted meetings hidden, urls.convert, en/es copy (wave 1, CI anchor)
+- [ ] 04-03-PLAN.md — Create a time entry from the meeting panel: mini form (prefill, last project, editable times, validation), conversion API, context convert / openForm / selection (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 04-02-PLAN.md — Idempotent repeats and races, stale links, batch results, every delete path re-surfaces the meeting, links survive re-sync and disconnect, linked entry ids, impersonation (wave 2, CI anchor)
+- [ ] 04-04-PLAN.md — "Create time entry" from the context menu and hover card; Ctrl/Cmd/Shift and keyboard multi-select with the selected look (wave 2)
+- [ ] 04-05-PLAN.md — Selection bar, batch form, per-meeting results with retry (Calendar.vue mount) (wave 2)
+- [ ] 04-06-PLAN.md — Meeting comes back after its entry is deleted (debounced refresh), linked ids in the client, test hook with actions (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 04-07-PLAN.md — Outlook icon on entries created from meetings through a ledgered core slot chain; Phase 4 ledger section (wave 3)
+- [ ] 04-08-PLAN.md — Browser proof of the whole conversion UI incl. partial failure, retry and layout backstops; Playwright gate (wave 3, CI anchor)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 04-09-PLAN.md — Release: ten workflows green, ledger reconciliation, sha-pinned compose, owner-approved Dokploy deploy with the outlook_meeting_links migration, public checks, owner UAT (wave 4, owner checkpoint)
+
 **UI hint**: yes
 
 ### Phase 5: Recurring Meeting Rules
@@ -325,7 +344,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 and 3.2 (parallel, both d
 | 3. Outlook Meetings in the Calendar | 12/12 | Complete    | 2026-11-10 |
 | 3.1 Calendar UX Polish | 8/8 | Complete | 2026-11-17 |
 | 3.2 Appearance & Untangle Branding | 9/9 | Complete | 2026-11-17 |
-| 4. Assign Meetings to Projects | 0/TBD | Not started | - |
+| 4. Assign Meetings to Projects | 0/9 | Planned | - |
 | 5. Recurring Meeting Rules | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |
 | 7. Hardening & Release | 0/TBD | Not started | - |
