@@ -88,6 +88,12 @@ export interface OutlookCalendarLabels {
     settings_heading: string;
     show_dismissed: string;
     show_dismissed_help: string;
+    lane_caption_time: string;
+    lane_caption_outlook: string;
+    hover_hint: string;
+    sync_in: string;
+    sync_cooldown_hint: string;
+    sync_backoff_hint: string;
 }
 
 // 'connected': Graph access works; 'reconnect': the Microsoft grant expired or lacks the calendar
