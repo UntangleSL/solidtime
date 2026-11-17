@@ -153,6 +153,8 @@ describe('OrganizationSwitcher', () => {
         expect(trigger.find('img').exists()).toBe(false);
         const tile = trigger.get('[data-testid="organization_icon_letter"]');
         expect(tile.text()).toBe('A');
+        // Decorative like the alt="" image: the adjacent name is the accessible text.
+        expect(tile.attributes('aria-hidden')).toBe('true');
         expect(tile.classes()).toContain('bg-[color:var(--theme-color-accent-solid)]');
         expect(trigger.text()).toContain('Acme');
     });

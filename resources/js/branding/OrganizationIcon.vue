@@ -51,6 +51,7 @@ const boxClass = computed(() =>
         data-testid="organization_icon_letter"
         :aria-label="alt || undefined"
         :role="alt ? 'img' : undefined"
+        :aria-hidden="alt ? undefined : 'true'"
         :class="[
             'flex-shrink-0 flex items-center justify-center font-semibold font-sans',
             'bg-[color:var(--theme-color-accent-solid)] text-[color:var(--color-on-accent)]',
