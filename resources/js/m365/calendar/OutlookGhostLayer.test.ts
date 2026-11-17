@@ -684,9 +684,165 @@ describe('ghost content by available height', () => {
 
         const ghosts = wrapper.findAll('[data-calendar-overlay]');
         expect(ghosts).toHaveLength(2);
-        expect((ghosts[0]!.element as HTMLElement).style.width).toBe('50%');
-        expect((ghosts[0]!.element as HTMLElement).style.left).toBe('0%');
-        expect((ghosts[1]!.element as HTMLElement).style.left).toBe('50%');
+        expect((ghosts[0]!.element as HTMLElement).style.width).toBe('calc(50% - 3px)');
+        expect((ghosts[0]!.element as HTMLElement).style.left).toBe('2px');
+        expect((ghosts[1]!.element as HTMLElement).style.left).toBe('calc(50% + 1px)');
+    });
+});
+
+describe('columns from the measured lane width', () => {
+    let wrapper: VueWrapper | null = null;
+
+    beforeEach(() => {
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('Europe/Madrid');
+    });
+
+    afterEach(() => {
+        wrapper?.unmount();
+        wrapper = null;
+        vi.unstubAllGlobals();
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+    });
+
+    // Reports a lane of `width` px (border box; the content box excludes the 1px divider) as soon
+    // as the layer element is observed.
+    function stubLaneWidth(width: number) {
+        class FakeResizeObserver {
+            callback: ResizeObserverCallback;
+            constructor(callback: ResizeObserverCallback) {
+                this.callback = callback;
+            }
+            observe(target: Element) {
+                const entry = {
+                    target,
+                    contentRect: { width: width - 1 },
+                    borderBoxSize: [{ inlineSize: width, blockSize: 0 }],
+                } as unknown as ResizeObserverEntry;
+                this.callback([entry], this as unknown as ResizeObserver);
+            }
+            unobserve() {}
+            disconnect() {}
+        }
+        vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    }
+
+    async function mountMeasured(meetings: OutlookMeeting[], isDayView: boolean) {
+        const mounted = mount(OutlookGhostLayer, {
+            props: { meetings, labels, dayStr: DAY, isDayView, minutesToPixels, settings },
+            global: { provide: { organization: computed(() => ({ time_format: '24-hours' })) } },
+        });
+        await nextTick();
+        await nextTick();
+        return mounted;
+    }
+
+    function at(minutes: number, id: string, overrides: Partial<OutlookMeeting> = {}) {
+        const start = getLocalizedDayJsFromMinutes(DAY, 600);
+        return meeting({
+            id,
+            subject: `Meeting ${id}`,
+            start: start.utc().format(),
+            end: start.add(minutes, 'minute').utc().format(),
+            ...overrides,
+        });
+    }
+
+    function styleOf(el: { element: Element }) {
+        const style = (el.element as HTMLElement).style;
+        return { left: style.left, width: style.width };
+    }
+
+    it('a 113px week lane fits two side by side and cascades the third', async () => {
+        stubLaneWidth(113);
+        wrapper = await mountMeasured([at(60, 'a'), at(60, 'b'), at(60, 'c')], false);
+
+        const ghosts = wrapper.findAll('[data-calendar-overlay]');
+        expect(ghosts.map((g) => g.attributes('data-ghost-id'))).toEqual(['a', 'b', 'c']);
+        expect(styleOf(ghosts[0]!)).toEqual({ left: '2px', width: 'calc(50% - 3px)' });
+        expect(styleOf(ghosts[1]!)).toEqual({ left: 'calc(50% + 1px)', width: 'calc(50% - 3px)' });
+        expect(styleOf(ghosts[2]!)).toEqual({
+            left: 'calc(50% + 9px)',
+            width: 'calc(50% - 11px)',
+        });
+        expect(ghosts[0]!.classes()).not.toContain('m365-meeting--cascaded');
+        expect(ghosts[1]!.classes()).not.toContain('m365-meeting--cascaded');
+        expect(ghosts[2]!.classes()).toContain('m365-meeting--cascaded');
+    });
+
+    it('an 88px week lane keeps one column and cascades every overlap', async () => {
+        stubLaneWidth(88);
+        wrapper = await mountMeasured([at(60, 'a'), at(60, 'b')], false);
+
+        const ghosts = wrapper.findAll('[data-calendar-overlay]');
+        expect(styleOf(ghosts[0]!)).toEqual({ left: '2px', width: 'calc(100% - 4px)' });
+        expect(styleOf(ghosts[1]!)).toEqual({ left: '10px', width: 'calc(100% - 12px)' });
+        expect(ghosts[1]!.classes()).toContain('m365-meeting--cascaded');
+    });
+
+    it('a 420px day lane fits four side by side', async () => {
+        stubLaneWidth(420);
+        wrapper = await mountMeasured([at(60, 'a'), at(60, 'b'), at(60, 'c'), at(60, 'd')], true);
+
+        const lefts = wrapper
+            .findAll('[data-calendar-overlay]')
+            .map((ghost) => styleOf(ghost).left);
+        expect(lefts).toEqual(['2px', 'calc(25% + 1.5px)', 'calc(50% + 1px)', 'calc(75% + 0.5px)']);
+        expect(wrapper.find('.m365-meeting--cascaded').exists()).toBe(false);
+    });
+
+    it('uses the column cap until the lane has been measured', async () => {
+        wrapper = await mountMeasured([at(60, 'a'), at(60, 'b'), at(60, 'c'), at(60, 'd')], false);
+
+        const ghosts = wrapper.findAll('[data-calendar-overlay]');
+        expect(styleOf(ghosts[2]!).left).toBe('calc(66.6667% + 0.6667px)');
+        expect(ghosts[3]!.classes()).toContain('m365-meeting--cascaded');
+    });
+
+    it('shows the inline start-end of a one-line block only from 150px of block width', async () => {
+        stubLaneWidth(160);
+        wrapper = await mountMeasured([at(25, 'a')], false);
+        const inline = wrapper.find('[data-ghost-time-inline]');
+        expect(inline.exists()).toBe(true);
+        expect(inline.text()).toBe('10:00 – 10:25');
+        wrapper.unmount();
+        vi.unstubAllGlobals();
+
+        stubLaneWidth(120);
+        wrapper = await mountMeasured([at(25, 'a')], false);
+        expect(wrapper.find('[data-ghost-time-inline]').exists()).toBe(false);
+        expect(wrapper.find('[data-calendar-overlay]').text()).toBe('Meeting a');
+    });
+
+    it('shows the start time only in the time line under 96px of block width', async () => {
+        stubLaneWidth(90);
+        wrapper = await mountMeasured([at(50, 'a')], false);
+        expect(wrapper.find('[data-ghost-time]').text()).toBe('10:00');
+        wrapper.unmount();
+        vi.unstubAllGlobals();
+
+        stubLaneWidth(120);
+        wrapper = await mountMeasured([at(50, 'a')], false);
+        expect(wrapper.find('[data-ghost-time]').text()).toBe('10:00 – 10:50');
+    });
+
+    it('keeps start order in the DOM (and so in the Tab order) with cascaded blocks', async () => {
+        stubLaneWidth(88);
+        wrapper = await mountMeasured(
+            [
+                at(60, 'late', { start: getLocalizedDayJsFromMinutes(DAY, 620).utc().format() }),
+                at(60, 'early'),
+                at(60, 'mid', { start: getLocalizedDayJsFromMinutes(DAY, 610).utc().format() }),
+            ],
+            false
+        );
+
+        const ids = wrapper
+            .findAll('[data-calendar-overlay]')
+            .map((ghost) => ghost.attributes('data-ghost-id'));
+        expect(ids).toEqual(['early', 'mid', 'late']);
+        expect(
+            wrapper.findAll('[data-calendar-overlay]').map((g) => g.attributes('tabindex'))
+        ).toEqual(['0', '0', '0']);
     });
 });
 

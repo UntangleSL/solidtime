@@ -7,9 +7,15 @@ import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 import { fillLabel } from './labels';
 import OutlookGhostDetail from './OutlookGhostDetail.vue';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
+import { useResizeObserver } from '@vueuse/core';
 import {
+    GHOST_MAX_COLUMNS_DAY,
+    GHOST_MAX_COLUMNS_WEEK,
+    ghostBlockWidthPx,
+    ghostColumnStyle,
     ghostLaneWidth,
     layoutGhostsForDay,
+    maxGhostColumns,
     type GhostBox,
     type GhostVisibleSettings,
 } from './ghostLayout';
@@ -88,9 +94,66 @@ async function onDismiss(meeting: OutlookMeeting): Promise<void> {
     (next ?? document.querySelector<HTMLElement>('[data-testid="outlook-sync-button"]'))?.focus();
 }
 
-const boxes = computed(() =>
-    layoutGhostsForDay(props.meetings, props.dayStr, props.settings, props.minutesToPixels)
+// Measured lane width (border box for the column count, content box for block widths). Until the
+// first measurement the column cap applies (3 week, 4 day) and width-dependent text stays compact.
+const laneWidthPx = ref<number | null>(null);
+const laneInnerWidthPx = ref<number | null>(null);
+
+useResizeObserver(layerEl, (entries) => {
+    const entry = entries[0];
+    if (!entry) return;
+    laneInnerWidthPx.value = entry.contentRect.width;
+    laneWidthPx.value = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+});
+
+const maxColumns = computed(() =>
+    laneWidthPx.value === null
+        ? props.isDayView
+            ? GHOST_MAX_COLUMNS_DAY
+            : GHOST_MAX_COLUMNS_WEEK
+        : maxGhostColumns(laneWidthPx.value, props.isDayView)
 );
+
+const boxes = computed(() =>
+    layoutGhostsForDay(
+        props.meetings,
+        props.dayStr,
+        props.settings,
+        props.minutesToPixels,
+        maxColumns.value
+    )
+);
+
+function blockStyle(box: GhostBox): Record<string, string> {
+    return {
+        top: box.top + 'px',
+        // 1px gap under every block keeps adjacent meetings visibly separate
+        height: box.height - 1 + 'px',
+        ...ghostColumnStyle(box.lane, box.lanes, box.cascade),
+    };
+}
+
+function blockWidthOf(box: GhostBox): number | null {
+    const inner = laneInnerWidthPx.value;
+    return inner === null ? null : ghostBlockWidthPx(inner, box.lanes, box.cascade);
+}
+
+// UI-SPEC 3.1: the T2 one-line block appends 'start – end' only from 150px of block width, and the
+// time line falls back to the start time alone under 96px so a narrow column never wraps.
+const INLINE_TIME_MIN_WIDTH = 150;
+const FULL_RANGE_MIN_WIDTH = 96;
+
+function showsInlineTime(box: GhostBox): boolean {
+    const width = blockWidthOf(box);
+    return tierOf(box) === 2 && width !== null && width >= INLINE_TIME_MIN_WIDTH;
+}
+
+function timeLineOf(box: GhostBox): string {
+    const width = blockWidthOf(box);
+    return width !== null && width < FULL_RANGE_MIN_WIDTH
+        ? formatTime(box.meeting.start, timeFormat.value)
+        : timeRangeOf(box.meeting);
+}
 
 const laneWidth = computed(() => props.overlayLaneWidth ?? ghostLaneWidth(props.isDayView));
 
@@ -165,6 +228,7 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
                 class="m365-ghost m365-meeting absolute pointer-events-auto select-none cursor-pointer rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"
                 :class="{
                     'm365-meeting--dismissed': box.meeting.dismissed,
+                    'm365-meeting--cascaded': box.cascade > 0,
                     'rounded-t-none': box.isClippedStart,
                     'rounded-b-none': box.isClippedEnd,
                 }"
@@ -174,12 +238,7 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
                 role="button"
                 tabindex="0"
                 :aria-label="ariaLabelOf(box.meeting)"
-                :style="{
-                    top: box.top + 'px',
-                    height: box.height - 1 + 'px',
-                    left: (box.lane * 100) / box.lanes + '%',
-                    width: 100 / box.lanes + '%',
-                }"
+                :style="blockStyle(box)"
                 @keydown.enter.prevent="($event.currentTarget as HTMLElement).click()"
                 @keydown.space.prevent="($event.currentTarget as HTMLElement).click()">
                 <div
@@ -192,6 +251,12 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
                             :class="{ 'font-semibold': !box.meeting.dismissed }"
                             data-ghost-subject>
                             {{ subjectOf(box.meeting) }}
+                        </span>
+                        <span
+                            v-if="showsInlineTime(box)"
+                            class="m365-meeting__meta shrink-0 whitespace-nowrap"
+                            data-ghost-time-inline>
+                            {{ timeRangeOf(box.meeting) }}
                         </span>
                         <Video
                             v-if="box.meeting.is_online_meeting"
@@ -217,7 +282,7 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
                                 class="size-3 shrink-0"
                                 aria-hidden="true" />
                             <CalendarDays v-else class="size-3 shrink-0" aria-hidden="true" />
-                            <span class="min-w-0 truncate">{{ timeRangeOf(box.meeting) }}</span>
+                            <span class="min-w-0 truncate">{{ timeLineOf(box) }}</span>
                             <Video
                                 v-if="box.meeting.is_online_meeting"
                                 class="ml-auto size-3 shrink-0"
@@ -263,6 +328,15 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
 }
 .m365-meeting:hover {
     background-color: var(--m365-meeting-bg-hover, var(--fb-hover));
+}
+/*
+ * A cascaded extra (more overlaps than columns) gets a 1px --color-bg-primary edge on its left so
+ * the bar of every block stays visible. Through --tw-shadow so the focus and panel rings compose.
+ */
+.m365-meeting--cascaded {
+    --tw-shadow: -1px 0 0 var(--color-bg-primary);
+    box-shadow:
+        var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 .m365-meeting__subject {
     color: var(--m365-meeting-text, var(--color-text-primary));
