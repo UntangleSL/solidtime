@@ -1,0 +1,163 @@
+/*
+ * Untangle brand tokens for the fork (Phase 3.2, BRAND-01).
+ *
+ * Redefines the shared variables of resources/js/packages/ui/styles.css at a
+ * higher specificity (html:root.<mode> = 0,2,1 against the shared :root.<mode>
+ * 0,2,0 and :root 0,1,0), so styles.css, tailwind.theme.js and
+ * tailwind.config.js stay byte-identical to upstream and source order is not
+ * load-bearing. Values come from 03.2-UI-SPEC.md ("Color", "Calendar under the
+ * new palette"). Inter stays the only typeface (owner override D-10).
+ *
+ * Rules:
+ * - Surface, text and border tokens are hex, because chroma-js parses
+ *   --color-bg-background in useCalendarEvents.ts and the --m365-* mixes use
+ *   --color-bg-primary as an opaque base.
+ * - No pure white or pure black anywhere (brand rule 1).
+ * - The Untangle accent scale is the baseline of both modes; the other presets
+ *   live in accent-presets.css as html:root.<mode>.accent-<id> blocks.
+ * - The --m365-* properties are declared here only (single source of truth);
+ *   the Outlook calendar consumes them as var(--m365-*, <formula>). Every var()
+ *   inside their colour formulas carries a literal Untangle fallback.
+ * - Tokens listed as "unchanged on purpose" in the UI-SPEC (shadows, radius,
+ *   destructive, derived variables) are not redeclared.
+ * - contrast.test.ts gates every theme x accent combination of this file.
+ */
+
+html:root.dark {
+    /* Neutral ladder */
+    --color-bg-background: #141414;
+    --color-bg-primary: #1c1c1c;
+    --color-bg-secondary: #262626;
+    --color-bg-elevated: #2c2c2c;
+    --color-bg-tertiary: #303030;
+    --color-bg-quaternary: #3a3a3a;
+    --color-text-primary: #f9fcfd;
+    --color-text-secondary: #d9dcdd;
+    --color-text-tertiary: #abaeae;
+    --color-text-quaternary: #959898;
+    --color-border-primary: #2f2f2f;
+    --color-border-secondary: #373838;
+    --color-border-tertiary: #444546;
+    --color-border-quaternary: #6f7272;
+    --color-input-border-active: rgba(249, 252, 253, 0.45);
+    --theme-color-ring: rgba(249, 252, 253, 0.55);
+    --theme-color-default-background: var(--color-bg-primary);
+
+    /* Accent-dependent tokens that change in dark */
+    --theme-color-button-primary-border: rgba(var(--color-accent-300), 0.45);
+    --theme-color-chart: var(--color-accent-300);
+
+    /* New additive tokens */
+    --color-on-accent: #1c1c1c;
+    --theme-color-accent-solid: rgb(var(--color-accent-300));
+    --theme-color-accent-solid-hover: rgb(var(--color-accent-400));
+
+    /* Untangle accent scale (baseline), dark */
+    --color-accent-50: 217, 232, 229;
+    --color-accent-100: 196, 228, 222;
+    --color-accent-200: 156, 223, 210;
+    --color-accent-300: 0, 245, 212;
+    --color-accent-400: 2, 187, 166;
+    --color-accent-500: 3, 159, 141;
+    --color-accent-600: 1, 129, 114;
+    --color-accent-700: 4, 103, 91;
+    --color-accent-800: 0, 78, 68;
+    --color-accent-900: 0, 55, 47;
+    --color-accent-950: 0, 35, 30;
+
+    /* Outlook meeting identity (Phase 3.1 consumes these, declares none) */
+    --m365-meeting-bg: color-mix(
+        in srgb,
+        rgb(var(--color-accent-400, 2, 187, 166)) 22%,
+        var(--color-bg-primary, #1c1c1c)
+    );
+    --m365-meeting-bg-hover: color-mix(
+        in srgb,
+        rgb(var(--color-accent-400, 2, 187, 166)) 30%,
+        var(--color-bg-primary, #1c1c1c)
+    );
+    --m365-meeting-bg-dismissed: color-mix(
+        in srgb,
+        rgb(var(--color-accent-400, 2, 187, 166)) 6%,
+        var(--color-bg-primary, #1c1c1c)
+    );
+    --m365-meeting-border: color-mix(
+        in srgb,
+        rgb(var(--color-accent-400, 2, 187, 166)) 40%,
+        var(--color-bg-primary, #1c1c1c)
+    );
+    --m365-meeting-bar: rgb(var(--color-accent-400, 2, 187, 166));
+    --m365-lane-bg: color-mix(in srgb, rgb(var(--color-accent-400, 2, 187, 166)) 8%, transparent);
+    --m365-meeting-text: var(--color-text-primary);
+    --m365-meeting-text-2: var(--color-text-secondary);
+}
+
+html:root.light {
+    /* Neutral ladder (--color-bg-elevated is dark-only) */
+    --color-bg-background: #eef4f5;
+    --color-bg-primary: #f9fcfd;
+    --color-bg-secondary: #f9fcfd;
+    --color-bg-tertiary: #edf3f4;
+    --color-bg-quaternary: #dde5e6;
+    --color-text-primary: #1c1c1c;
+    --color-text-secondary: #3d4142;
+    --color-text-tertiary: #565b5c;
+    --color-text-quaternary: #646a6b;
+    --color-border-primary: #e6eced;
+    --color-border-secondary: #dddddd;
+    --color-border-tertiary: #d2d9da;
+    --color-border-quaternary: #8b9091;
+    --color-input-border-active: rgba(28, 28, 28, 0.6);
+    --theme-color-ring: rgba(28, 28, 28, 0.75);
+    --theme-color-default-background: #f9fcfd;
+
+    /* Accent-dependent tokens that change in light */
+    --theme-color-button-primary-background: rgb(var(--color-accent-500));
+    --theme-color-button-primary-background-hover: rgb(var(--color-accent-600));
+    --theme-color-button-primary-border: rgb(var(--color-accent-600));
+    --theme-color-button-primary-text: #f9fcfd;
+
+    /* New additive tokens */
+    --color-on-accent: #f9fcfd;
+    --theme-color-accent-solid: rgb(var(--color-accent-500));
+    --theme-color-accent-solid-hover: rgb(var(--color-accent-600));
+
+    /* Untangle accent scale (baseline), light */
+    --color-accent-50: 235, 251, 247;
+    --color-accent-100: 214, 247, 240;
+    --color-accent-200: 170, 238, 225;
+    --color-accent-300: 0, 162, 143;
+    --color-accent-400: 0, 124, 107;
+    --color-accent-500: 6, 106, 94;
+    --color-accent-600: 3, 89, 78;
+    --color-accent-700: 0, 71, 62;
+    --color-accent-800: 0, 53, 46;
+    --color-accent-900: 0, 37, 31;
+    --color-accent-950: 0, 21, 18;
+
+    /* Outlook meeting identity (Phase 3.1 consumes these, declares none) */
+    --m365-meeting-bg: color-mix(
+        in srgb,
+        rgb(var(--color-accent-500, 6, 106, 94)) 16%,
+        var(--color-bg-primary, #f9fcfd)
+    );
+    --m365-meeting-bg-hover: color-mix(
+        in srgb,
+        rgb(var(--color-accent-500, 6, 106, 94)) 24%,
+        var(--color-bg-primary, #f9fcfd)
+    );
+    --m365-meeting-bg-dismissed: color-mix(
+        in srgb,
+        rgb(var(--color-accent-500, 6, 106, 94)) 6%,
+        var(--color-bg-primary, #f9fcfd)
+    );
+    --m365-meeting-border: color-mix(
+        in srgb,
+        rgb(var(--color-accent-600, 3, 89, 78)) 35%,
+        var(--color-bg-primary, #f9fcfd)
+    );
+    --m365-meeting-bar: rgb(var(--color-accent-600, 3, 89, 78));
+    --m365-lane-bg: color-mix(in srgb, rgb(var(--color-accent-500, 6, 106, 94)) 6%, transparent);
+    --m365-meeting-text: var(--color-text-primary);
+    --m365-meeting-text-2: var(--color-text-secondary);
+}
