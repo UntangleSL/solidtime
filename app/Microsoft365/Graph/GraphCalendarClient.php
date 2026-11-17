@@ -21,7 +21,7 @@ final class GraphCalendarClient
 {
     public const string BASE_URL = 'https://graph.microsoft.com/v1.0/me/calendarView';
 
-    public const string SELECT = 'id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting';
+    public const string SELECT = 'id,iCalUId,subject,start,end,isAllDay,isCancelled,isOrganizer,responseStatus,type,seriesMasterId,originalStart,organizer,showAs,sensitivity,webLink,isOnlineMeeting,attendees';
 
     public const string PREFER = 'outlook.timezone="UTC", IdType="ImmutableId"';
 

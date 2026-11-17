@@ -16,6 +16,10 @@ use Illuminate\Support\Carbon;
  * Deliberately not audited and never serialized directly: the subject is personal data.
  * Only meetings that passed OutlookMeetingEligibility are ever stored.
  *
+ * The organizer address and the attendee list (Phase 5, D-09) are personal data of the owner of the row only:
+ * they feed the owner's project suggestions, are scrubbed with the rest of an ineligible meeting and are never
+ * serialized (OutlookMeetingResource is an allow-list without them).
+ *
  * @property string $id
  * @property string $user_id
  * @property string $graph_id
@@ -26,6 +30,9 @@ use Illuminate\Support\Carbon;
  * @property Carbon $starts_at
  * @property Carbon $ends_at
  * @property string|null $organizer_name
+ * @property string|null $organizer_address
+ * @property array<int, mixed>|null $attendees
+ * @property int|null $attendee_count
  * @property bool $is_organizer
  * @property bool $is_online_meeting
  * @property string|null $show_as
@@ -57,6 +64,8 @@ class OutlookMeeting extends Model
         'ends_at' => 'datetime',
         'is_organizer' => 'boolean',
         'is_online_meeting' => 'boolean',
+        'attendees' => 'array',
+        'attendee_count' => 'integer',
         'last_seen_at' => 'datetime',
         'gone_at' => 'datetime',
         'dismissed_at' => 'datetime',
