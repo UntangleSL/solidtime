@@ -112,6 +112,56 @@ function onOpenAutoFocus(event: Event): void {
     event.preventDefault();
 }
 
+// --- Selection lifecycle (UI-SPEC section 5). This bar is the single place for the document-level
+// listeners that clear the selection.
+
+// Selection count changes are announced in the toolbar's polite live region. Synchronous, so a
+// change made by a running batch is recognised as such: the batch announces its own outcome
+// instead (never per row, UI-SPEC section 9).
+watch(
+    count,
+    (value, previous) => {
+        const current = labels.value;
+        if (!context || !current || value === previous || busy.value) return;
+        context.announce(value === 0 ? current.selection_cleared : countText.value);
+    },
+    { flush: 'sync' }
+);
+
+// Esc clears the selection unless something else owns it: the batch popover (reka closes it and
+// the selection stays), an open panel, dialog or menu. Capture phase, so this runs before those
+// layers react to the same key.
+useEventListener(
+    document,
+    'keydown',
+    (event: KeyboardEvent) => {
+        if (event.key !== 'Escape' || event.defaultPrevented || count.value === 0) return;
+        if (popoverOpen.value || busy.value) return;
+        if (document.querySelector('[role="dialog"], [role="menu"]')) return;
+        context?.selection.clear();
+    },
+    { capture: true }
+);
+
+// A pointerdown anywhere else (empty grid, a time entry, the page) clears the selection. Meeting
+// blocks handle their own clicks (modifier clicks toggle, a plain click clears and opens the
+// panel); the bar, its popover and the portaled layers of nested pickers keep it.
+const KEEP_SELECTION = `[data-ghost-id], ${NESTED_LAYERS}`;
+
+useEventListener(
+    document,
+    'pointerdown',
+    (event: PointerEvent) => {
+        if (count.value === 0 || busy.value) return;
+        const target = event.target;
+        if (target instanceof Element) {
+            if (barEl.value?.contains(target) || target.closest(KEEP_SELECTION)) return;
+        }
+        context?.selection.clear();
+    },
+    { capture: true }
+);
+
 // --- Placement: centred on the calendar grid (`.fc`), 16px above its visible bottom.
 const gridEl = ref<HTMLElement | null>(null);
 const placement = ref<{ left: number; bottom: number } | null>(null);
@@ -156,9 +206,11 @@ const placementStyle = computed(() =>
                 ref="barEl"
                 role="toolbar"
                 :aria-label="labels.selection_label"
-                class="flex h-12 items-center gap-2 rounded-lg border bg-popover px-3 py-2 text-popover-foreground shadow-dropdown"
+                class="flex h-12 items-center gap-2 rounded-lg border bg-popover px-3 py-2 text-popover-foreground shadow-dropdown motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2"
                 data-testid="outlook-selection-bar">
-                <span class="whitespace-nowrap text-[13px] font-normal tabular-nums">
+                <span
+                    class="whitespace-nowrap text-[13px] font-normal tabular-nums max-[479px]:hidden"
+                    data-testid="outlook-selection-count">
                     {{ countText }}
                 </span>
                 <Popover v-model:open="popoverOpen">

@@ -337,3 +337,160 @@ describe('OutlookSelectionBar', () => {
         expect(el('outlook-selection-assign').textContent?.trim()).toBe('Assign 1 meeting');
     });
 });
+
+function pressEscape(target: EventTarget = document.body) {
+    target.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    );
+}
+
+function pointerDown(target: Element) {
+    target.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })
+    );
+}
+
+function addOutside(attributes: Record<string, string>): HTMLElement {
+    const node = document.createElement('div');
+    Object.entries(attributes).forEach(([name, value]) => node.setAttribute(name, value));
+    const inner = document.createElement('span');
+    node.appendChild(inner);
+    document.body.appendChild(node);
+    return inner;
+}
+
+describe('OutlookSelectionBar selection lifecycle', () => {
+    it('clears the selection on Escape when no popover is open', async () => {
+        mountBar();
+        selection.toggle('m-1');
+        selection.toggle('m-2');
+        await settle();
+
+        pressEscape();
+        await settle();
+
+        expect(selection.selectedIds.value).toEqual([]);
+        expect(query('outlook-selection-bar')).toBeNull();
+    });
+
+    it('closes only the batch popover on Escape and keeps the selection', async () => {
+        mountBar();
+        selection.toggle('m-1');
+        selection.toggle('m-2');
+        await settle();
+        await openBatch();
+        expect(query('outlook-batch-form')).not.toBeNull();
+
+        pressEscape(document.activeElement ?? document.body);
+        await settle();
+
+        expect(query('outlook-batch-form')).toBeNull();
+        expect(selection.selectedIds.value).toEqual(['m-1', 'm-2']);
+        expect(query('outlook-selection-bar')).not.toBeNull();
+    });
+
+    it('keeps the selection on Escape while a menu is open', async () => {
+        mountBar();
+        selection.toggle('m-1');
+        await settle();
+        addOutside({ role: 'menu' });
+
+        pressEscape();
+        await settle();
+
+        expect(selection.selectedIds.value).toEqual(['m-1']);
+    });
+
+    it('clears the selection on a pointerdown outside', async () => {
+        mountBar();
+        selection.toggle('m-1');
+        await settle();
+
+        pointerDown(document.body);
+        await settle();
+
+        expect(selection.selectedIds.value).toEqual([]);
+    });
+
+    it('keeps the selection on a pointerdown on a meeting block, the bar, the popover or a picker layer', async () => {
+        mountBar();
+        selection.toggle('m-1');
+        selection.toggle('m-2');
+        await settle();
+
+        pointerDown(addOutside({ 'data-ghost-id': 'm-3' }));
+        pointerDown(el('outlook-selection-bar'));
+        pointerDown(addOutside({ 'data-reka-popper-content-wrapper': '' }));
+        pointerDown(addOutside({ role: 'listbox' }));
+        await settle();
+        expect(selection.selectedIds.value).toEqual(['m-1', 'm-2']);
+
+        await openBatch();
+        pointerDown(el('outlook-batch-form'));
+        await settle();
+        expect(selection.selectedIds.value).toEqual(['m-1', 'm-2']);
+        expect(query('outlook-batch-form')).not.toBeNull();
+    });
+
+    it('announces count changes and the cleared selection', async () => {
+        mountBar();
+        await settle();
+
+        selection.toggle('m-1');
+        expect(announce).toHaveBeenLastCalledWith('1 meeting selected');
+        selection.toggle('m-2');
+        selection.toggle('m-3');
+        expect(announce).toHaveBeenLastCalledWith('3 meetings selected');
+        selection.clear();
+        expect(announce).toHaveBeenLastCalledWith('Selection cleared');
+        expect(announce).toHaveBeenCalledTimes(4);
+    });
+
+    it('lets the batch announce its outcome instead of the count change it causes', async () => {
+        localStorage.setItem(STORAGE_KEY, 'p-1');
+        mountBar();
+        selection.toggle('m-1');
+        selection.toggle('m-2');
+        await settle();
+        await openBatch();
+        announce.mockClear();
+
+        el('outlook-batch-submit').click();
+        await settle();
+
+        expect(announce).toHaveBeenCalledTimes(1);
+        expect(announce).toHaveBeenCalledWith('2 time entries created successfully');
+        expect(addNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides the count under 480px, keeps both buttons and animates in under motion-safe', async () => {
+        mountBar();
+        selection.toggle('m-1');
+        await settle();
+
+        expect(el('outlook-selection-count').className).toContain('max-[479px]:hidden');
+        expect(el('outlook-selection-assign').className).not.toContain('hidden');
+        expect(el('outlook-selection-clear').className).not.toContain('hidden');
+        const bar = el('outlook-selection-bar');
+        expect(bar.className).toContain('motion-safe:animate-in');
+        expect(bar.className).toContain('motion-safe:fade-in-0');
+        expect(bar.className).toContain('motion-safe:slide-in-from-bottom-2');
+    });
+
+    it('is centred on the calendar grid, 16px above its visible bottom, at z-40', async () => {
+        const grid = document.createElement('div');
+        grid.className = 'fc';
+        grid.getBoundingClientRect = () =>
+            ({ left: 200, width: 800, top: 100, bottom: 600, right: 1000, height: 500 }) as DOMRect;
+        document.body.appendChild(grid);
+        mountBar();
+        selection.toggle('m-1');
+        await settle();
+
+        const position = el('outlook-selection-bar-position');
+        expect(position.className).toContain('fixed');
+        expect(position.className).toContain('z-40');
+        expect(position.style.left).toBe('600px');
+        expect(position.style.bottom).toBe(`${window.innerHeight - 600 + 16}px`);
+    });
+});
