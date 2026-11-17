@@ -646,11 +646,16 @@ describe('OutlookGhostDetail', () => {
             await nextTick();
         }
 
+        // Found through its test hook, like the browser tests do: the hook must render inside the
+        // open menu (the shared DropdownMenuContent drops attributes passed to it).
         async function openMenu() {
             byTestId('outlook-detail-more')!.click();
             await settle();
-            const menu = document.body.querySelector<HTMLElement>('[role="menu"]');
+            const hook = byTestId('outlook-detail-more-menu');
+            expect(hook).not.toBeNull();
+            const menu = hook!.closest<HTMLElement>('[role="menu"]');
             expect(menu).not.toBeNull();
+            expect(document.body.querySelectorAll('[role="menu"]')).toHaveLength(1);
             return menu!;
         }
 

@@ -243,46 +243,49 @@ function onOpenAutoFocus(event: Event): void {
                         <DropdownMenuContent
                             align="start"
                             class="min-w-[200px]"
-                            data-testid="outlook-detail-more-menu"
                             @close-auto-focus="onMenuCloseAutoFocus">
-                            <template v-if="preassignment">
+                            <!-- The shared DropdownMenuContent drops attributes (teleport root), so the
+                                 test hook sits on a wrapper inside the menu -->
+                            <div data-testid="outlook-detail-more-menu">
+                                <template v-if="preassignment">
+                                    <DropdownMenuItem
+                                        v-if="meeting.dismissed"
+                                        data-testid="outlook-more-restore"
+                                        @select="fromMenu(() => emit('restore'))">
+                                        <Eye class="text-icon-default" aria-hidden="true" />
+                                        <span>{{ labels.restore }}</span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        v-else
+                                        data-testid="outlook-more-dismiss"
+                                        @select="fromMenu(() => emit('dismiss'))">
+                                        <EyeOff class="text-icon-default" aria-hidden="true" />
+                                        <span>{{ labels.dismiss }}</span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                </template>
                                 <DropdownMenuItem
-                                    v-if="meeting.dismissed"
-                                    data-testid="outlook-more-restore"
-                                    @select="fromMenu(() => emit('restore'))">
-                                    <Eye class="text-icon-default" aria-hidden="true" />
-                                    <span>{{ labels.restore }}</span>
+                                    v-if="seriesIgnored"
+                                    data-testid="outlook-more-unignore-series"
+                                    @select="fromMenu(() => emit('unignore-series'))">
+                                    <Undo2 class="text-icon-default" aria-hidden="true" />
+                                    <span>{{ labels.unignore_series }}</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                     v-else
-                                    data-testid="outlook-more-dismiss"
-                                    @select="fromMenu(() => emit('dismiss'))">
-                                    <EyeOff class="text-icon-default" aria-hidden="true" />
-                                    <span>{{ labels.dismiss }}</span>
+                                    data-testid="outlook-more-ignore-series"
+                                    @select="fromMenu(() => emit('ignore-series'))">
+                                    <CalendarOff class="text-icon-default" aria-hidden="true" />
+                                    <span>{{ labels.ignore_series }}</span>
                                 </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                            </template>
-                            <DropdownMenuItem
-                                v-if="seriesIgnored"
-                                data-testid="outlook-more-unignore-series"
-                                @select="fromMenu(() => emit('unignore-series'))">
-                                <Undo2 class="text-icon-default" aria-hidden="true" />
-                                <span>{{ labels.unignore_series }}</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                                v-else
-                                data-testid="outlook-more-ignore-series"
-                                @select="fromMenu(() => emit('ignore-series'))">
-                                <CalendarOff class="text-icon-default" aria-hidden="true" />
-                                <span>{{ labels.ignore_series }}</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                                v-if="preassignment"
-                                data-testid="outlook-more-forget-series"
-                                @select="fromMenu(() => emit('forget-series'))">
-                                <Unlink class="text-icon-default" aria-hidden="true" />
-                                <span>{{ labels.forget_series }}</span>
-                            </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    v-if="preassignment"
+                                    data-testid="outlook-more-forget-series"
+                                    @select="fromMenu(() => emit('forget-series'))">
+                                    <Unlink class="text-icon-default" aria-hidden="true" />
+                                    <span>{{ labels.forget_series }}</span>
+                                </DropdownMenuItem>
+                            </div>
                         </DropdownMenuContent>
                     </DropdownMenu>
                     <div class="ml-auto flex items-center gap-2">
