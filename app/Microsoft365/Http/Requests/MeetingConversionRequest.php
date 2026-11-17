@@ -9,14 +9,20 @@ use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\ProhibitedIf;
+use Illuminate\Validation\Rules\RequiredIf;
 
 /**
  * Turns one or several of the session user's Outlook meetings into time entries (Phase 4). The body
  * names meetings, never a user or a member: the owner of the entries is always the session user's
  * member in the route organization, and the meeting subject is read on the server (D-13).
  *
- * Single mode (exactly one id) may also carry the description and custom start/end of the mini form
- * (D-03). With several ids every meeting keeps its own time and subject (D-07).
+ * Explicit mode: the body carries the project, task, tags and billable. Single mode (exactly one id)
+ * may also carry the description and custom start/end of the mini form (D-03). With several ids every
+ * meeting keeps its own time and subject (D-07).
+ *
+ * Confirm mode (Phase 5 RULE-02, D-03, D-04): `use_series_assignment: true` with meeting ids only. The
+ * server resolves each meeting's series assignment at confirm time, so the body may not carry a
+ * project, task, tags, billable, description, times or prefill fields (T-05-15).
  */
 class MeetingConversionRequest extends FormRequest
 {
@@ -31,26 +37,30 @@ class MeetingConversionRequest extends FormRequest
     }
 
     /**
-     * @return array<string, array<int, string|Closure|ValidationRule|ProhibitedIf>>
+     * @return array<string, array<int, string|Closure|ValidationRule|ProhibitedIf|RequiredIf>>
      */
     public function rules(): array
     {
         $several = fn (): bool => is_array($this->input('meeting_ids')) && count($this->input('meeting_ids')) > 1;
+        $series = fn (): bool => $this->boolean('use_series_assignment');
+        $explicit = fn (): bool => ! $series();
 
         return [
             'meeting_ids' => ['required', 'array', 'min:1', 'max:'.self::MAX_MEETINGS],
             'meeting_ids.*' => ['required', 'string', 'uuid', 'distinct'],
+            // Confirm mode: the server picks every entry field from the series (RULE-02)
+            'use_series_assignment' => ['sometimes', 'boolean'],
             // A project is required (D-02); whether the user may book on it is core's check
-            'project_id' => ['required', 'string', 'uuid'],
-            'task_id' => ['nullable', 'string', 'uuid'],
-            'tags' => ['sometimes', 'nullable', 'array'],
+            'project_id' => [Rule::requiredIf($explicit), Rule::prohibitedIf($series), 'string', 'uuid'],
+            'task_id' => ['nullable', 'string', 'uuid', Rule::prohibitedIf($series)],
+            'tags' => ['sometimes', 'nullable', 'array', Rule::prohibitedIf($series)],
             'tags.*' => ['string', 'uuid'],
-            'billable' => ['required', 'boolean'],
+            'billable' => [Rule::requiredIf($explicit), Rule::prohibitedIf($series), 'boolean'],
             // Single mode only: several meetings each take their own subject
-            'description' => ['nullable', 'string', 'max:5000', Rule::prohibitedIf($several)],
+            'description' => ['nullable', 'string', 'max:5000', Rule::prohibitedIf($several), Rule::prohibitedIf($series)],
             // Single mode only, both or neither; an end is always sent so no running timer is ever started
-            'start' => ['nullable', 'string', 'date_format:'.self::FORMAT, 'required_with:end', Rule::prohibitedIf($several)],
-            'end' => ['nullable', 'string', 'date_format:'.self::FORMAT, 'required_with:start', 'after:start', Rule::prohibitedIf($several)],
+            'start' => ['nullable', 'string', 'date_format:'.self::FORMAT, 'required_with:end', Rule::prohibitedIf($several), Rule::prohibitedIf($series)],
+            'end' => ['nullable', 'string', 'date_format:'.self::FORMAT, 'required_with:start', 'after:start', Rule::prohibitedIf($several), Rule::prohibitedIf($series)],
         ];
     }
 
@@ -70,6 +80,17 @@ class MeetingConversionRequest extends FormRequest
         return count($this->meetingIds()) === 1;
     }
 
+    /**
+     * Confirm mode: each meeting takes its series' current assignment, resolved on the server.
+     */
+    public function usesSeriesAssignment(): bool
+    {
+        return $this->boolean('use_series_assignment');
+    }
+
+    /**
+     * The project of the explicit mode (never read in confirm mode).
+     */
     public function projectId(): string
     {
         return (string) $this->validated('project_id');

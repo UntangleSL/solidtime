@@ -24,6 +24,9 @@ use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookMeetingLink;
 use App\Microsoft365\Models\OutlookSyncWindow;
+use App\Microsoft365\Suggestions\Assignment;
+use App\Microsoft365\Suggestions\BookableProjects;
+use App\Microsoft365\Suggestions\SeriesAssignmentResolver;
 use App\Microsoft365\TimeEntries\CoreTimeEntryCreator;
 use App\Models\Member;
 use App\Models\Organization;
@@ -68,6 +71,9 @@ use Tests\TestCaseWithDatabase;
 #[UsesClass(MeetingRangeRequest::class)]
 #[UsesClass(OutlookMeetingResource::class)]
 #[UsesClass(OutlookSyncWindow::class)]
+#[UsesClass(SeriesAssignmentResolver::class)]
+#[UsesClass(BookableProjects::class)]
+#[UsesClass(Assignment::class)]
 class OutlookMeetingConversionTest extends TestCaseWithDatabase
 {
     use InteractsWithGraphFixtures;
@@ -1005,6 +1011,78 @@ class OutlookMeetingConversionTest extends TestCaseWithDatabase
             $this->assertTrue($meeting->ends_at->equalTo($entry->end), $meeting->graph_id);
         }
         $this->assertSame(3, OutlookMeetingLink::query()->count());
+    }
+
+    /**
+     * One occurrence of a recurring meeting (Phase 5): same series, its own day and time.
+     *
+     * @param  array<string, mixed>  $overrides
+     */
+    private function occurrence(User $user, string $graphId, string $series, string $day, array $overrides = []): OutlookMeeting
+    {
+        return $this->meeting($user, $graphId, array_merge([
+            'event_type' => 'occurrence',
+            'series_master_id' => $series,
+            'original_start' => $day.' 09:00:00',
+            'starts_at' => $day.' 09:00:00',
+            'ends_at' => $day.' 10:00:00',
+        ], $overrides));
+    }
+
+    /**
+     * Confirm mode body: meeting ids only, the server picks the rest (Phase 5 RULE-02).
+     *
+     * @param  list<string>  $meetingIds
+     * @param  array<string, mixed>  $extra
+     */
+    private function confirm(Organization $organization, array $meetingIds, array $extra = []): TestResponse
+    {
+        return $this->convert($organization, ['meeting_ids' => $meetingIds, 'use_series_assignment' => true] + $extra);
+    }
+
+    public function test_confirm_uses_the_series_assignment(): void
+    {
+        // Arrange: occurrence A converted with project, task, tag and billable
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $task = Task::factory()->forOrganization($data->organization)->forProject($project)->create();
+        $tag = Tag::factory()->forOrganization($data->organization)->create();
+        $a = $this->occurrence($data->user, 'series-a', 'series-1', '2026-10-20');
+        $b = $this->occurrence($data->user, 'series-b', 'series-1', '2026-10-27', [
+            'subject' => 'Weekly sync',
+            'ends_at' => '2026-10-27 09:30:00',
+        ]);
+        $this->convert($data->organization, [
+            'meeting_ids' => [$a->id],
+            'project_id' => $project->getKey(),
+            'task_id' => $task->getKey(),
+            'tags' => [$tag->getKey()],
+            'billable' => true,
+        ])->assertJsonPath('results.0.status', 'created');
+
+        // Act: one click on B, ids only
+        $response = $this->confirm($data->organization, [$b->id]);
+
+        // Assert: the series' values, B's own times and subject, owned by the session user
+        $response->assertOk();
+        $response->assertJsonCount(1, 'results');
+        $response->assertJsonPath('results.0.meeting_id', $b->id);
+        $response->assertJsonPath('results.0.status', 'created');
+        $response->assertJsonPath('results.0.error', null);
+        $entry = TimeEntry::query()->findOrFail($response->json('results.0.time_entry_id'));
+        $this->assertSame($project->getKey(), $entry->project_id);
+        $this->assertSame($task->getKey(), $entry->task_id);
+        $this->assertSame([$tag->getKey()], $entry->tags);
+        $this->assertTrue($entry->billable);
+        $this->assertSame('Weekly sync', $entry->description);
+        $this->assertSame('2026-10-27 09:00:00', $entry->start->utc()->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-27 09:30:00', $entry->end?->utc()->format('Y-m-d H:i:s'));
+        $this->assertSame($data->user->getKey(), $entry->user_id);
+        $this->assertSame($data->member->getKey(), $entry->member_id);
+        $link = OutlookMeetingLink::query()->where('graph_id', '=', 'series-b')->sole();
+        $this->assertSame($entry->getKey(), $link->time_entry_id);
+        $this->assertSame('series-1', $link->series_master_id);
+        $this->assertSame(2, TimeEntry::query()->count());
     }
 
     /**

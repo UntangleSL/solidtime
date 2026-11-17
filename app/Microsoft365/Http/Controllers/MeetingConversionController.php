@@ -9,6 +9,7 @@ use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Microsoft365\Http\Requests\MeetingConversionRequest;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookMeetingLink;
+use App\Microsoft365\Suggestions\SeriesAssignmentResolver;
 use App\Microsoft365\TimeEntries\CoreTimeEntryCreator;
 use App\Models\Member;
 use App\Models\Organization;
@@ -34,11 +35,20 @@ use Illuminate\Validation\ValidationException;
  *   with that entry and creates nothing; a link whose entry now belongs to someone else is stale and is
  *   replaced; a unique-index race rolls the meeting back and answers with the winner's entry.
  * - The owner (member) and the subject are always read on the server; while an admin impersonates the
- *   user nothing is converted (D-13).
+ *   user nothing is converted (D-13, Phase 5 D-14).
+ * - Confirm mode (Phase 5 RULE-02, D-03, D-04): the body names meetings only and each meeting takes its
+ *   series' current assignment (project, task, tags, billable), with its own times and subject. The
+ *   assignment is resolved inside the meeting's transaction, after the row lock and the existing-link
+ *   check, so a series changed, forgotten or no longer bookable since the read answers with the newest
+ *   state (RESEARCH Pitfall 7); a meeting without one fails with 'no_assignment'. The entry still goes
+ *   through core's create action, so every manual-entry rule applies to the server-chosen fields.
  */
 class MeetingConversionController extends Controller
 {
-    public function __construct(private readonly GraphAccessGuard $access) {}
+    public function __construct(
+        private readonly GraphAccessGuard $access,
+        private readonly SeriesAssignmentResolver $resolver,
+    ) {}
 
     /**
      * @throws AuthorizationException the session user is not a member of the organization
@@ -117,16 +127,35 @@ class MeetingConversionController extends Controller
             $link->delete();
         }
 
-        $times = $request->isSingle() ? $request->customTimes() : null;
-        $description = $request->isSingle() ? $request->description() : null;
+        if ($request->usesSeriesAssignment()) {
+            // Confirm mode: the server decides every entry field from the series, never the body (T-05-15)
+            $assignment = $this->resolver->forMeeting($user, $organization, $meeting);
+            if ($assignment === null) {
+                return $this->failed($meetingId, 'no_assignment', $this->text('microsoft365.calendar.error_no_assignment'));
+            }
+            $fields = [
+                'project_id' => $assignment->projectId,
+                'task_id' => $assignment->taskId,
+                'tags' => $assignment->tags,
+                'billable' => $assignment->billable,
+            ];
+            $times = null;
+            $description = null;
+        } else {
+            $fields = [
+                'project_id' => $request->projectId(),
+                'task_id' => $request->taskId(),
+                'tags' => $request->tags(),
+                'billable' => $request->billable(),
+            ];
+            $times = $request->isSingle() ? $request->customTimes() : null;
+            $description = $request->isSingle() ? $request->description() : null;
+        }
 
         $entry = $creator->create($request, $organization, [
             'member_id' => $member->getKey(),
             'type' => 'work',
-            'project_id' => $request->projectId(),
-            'task_id' => $request->taskId(),
-            'tags' => $request->tags(),
-            'billable' => $request->billable(),
+            ...$fields,
             // The subject only ever goes into the user's own entry (D-13); core caps descriptions at 5000
             'description' => $description ?? mb_substr($meeting->subject ?? '', 0, 5000),
             // Always an end: a missing one would start a running timer
