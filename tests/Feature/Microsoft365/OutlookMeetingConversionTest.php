@@ -5,8 +5,12 @@ declare(strict_types=1);
 namespace Tests\Feature\Microsoft365;
 
 use App\Enums\Role;
+use App\Exceptions\Api\ApiException;
 use App\Http\Controllers\Api\V1\TimeEntryController;
+use App\Http\Middleware\CheckOrganizationBlocked;
 use App\Http\Requests\V1\TimeEntry\TimeEntryStoreRequest;
+use App\Jobs\RecalculateSpentTimeForProject;
+use App\Jobs\RecalculateSpentTimeForTask;
 use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Microsoft365\Http\Controllers\MeetingConversionController;
 use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
@@ -20,11 +24,18 @@ use App\Microsoft365\TimeEntries\CoreTimeEntryCreator;
 use App\Models\Member;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\Tag;
+use App\Models\Task;
 use App\Models\TimeEntry;
 use App\Models\User;
+use App\Service\BillingContract;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
+use Laravel\Passport\Passport;
+use Mockery\MockInterface;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\Feature\Microsoft365\Support\InteractsWithGraphFixtures;
@@ -43,6 +54,8 @@ use Tests\TestCaseWithDatabase;
 #[UsesClass(Microsoft365ServiceProvider::class)]
 #[UsesClass(TimeEntryController::class)]
 #[UsesClass(TimeEntryStoreRequest::class)]
+#[UsesClass(CheckOrganizationBlocked::class)]
+#[UsesClass(ApiException::class)]
 class OutlookMeetingConversionTest extends TestCaseWithDatabase
 {
     use InteractsWithGraphFixtures;
@@ -95,6 +108,21 @@ class OutlookMeetingConversionTest extends TestCaseWithDatabase
     private function convert(Organization $organization, array $body): TestResponse
     {
         return $this->postJson(route('microsoft.meetings.convert', ['organization' => $organization->getKey()], false), $body);
+    }
+
+    /**
+     * Billing double for the whole web stack: the Inertia middleware reads every value on each request.
+     */
+    private function billing(bool $blocked, bool $billableRates): void
+    {
+        $this->mock(BillingContract::class, function (MockInterface $mock) use ($blocked, $billableRates): void {
+            $mock->shouldReceive('hasSubscription')->andReturn(! $blocked);
+            $mock->shouldReceive('hasTrial')->andReturn(false);
+            $mock->shouldReceive('getTrialUntil')->andReturn(null);
+            $mock->shouldReceive('getGoalLimit')->andReturn(null);
+            $mock->shouldReceive('isBlocked')->andReturn($blocked);
+            $mock->shouldReceive('canUseBillableRates')->andReturn($billableRates);
+        });
     }
 
     public function test_converts_one_meeting_into_a_time_entry(): void
@@ -182,5 +210,430 @@ class OutlookMeetingConversionTest extends TestCaseWithDatabase
         $response->assertJsonPath('results.0.error.key', 'meeting_not_found');
         $this->assertSame(0, TimeEntry::query()->count());
         $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_employee_cannot_convert_into_a_project_they_cannot_see(): void
+    {
+        // Arrange: a private project the employee is not a member of
+        $data = $this->employee();
+        $project = Project::factory()->forOrganization($data->organization)->isPrivate()->create();
+        $meeting = $this->meeting($data->user, 'private');
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'failed');
+        $response->assertJsonPath('results.0.time_entry_id', null);
+        $response->assertJsonPath('results.0.error.key', 'validation');
+        $this->assertNotSame('', (string) $response->json('results.0.error.message'));
+        $this->assertSame(0, TimeEntry::query()->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_member_without_create_permission_gets_forbidden(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $data = $this->createUserWithPermission([]);
+        $this->connectedAccount($data->user);
+        $this->actingAs($data->user);
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'no-permission');
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'failed');
+        $response->assertJsonPath('results.0.error.key', 'forbidden');
+        $response->assertJsonPath('results.0.error.message', "You can't add time to this project.");
+        $this->assertSame(0, TimeEntry::query()->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_overlap_rule_follows_the_organization_setting(): void
+    {
+        // Arrange: an existing entry 09:30-10:30 overlaps the 09:00-10:00 meeting
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'overlap');
+        TimeEntry::factory()->forOrganization($data->organization)->forMember($data->member)->create([
+            'start' => Carbon::parse('2026-10-20 09:30:00', 'UTC'),
+            'end' => Carbon::parse('2026-10-20 10:30:00', 'UTC'),
+        ]);
+        $data->organization->prevent_overlapping_time_entries = true;
+        $data->organization->save();
+        $body = ['meeting_ids' => [$meeting->id], 'project_id' => $project->getKey(), 'billable' => false];
+
+        // Act
+        $blocked = $this->convert($data->organization, $body);
+        $data->organization->prevent_overlapping_time_entries = false;
+        $data->organization->save();
+        $allowed = $this->convert($data->organization, $body);
+
+        // Assert
+        $blocked->assertOk();
+        $blocked->assertJsonPath('results.0.status', 'failed');
+        $blocked->assertJsonPath('results.0.error.key', 'overlapping_time_entry');
+        $blocked->assertJsonPath('results.0.error.message', __('exceptions.api.overlapping_time_entry'));
+        $allowed->assertOk();
+        $allowed->assertJsonPath('results.0.status', 'created');
+        $this->assertSame(2, TimeEntry::query()->count());
+        $this->assertSame(1, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_billable_rate_and_lock_match_a_manual_entry(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = Project::factory()->forOrganization($data->organization)->isPublic()->billable(12300)->create();
+        $first = $this->meeting($data->user, 'billable-one');
+        $second = $this->meeting($data->user, 'billable-two', [
+            'starts_at' => '2026-10-21 09:00:00',
+            'ends_at' => '2026-10-21 10:00:00',
+        ]);
+
+        // Act: a conversion, then the same input through the core API endpoint
+        $converted = $this->convert($data->organization, [
+            'meeting_ids' => [$first->id],
+            'project_id' => $project->getKey(),
+            'billable' => true,
+        ]);
+        Passport::actingAs($data->user);
+        $manual = $this->postJson(route('api.v1.time-entries.store', [$data->organization->getKey()]), [
+            'member_id' => $data->member->getKey(),
+            'project_id' => $project->getKey(),
+            'billable' => true,
+            'start' => '2026-10-20T09:00:00Z',
+            'end' => '2026-10-20T10:00:00Z',
+            'description' => 'Manual',
+        ]);
+        $this->actingAs($data->user, 'web');
+        $this->billing(blocked: false, billableRates: false);
+        $locked = $this->convert($data->organization, [
+            'meeting_ids' => [$second->id],
+            'project_id' => $project->getKey(),
+            'billable' => true,
+        ]);
+
+        // Assert
+        $converted->assertOk();
+        $converted->assertJsonPath('results.0.status', 'created');
+        $manual->assertStatus(201);
+        $convertedEntry = TimeEntry::query()->findOrFail($converted->json('results.0.time_entry_id'));
+        $manualEntry = TimeEntry::query()->findOrFail($manual->json('data.id'));
+        $this->assertTrue($convertedEntry->billable);
+        $this->assertSame(12300, $convertedEntry->billable_rate);
+        $this->assertSame($manualEntry->billable_rate, $convertedEntry->billable_rate);
+        $locked->assertOk();
+        $locked->assertJsonPath('results.0.status', 'created');
+        $lockedEntry = TimeEntry::query()->findOrFail($locked->json('results.0.time_entry_id'));
+        $this->assertFalse($lockedEntry->billable);
+    }
+
+    public function test_spent_time_jobs_are_dispatched(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $task = Task::factory()->forOrganization($data->organization)->forProject($project)->create();
+        $meeting = $this->meeting($data->user, 'jobs');
+        Queue::fake([
+            RecalculateSpentTimeForProject::class,
+            RecalculateSpentTimeForTask::class,
+        ]);
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'task_id' => $task->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        Queue::assertPushed(RecalculateSpentTimeForProject::class, 1);
+        Queue::assertPushed(RecalculateSpentTimeForTask::class, 1);
+        Queue::assertPushed(RecalculateSpentTimeForProject::class, fn (RecalculateSpentTimeForProject $job): bool => $job->project->is($project));
+        Queue::assertPushed(RecalculateSpentTimeForTask::class, fn (RecalculateSpentTimeForTask $job): bool => $job->task->is($task));
+    }
+
+    public function test_task_tags_and_custom_times_are_kept(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $task = Task::factory()->forOrganization($data->organization)->forProject($project)->create();
+        $tagA = Tag::factory()->forOrganization($data->organization)->create();
+        $tagB = Tag::factory()->forOrganization($data->organization)->create();
+        $meeting = $this->meeting($data->user, 'custom');
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'task_id' => $task->getKey(),
+            'tags' => [$tagA->getKey(), $tagB->getKey()],
+            'billable' => false,
+            'description' => 'Planning notes',
+            'start' => '2026-10-20T09:10:00Z',
+            'end' => '2026-10-20T09:50:00Z',
+        ]);
+
+        // Assert: the entry takes the custom times, the link keeps the meeting's own time (D-03)
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        $entry = TimeEntry::query()->findOrFail($response->json('results.0.time_entry_id'));
+        $this->assertSame($task->getKey(), $entry->task_id);
+        $this->assertEqualsCanonicalizing([$tagA->getKey(), $tagB->getKey()], $entry->tags);
+        $this->assertSame('Planning notes', $entry->description);
+        $this->assertSame('2026-10-20 09:10:00', $entry->start->utc()->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-20 09:50:00', $entry->end?->utc()->format('Y-m-d H:i:s'));
+        $link = OutlookMeetingLink::query()->sole();
+        $this->assertSame($entry->getKey(), $link->time_entry_id);
+        $this->assertSame('2026-10-20 09:00:00', $link->meeting_starts_at?->utc()->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-20 10:00:00', $link->meeting_ends_at?->utc()->format('Y-m-d H:i:s'));
+    }
+
+    public function test_two_meetings_in_one_batch_keep_their_own_times_and_subjects(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $first = $this->meeting($data->user, 'batch-one', ['subject' => 'Standup']);
+        $second = $this->meeting($data->user, 'batch-two', [
+            'subject' => null,
+            'starts_at' => '2026-10-22 14:00:00',
+            'ends_at' => '2026-10-22 15:30:00',
+        ]);
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$second->id, $first->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert: results in request order, each entry with its own meeting's time and subject
+        $response->assertOk();
+        $response->assertJsonPath('results.0.meeting_id', $second->id);
+        $response->assertJsonPath('results.1.meeting_id', $first->id);
+        $secondEntry = TimeEntry::query()->findOrFail($response->json('results.0.time_entry_id'));
+        $firstEntry = TimeEntry::query()->findOrFail($response->json('results.1.time_entry_id'));
+        $this->assertSame('', $secondEntry->description);
+        $this->assertSame('2026-10-22 14:00:00', $secondEntry->start->utc()->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-22 15:30:00', $secondEntry->end?->utc()->format('Y-m-d H:i:s'));
+        $this->assertSame('Standup', $firstEntry->description);
+        $this->assertSame('2026-10-20 09:00:00', $firstEntry->start->utc()->format('Y-m-d H:i:s'));
+        $this->assertSame(2, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_task_from_another_project_is_a_validation_failure(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $otherProject = $this->publicProject($data->organization);
+        $task = Task::factory()->forOrganization($data->organization)->forProject($otherProject)->create();
+        $meeting = $this->meeting($data->user, 'wrong-task');
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'task_id' => $task->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'failed');
+        $response->assertJsonPath('results.0.error.key', 'validation');
+        $response->assertJsonPath('results.0.error.message', __('validation.task_belongs_to_project'));
+        $this->assertSame(0, TimeEntry::query()->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_dismissed_meeting_conversion_clears_the_dismissal(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'dismissed', ['dismissed_at' => '2026-10-19 12:00:00']);
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        $this->assertNull($meeting->refresh()->dismissed_at);
+    }
+
+    public function test_future_meeting_converts(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $start = Carbon::now()->utc()->addYear()->startOfHour();
+        $meeting = $this->meeting($data->user, 'future', [
+            'starts_at' => $start->copy(),
+            'ends_at' => $start->copy()->addMinutes(45),
+        ]);
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        $entry = TimeEntry::query()->findOrFail($response->json('results.0.time_entry_id'));
+        $this->assertTrue($start->equalTo($entry->start));
+    }
+
+    public function test_blocked_organization_creates_nothing(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'blocked');
+        $this->billing(blocked: true, billableRates: true);
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert: the core middleware's own answer
+        $response->assertStatus(400);
+        $response->assertJsonPath('key', 'organization_has_no_subscription_but_multiple_members');
+        $this->assertSame(0, TimeEntry::query()->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_invalid_bodies_are_422(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $one = $this->meeting($data->user, 'invalid-one');
+        $two = $this->meeting($data->user, 'invalid-two');
+        $base = ['project_id' => $project->getKey(), 'billable' => false];
+        $tooMany = array_map(fn (): string => (string) Str::uuid(), range(1, 51));
+        $bodies = [
+            'no project' => ['meeting_ids' => [$one->id], 'billable' => false],
+            'no ids' => ['meeting_ids' => []] + $base,
+            '51 ids' => ['meeting_ids' => $tooMany] + $base,
+            'duplicate ids' => ['meeting_ids' => [$one->id, $one->id]] + $base,
+            'description with two ids' => ['meeting_ids' => [$one->id, $two->id], 'description' => 'x'] + $base,
+            'times with two ids' => ['meeting_ids' => [$one->id, $two->id], 'start' => '2026-10-20T09:00:00Z', 'end' => '2026-10-20T10:00:00Z'] + $base,
+            'end before start' => ['meeting_ids' => [$one->id], 'start' => '2026-10-20T10:00:00Z', 'end' => '2026-10-20T09:00:00Z'] + $base,
+            'start without end' => ['meeting_ids' => [$one->id], 'start' => '2026-10-20T09:00:00Z'] + $base,
+            'end without start' => ['meeting_ids' => [$one->id], 'end' => '2026-10-20T10:00:00Z'] + $base,
+            'time with offset' => ['meeting_ids' => [$one->id], 'start' => '2026-10-20T09:00:00+02:00', 'end' => '2026-10-20T10:00:00+02:00'] + $base,
+            'not a uuid' => ['meeting_ids' => ['not-a-uuid']] + $base,
+            'no billable' => ['meeting_ids' => [$one->id], 'project_id' => $project->getKey()],
+        ];
+
+        foreach ($bodies as $case => $body) {
+            // Act
+            $response = $this->convert($data->organization, $body);
+
+            // Assert
+            $this->assertSame(422, $response->status(), $case);
+        }
+        $this->assertSame(0, TimeEntry::query()->count());
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+    }
+
+    public function test_member_id_from_the_client_is_ignored(): void
+    {
+        // Arrange: the body names the owner's member, the entry still belongs to the session user
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $meeting = $this->meeting($data->user, 'spoof');
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+            'member_id' => $data->ownerMember->getKey(),
+            'user_id' => $data->owner->getKey(),
+        ]);
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'created');
+        $entry = TimeEntry::query()->findOrFail($response->json('results.0.time_entry_id'));
+        $this->assertSame($data->member->getKey(), $entry->member_id);
+        $this->assertSame($data->user->getKey(), $entry->user_id);
+        $this->assertSame($data->user->getKey(), OutlookMeetingLink::query()->sole()->user_id);
+    }
+
+    public function test_foreign_and_gone_meetings_are_not_found(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $foreign = $this->meeting($data->owner, 'foreign');
+        $gone = $this->meeting($data->user, 'gone', ['gone_at' => '2026-10-19 12:00:00']);
+
+        // Act
+        $response = $this->convert($data->organization, [
+            'meeting_ids' => [$foreign->id, $gone->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('results.0.error.key', 'meeting_not_found');
+        $response->assertJsonPath('results.0.error.message', __('microsoft365.calendar.error_meeting_gone'));
+        $response->assertJsonPath('results.1.error.key', 'meeting_not_found');
+        $this->assertSame(0, TimeEntry::query()->count());
+    }
+
+    public function test_user_outside_the_organization_gets_403(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $other = Organization::factory()->create();
+        $project = $this->publicProject($other);
+        $meeting = $this->meeting($data->user, 'outsider');
+
+        // Act
+        $response = $this->convert($other, [
+            'meeting_ids' => [$meeting->id],
+            'project_id' => $project->getKey(),
+            'billable' => false,
+        ]);
+
+        // Assert
+        $response->assertForbidden();
+        $this->assertSame(0, TimeEntry::query()->count());
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Microsoft365\Http\Controllers;
 
+use App\Exceptions\Api\ApiException;
 use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Microsoft365\Http\Requests\MeetingConversionRequest;
 use App\Microsoft365\Models\OutlookMeeting;
@@ -17,6 +18,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Turns the session user's Outlook meetings into time entries (Phase 4, ASGN-01/02/03). Batch-shaped:
@@ -56,7 +58,19 @@ class MeetingConversionController extends Controller
 
         $results = [];
         foreach ($request->meetingIds() as $meetingId) {
-            $results[] = DB::transaction(fn (): array => $this->convertOne($request, $organization, $member, $user, $creator, $meetingId));
+            // The catch sits outside the transaction: a failure rolls back that meeting's entry and link
+            // only, and is reported for that meeting instead of failing the request (D-08). Nothing about
+            // the meeting or the body is logged (Phase 3 D-15).
+            try {
+                $results[] = DB::transaction(fn (): array => $this->convertOne($request, $organization, $member, $user, $creator, $meetingId));
+            } catch (ValidationException $exception) {
+                $first = collect($exception->errors())->flatten()->first();
+                $results[] = $this->failed($meetingId, 'validation', is_string($first) ? $first : $exception->getMessage());
+            } catch (AuthorizationException) {
+                $results[] = $this->failed($meetingId, 'forbidden', $this->text('microsoft365.calendar.error_forbidden_project'));
+            } catch (ApiException $exception) {
+                $results[] = $this->failed($meetingId, $exception->getKey(), $exception->getTranslatedMessage());
+            }
         }
 
         return response()->json(['results' => $results]);
@@ -81,7 +95,7 @@ class MeetingConversionController extends Controller
             ->lockForUpdate()
             ->first();
         if ($meeting === null) {
-            return $this->failed($meetingId, 'meeting_not_found', __('microsoft365.calendar.error_meeting_gone'));
+            return $this->failed($meetingId, 'meeting_not_found', $this->text('microsoft365.calendar.error_meeting_gone'));
         }
 
         $times = $request->isSingle() ? $request->customTimes() : null;
@@ -121,6 +135,13 @@ class MeetingConversionController extends Controller
             'time_entry_id' => (string) $entry->getKey(),
             'error' => null,
         ];
+    }
+
+    private function text(string $key): string
+    {
+        $text = __($key);
+
+        return is_string($text) ? $text : $key;
     }
 
     /**
