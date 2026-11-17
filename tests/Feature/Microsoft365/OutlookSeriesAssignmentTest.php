@@ -21,6 +21,7 @@ use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookMeetingLink;
 use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Microsoft365\Suggestions\Assignment;
+use App\Microsoft365\Suggestions\BookableProjects;
 use App\Microsoft365\Suggestions\MeetingHints;
 use App\Microsoft365\Suggestions\SeriesAssignmentResolver;
 use App\Microsoft365\Suggestions\SeriesKey;
@@ -29,13 +30,17 @@ use App\Models\Client;
 use App\Models\Member;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\ProjectMember;
 use App\Models\Tag;
 use App\Models\Task;
 use App\Models\TimeEntry;
 use App\Models\User;
+use Illuminate\Support\Carbon;
 use Illuminate\Testing\TestResponse;
+use Laravel\Passport\Passport;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use Tests\Feature\Microsoft365\Support\InteractsWithGraphFixtures;
 use Tests\Feature\Microsoft365\Support\InteractsWithMicrosoft365;
 use Tests\TestCaseWithDatabase;
 
@@ -46,6 +51,7 @@ use Tests\TestCaseWithDatabase;
  * filtered through the core booking rules. The read never converts or changes anything.
  */
 #[CoversClass(SeriesAssignmentResolver::class)]
+#[CoversClass(BookableProjects::class)]
 #[UsesClass(Assignment::class)]
 #[UsesClass(MeetingHints::class)]
 #[UsesClass(SeriesKey::class)]
@@ -67,6 +73,7 @@ use Tests\TestCaseWithDatabase;
 #[UsesClass(TimeEntryStoreRequest::class)]
 class OutlookSeriesAssignmentTest extends TestCaseWithDatabase
 {
+    use InteractsWithGraphFixtures;
     use InteractsWithMicrosoft365;
 
     private const string WEEK_START = '2026-10-19T00:00:00Z';
@@ -293,5 +300,249 @@ class OutlookSeriesAssignmentTest extends TestCaseWithDatabase
         $this->assertSame($entriesBefore, TimeEntry::query()->count());
         $this->assertSame($linksBefore, OutlookMeetingLink::query()->count());
         $this->assertSame(1, $entriesBefore);
+    }
+
+    public function test_latest_conversion_wins(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $first = $this->publicProject($data->organization);
+        $second = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'occ-a', '2026-10-20');
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
+        $c = $this->occurrence($data->user, 'occ-c', '2026-10-19');
+        $entryA = $this->convertTo($data->organization, $a, $first);
+        $this->assertSame($first->getKey(), $this->assignmentOf($this->read(), $b)['project_id'] ?? null);
+
+        // Act: a later conversion of an earlier occurrence to another project (D-05)
+        $this->travel(5)->seconds();
+        $this->convertTo($data->organization, $c, $second);
+        $read = $this->read();
+
+        // Assert: the series follows the newest conversion; the first entry is untouched (D-12)
+        $read->assertOk();
+        $this->assertSame($second->getKey(), $this->assignmentOf($read, $b)['project_id'] ?? null);
+        $this->assertSame($second->name, $this->assignmentOf($read, $b)['project_name'] ?? null);
+        $this->assertSame($first->getKey(), TimeEntry::query()->findOrFail($entryA)->project_id);
+    }
+
+    public function test_editing_the_entry_moves_the_series(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $first = $this->publicProject($data->organization);
+        $third = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'occ-a', '2026-10-20');
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
+        $entryId = $this->convertTo($data->organization, $a, $first);
+
+        // Act: the user moves the entry to another project through core's update endpoint
+        Passport::actingAs($data->user);
+        $update = $this->putJson(route('api.v1.time-entries.update', [$data->organization->getKey(), $entryId]), [
+            'project_id' => $third->getKey(),
+        ]);
+        $this->actingAs($data->user, 'web');
+        $read = $this->read();
+
+        // Assert
+        $update->assertOk();
+        $read->assertOk();
+        $this->assertSame($third->getKey(), $this->assignmentOf($read, $b)['project_id'] ?? null);
+        $this->assertSame($third->name, $this->assignmentOf($read, $b)['project_name'] ?? null);
+    }
+
+    public function test_links_in_another_organization_are_ignored(): void
+    {
+        // Arrange: the user also belongs to a second organization and converted the series there
+        $data = $this->employee();
+        $otherOrganization = Organization::factory()->create();
+        Member::factory()->forUser($data->user)->forOrganization($otherOrganization)->role(Role::Employee)->create();
+        $otherProject = $this->publicProject($otherOrganization);
+        $a = $this->occurrence($data->user, 'occ-a', '2026-10-20');
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
+        $this->convertTo($otherOrganization, $a, $otherProject);
+
+        // Act: current organization is the first one, then the second one
+        $inFirst = $this->read();
+        $data->user->current_team_id = $otherOrganization->getKey();
+        $data->user->save();
+        $inSecond = $this->read();
+
+        // Assert
+        $inFirst->assertOk();
+        $this->assertNull($this->assignmentOf($inFirst, $b));
+        $inSecond->assertOk();
+        $this->assertSame($otherProject->getKey(), $this->assignmentOf($inSecond, $b)['project_id'] ?? null);
+    }
+
+    public function test_reassigned_entry_gives_no_assignment(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'occ-a', '2026-10-20');
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
+        $entryId = $this->convertTo($data->organization, $a, $project);
+
+        // Act: core moves the entry to another member
+        TimeEntry::query()->whereKey($entryId)->update([
+            'user_id' => $data->owner->getKey(),
+            'member_id' => $data->ownerMember->getKey(),
+        ]);
+        $read = $this->read();
+
+        // Assert
+        $read->assertOk();
+        $this->assertNull($this->assignmentOf($read, $b));
+        $this->assertNull($this->assignmentOf($read, $a));
+    }
+
+    public function test_archived_project_gives_no_assignment_and_no_fallback(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $first = $this->publicProject($data->organization);
+        $second = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'occ-a', '2026-10-20');
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
+        $c = $this->occurrence($data->user, 'occ-c', '2026-10-19');
+        $this->convertTo($data->organization, $a, $first);
+        $this->travel(5)->seconds();
+        $this->convertTo($data->organization, $c, $second);
+
+        // Act
+        $second->archived_at = Carbon::now();
+        $second->save();
+        $read = $this->read();
+
+        // Assert: the latest conversion is not bookable any more, and the older one is not used instead
+        $read->assertOk();
+        $this->assertNull($this->assignmentOf($read, $b));
+    }
+
+    public function test_project_the_employee_can_no_longer_book_gives_no_assignment(): void
+    {
+        // Arrange: a private project the employee is a member of at conversion time
+        $data = $this->employee();
+        $project = Project::factory()->forOrganization($data->organization)->isPrivate()->create();
+        $projectMember = ProjectMember::factory()->forProject($project)->forMember($data->member)->create();
+        $a = $this->occurrence($data->user, 'occ-a', '2026-10-20');
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
+        $this->convertTo($data->organization, $a, $project);
+        $before = $this->read();
+
+        // Act: the employee is removed from the project
+        ProjectMember::query()->whereKey($projectMember->getKey())->delete();
+        $after = $this->read();
+
+        // Assert
+        $this->assertSame($project->getKey(), $this->assignmentOf($before, $b)['project_id'] ?? null);
+        $after->assertOk();
+        $this->assertNull($this->assignmentOf($after, $b));
+    }
+
+    public function test_done_task_and_deleted_tags_are_dropped(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $task = Task::factory()->forOrganization($data->organization)->forProject($project)->create();
+        $kept = Tag::factory()->forOrganization($data->organization)->create();
+        $deleted = Tag::factory()->forOrganization($data->organization)->create();
+        $a = $this->occurrence($data->user, 'occ-a', '2026-10-20');
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
+        $this->convert($data->organization, [
+            'meeting_ids' => [$a->id],
+            'project_id' => $project->getKey(),
+            'task_id' => $task->getKey(),
+            'tags' => [$kept->getKey(), $deleted->getKey()],
+            'billable' => false,
+        ])->assertJsonPath('results.0.status', 'created');
+
+        // Act
+        $task->done_at = Carbon::now();
+        $task->save();
+        Tag::query()->whereKey($deleted->getKey())->delete();
+        $read = $this->read();
+
+        // Assert: the project stays, the done task and the deleted tag are dropped silently
+        $read->assertOk();
+        $assignment = $this->assignmentOf($read, $b);
+        $this->assertNotNull($assignment);
+        $this->assertSame($project->getKey(), $assignment['project_id']);
+        $this->assertNull($assignment['task_id']);
+        $this->assertNull($assignment['task_name']);
+        $this->assertSame([$kept->getKey()], $assignment['tags']);
+        $this->assertFalse($assignment['billable']);
+    }
+
+    public function test_dismissed_occurrence_and_single_meeting_have_no_assignment(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'occ-a', '2026-10-20');
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
+        $c = $this->occurrence($data->user, 'occ-c', '2026-10-19');
+        $d = $this->meeting($data->user, 'single-d', ['starts_at' => '2026-10-21 11:00:00', 'ends_at' => '2026-10-21 12:00:00']);
+        $this->convertTo($data->organization, $a, $project);
+        $b->dismissed_at = Carbon::now();
+        $b->save();
+
+        // Act
+        $read = $this->getJson(route('microsoft.meetings.index', ['start' => self::WEEK_START, 'end' => self::WEEK_END, 'include_dismissed' => 1], false));
+
+        // Assert
+        $read->assertOk();
+        $this->assertTrue($this->item($read, $b)['dismissed']);
+        $this->assertNull($this->assignmentOf($read, $b));
+        $this->assertNull($this->assignmentOf($read, $d));
+        $this->assertSame($project->getKey(), $this->assignmentOf($read, $c)['project_id'] ?? null);
+        $this->assertSame(1, TimeEntry::query()->count());
+    }
+
+    public function test_without_current_organization_there_is_no_assignment(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $a = $this->occurrence($data->user, 'occ-a', '2026-10-20');
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
+        $this->convertTo($data->organization, $a, $project);
+
+        // Act
+        $data->user->current_team_id = null;
+        $data->user->save();
+        $read = $this->read();
+
+        // Assert
+        $read->assertOk();
+        $this->assertNull($this->assignmentOf($read, $b));
+    }
+
+    public function test_another_users_conversions_never_pre_assign(): void
+    {
+        // Arrange: a colleague in the same organization has an occurrence of the same series id
+        $data = $this->employee();
+        $project = $this->publicProject($data->organization);
+        $colleague = User::factory()->create();
+        Member::factory()->forUser($colleague)->forOrganization($data->organization)->role(Role::Employee)->create();
+        $colleague->currentOrganization()->associate($data->organization);
+        $colleague->save();
+        $this->connectedAccount($colleague);
+        $colleagueOccurrence = $this->occurrence($colleague, 'colleague-occ', '2026-10-20');
+        $b = $this->occurrence($data->user, 'occ-b', '2026-10-22');
+        $c = $this->occurrence($data->user, 'occ-c', '2026-10-19');
+
+        // Act: the colleague converts their occurrence, then the user reads
+        $this->actingAs($colleague);
+        $this->convertTo($data->organization, $colleagueOccurrence, $project);
+        $this->actingAs($data->user);
+        $read = $this->read();
+
+        // Assert
+        $read->assertOk();
+        $this->assertNull($this->assignmentOf($read, $b));
+        $this->assertNull($this->assignmentOf($read, $c));
     }
 }

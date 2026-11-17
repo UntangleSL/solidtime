@@ -5,10 +5,7 @@ declare(strict_types=1);
 namespace App\Microsoft365\Suggestions;
 
 use App\Microsoft365\Models\OutlookMeeting;
-use App\Models\Client;
 use App\Models\Organization;
-use App\Models\Project;
-use App\Models\Task;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Query\JoinClause;
@@ -21,13 +18,19 @@ use Illuminate\Support\Facades\DB;
  * the series and a newer conversion wins. Read only: nothing is ever converted or changed here.
  *
  * Only the user's own links count whose entry still belongs to the user and lives in the given
- * organization (T-05-01). Stateless (Octane).
+ * organization (T-05-01). The latest conversion is then filtered through the core booking rules
+ * (BookableProjects, T-05-03): a project the user can no longer book gives no assignment, with no
+ * fallback to an older conversion; a done task and tags that no longer exist are dropped silently.
+ *
+ * Stateless (Octane).
  */
-final class SeriesAssignmentResolver
+final readonly class SeriesAssignmentResolver
 {
+    public function __construct(private BookableProjects $bookable) {}
+
     /**
      * Assignments of the given meetings, keyed by meeting id. One query for all visible series plus
-     * batched name lookups, whatever the number of meetings (T-05-05).
+     * batched lookups by id, whatever the number of meetings (T-05-05).
      *
      * @param  iterable<OutlookMeeting>  $meetings
      * @return array<string, Assignment>
@@ -48,8 +51,9 @@ final class SeriesAssignmentResolver
             return [];
         }
 
+        $seriesIds = array_map(fn (int|string $series): string => (string) $series, array_keys($meetingIdsBySeries));
         $assignments = [];
-        foreach ($this->assignmentsBySeries($user, $organization, array_map('strval', array_keys($meetingIdsBySeries))) as $series => $assignment) {
+        foreach ($this->assignmentsBySeries($user, $organization, $seriesIds) as $series => $assignment) {
             foreach ($meetingIdsBySeries[$series] ?? [] as $meetingId) {
                 $assignments[$meetingId] = $assignment;
             }
@@ -73,40 +77,52 @@ final class SeriesAssignmentResolver
     private function assignmentsBySeries(User $user, Organization $organization, array $seriesIds): array
     {
         $rows = $this->latestConversions($user, $organization, $seriesIds);
+        if ($rows === []) {
+            return [];
+        }
 
         $projectIds = [];
         $taskIds = [];
+        $tagIds = [];
         foreach ($rows as $row) {
             if ($row['project_id'] !== null) {
                 $projectIds[] = $row['project_id'];
-            }
-            if ($row['task_id'] !== null) {
-                $taskIds[] = $row['task_id'];
+                if ($row['task_id'] !== null) {
+                    $taskIds[] = $row['task_id'];
+                }
+                array_push($tagIds, ...$row['tags']);
             }
         }
-        $projects = $this->projects($organization, array_values(array_unique($projectIds)));
-        $tasks = $this->tasks($organization, array_values(array_unique($taskIds)));
+        $projects = $this->bookable->projects($user, $organization, array_values(array_unique($projectIds)));
+        $tasks = $this->bookable->openTasks($organization, array_values(array_unique($taskIds)));
+        $existingTags = array_flip($this->bookable->existingTags($organization, array_values(array_unique($tagIds))));
 
         $assignments = [];
         foreach ($rows as $series => $row) {
             $projectId = $row['project_id'];
-            // An entry without a project gives nothing to pre-assign
+            // No project, or one the user can no longer book: nothing to pre-assign, and no fallback to
+            // an older conversion of the series
             if ($projectId === null || ! isset($projects[$projectId])) {
                 continue;
             }
-            $task = $row['task_id'] !== null ? ($tasks[$row['task_id']] ?? null) : null;
-            if ($task !== null && $task['project_id'] !== $projectId) {
+            $project = $projects[$projectId];
+
+            // A done task, or one that no longer belongs to the project, is dropped silently
+            $taskId = $row['task_id'];
+            $task = $taskId !== null ? ($tasks[$taskId] ?? null) : null;
+            if ($task === null || $task['project_id'] !== $projectId) {
+                $taskId = null;
                 $task = null;
             }
 
             $assignments[$series] = new Assignment(
                 projectId: $projectId,
-                projectName: $projects[$projectId]['name'],
-                projectColor: $projects[$projectId]['color'],
-                clientName: $projects[$projectId]['client_name'],
-                taskId: $task !== null ? $row['task_id'] : null,
+                projectName: $project['name'],
+                projectColor: $project['color'],
+                clientName: $project['client_name'],
+                taskId: $taskId,
                 taskName: $task['name'] ?? null,
-                tags: $row['tags'],
+                tags: array_values(array_filter($row['tags'], fn (string $tagId): bool => isset($existingTags[$tagId]))),
                 billable: $row['billable'],
                 convertedAt: $row['converted_at'],
             );
@@ -156,6 +172,8 @@ final class SeriesAssignmentResolver
     }
 
     /**
+     * Tag ids of an entry (time_entries.tags is a jsonb array of ids without a foreign key).
+     *
      * @return list<string>
      */
     private function tagIds(?string $json): array
@@ -176,58 +194,5 @@ final class SeriesAssignmentResolver
         }
 
         return array_values(array_unique($ids));
-    }
-
-    /**
-     * @param  list<string>  $projectIds
-     * @return array<string, array{name: string, color: string, client_name: string|null}>
-     */
-    private function projects(Organization $organization, array $projectIds): array
-    {
-        if ($projectIds === []) {
-            return [];
-        }
-
-        $projects = [];
-        $rows = Project::query()
-            ->whereBelongsTo($organization, 'organization')
-            ->whereIn('id', $projectIds)
-            ->addSelect(['projects.id', 'projects.name', 'projects.color', 'client_name' => Client::query()->select('name')->whereColumn('clients.id', 'projects.client_id')])
-            ->toBase()
-            ->get();
-        foreach ($rows as $row) {
-            /** @var object{id: string, name: string, color: string, client_name: string|null} $row */
-            $projects[(string) $row->id] = [
-                'name' => (string) $row->name,
-                'color' => (string) $row->color,
-                'client_name' => $row->client_name !== null ? (string) $row->client_name : null,
-            ];
-        }
-
-        return $projects;
-    }
-
-    /**
-     * @param  list<string>  $taskIds
-     * @return array<string, array{name: string, project_id: string}>
-     */
-    private function tasks(Organization $organization, array $taskIds): array
-    {
-        if ($taskIds === []) {
-            return [];
-        }
-
-        $tasks = [];
-        $rows = Task::query()
-            ->whereBelongsTo($organization, 'organization')
-            ->whereIn('id', $taskIds)
-            ->toBase()
-            ->get(['id', 'name', 'project_id']);
-        foreach ($rows as $row) {
-            /** @var object{id: string, name: string, project_id: string} $row */
-            $tasks[(string) $row->id] = ['name' => (string) $row->name, 'project_id' => (string) $row->project_id];
-        }
-
-        return $tasks;
     }
 }
