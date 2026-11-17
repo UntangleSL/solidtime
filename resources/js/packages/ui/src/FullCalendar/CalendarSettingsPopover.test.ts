@@ -40,7 +40,7 @@ describe('CalendarSettingsPopover weekend switch', () => {
         return wrapper;
     }
 
-    it('shows the weekend switch first, on by default', async () => {
+    it('shows the weekend switch first, off by default', async () => {
         await open({ settings });
 
         const fields = dialog().querySelectorAll('[data-slot="field"]');
@@ -51,7 +51,7 @@ describe('CalendarSettingsPopover weekend switch', () => {
         const toggle = weekendSwitch();
         expect(toggle.id).toBe('calendar-weekends');
         expect(toggle.getAttribute('role')).toBe('switch');
-        expect(toggle.getAttribute('aria-checked')).toBe('true');
+        expect(toggle.getAttribute('aria-checked')).toBe('false');
         expect(dialog().querySelector('label[for="calendar-weekends"]')?.textContent?.trim()).toBe(
             'Show weekends'
         );
@@ -63,7 +63,13 @@ describe('CalendarSettingsPopover weekend switch', () => {
         expect(weekendSwitch().getAttribute('aria-checked')).toBe('false');
     });
 
-    it('emits showWeekends false and keeps the other fields', async () => {
+    it('reflects a stored true as a checked switch', async () => {
+        await open({ settings: { ...settings, showWeekends: true } });
+
+        expect(weekendSwitch().getAttribute('aria-checked')).toBe('true');
+    });
+
+    it('emits showWeekends true from the default and keeps the other fields', async () => {
         const popover = await open({ settings });
 
         weekendSwitch().click();
@@ -71,18 +77,18 @@ describe('CalendarSettingsPopover weekend switch', () => {
 
         const events = popover.emitted('update:settings');
         expect(events).toHaveLength(1);
-        expect(events![0]![0]).toEqual({ ...settings, showWeekends: false });
+        expect(events![0]![0]).toEqual({ ...settings, showWeekends: true });
     });
 
-    it('emits showWeekends true when turned back on', async () => {
-        const popover = await open({ settings: { ...settings, showWeekends: false } });
+    it('emits showWeekends false when turned back off', async () => {
+        const popover = await open({ settings: { ...settings, showWeekends: true } });
 
         weekendSwitch().click();
         await settle();
 
         expect(popover.emitted('update:settings')![0]![0]).toEqual({
             ...settings,
-            showWeekends: true,
+            showWeekends: false,
         });
     });
 

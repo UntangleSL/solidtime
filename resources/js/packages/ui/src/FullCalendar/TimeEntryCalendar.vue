@@ -21,7 +21,12 @@ import CalendarToolbar from './CalendarToolbar.vue';
 import CalendarDayColumn from './CalendarDayColumn.vue';
 import CalendarZoomControls from './CalendarZoomControls.vue';
 import type { CalendarSettings } from './calendarSettings';
-import { DEFAULT_CALENDAR_SETTINGS, sanitizeCalendarSettings } from './calendarSettings';
+import {
+    CALENDAR_SETTINGS_STORAGE_KEY,
+    DEFAULT_CALENDAR_SETTINGS,
+    migrateWeekendsHiddenDefault,
+    sanitizeCalendarSettings,
+} from './calendarSettings';
 import {
     ContextMenu,
     ContextMenuContent,
@@ -113,8 +118,13 @@ const headerRef = ref<HTMLElement | null>(null);
 // The zoom pill sits just below the sticky day header
 const { height: headerHeight } = useElementSize(headerRef, undefined, { box: 'border-box' });
 
+// Before the first read, so the stored pre-change default does not keep weekends visible
+if (typeof window !== 'undefined') {
+    migrateWeekendsHiddenDefault(() => window.localStorage);
+}
+
 const calendarSettings = useLocalStorage<CalendarSettings>(
-    'solidtime:calendar-settings',
+    CALENDAR_SETTINGS_STORAGE_KEY,
     { ...DEFAULT_CALENDAR_SETTINGS },
     // Validate the stored value on read, so a corrupted or hand-edited object cannot break the grid
     { mergeDefaults: (stored, defaults) => sanitizeCalendarSettings({ ...defaults, ...stored }) }
@@ -157,7 +167,7 @@ const {
     // treat the bare date as UTC midnight, landing on the previous local day
     // for negative UTC offsets
     initialDate: props.initialDate ? getLocalizedDayJsFromMinutes(props.initialDate, 0) : null,
-    showWeekends: () => calendarSettings.value.showWeekends !== false,
+    showWeekends: () => calendarSettings.value.showWeekends === true,
 });
 
 const cssBackground = useCssVariable('--color-bg-background');

@@ -9,6 +9,7 @@ import {
     stoppedTimeEntryResponse,
 } from './utils/currentTimeEntry';
 import { createTimeEntryViaApi, updateOrganizationSettingViaApi } from './utils/api';
+import { showCalendarWeekends } from './utils/calendar';
 
 async function goToDashboard(page: Page) {
     await page.goto(PLAYWRIGHT_BASE_URL + '/dashboard');
@@ -142,7 +143,9 @@ test('test that disabling breaks hides every break-creation entry point', async 
     await createTimeEntryViaApi(ctx, { duration: '1h', description: 'Regular work' });
 
     // Calendar: the empty-slot context menu offers "Create Time Entry" but no "Add Break",
-    // and the edit modal drops the work-time/break type selector
+    // and the edit modal drops the work-time/break type selector. The entry is today: show
+    // weekends so it is visible when CI runs on a Saturday or Sunday.
+    await showCalendarWeekends(page);
     await page.goto(PLAYWRIGHT_BASE_URL + '/calendar');
     await expect(page.locator('.fc')).toBeVisible();
     const event = page.locator('.fc-event').filter({ hasText: 'Regular work' }).first();

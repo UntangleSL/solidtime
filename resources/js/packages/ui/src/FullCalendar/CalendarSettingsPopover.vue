@@ -22,7 +22,7 @@ const snapMinutes = ref(String(props.settings.snapMinutes));
 const startHour = ref(String(props.settings.startHour));
 const endHour = ref(String(props.settings.endHour));
 const slotMinutes = ref(String(props.settings.slotMinutes));
-const showWeekends = ref(props.settings.showWeekends !== false);
+const showWeekends = ref(props.settings.showWeekends === true);
 
 watch(
     () => props.settings,
@@ -31,7 +31,7 @@ watch(
         startHour.value = String(s.startHour);
         endHour.value = String(s.endHour);
         slotMinutes.value = String(s.slotMinutes);
-        showWeekends.value = s.showWeekends !== false;
+        showWeekends.value = s.showWeekends === true;
     }
 );
 

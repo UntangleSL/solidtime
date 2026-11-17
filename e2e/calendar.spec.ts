@@ -15,6 +15,12 @@ import {
     updateUserProfileViaApi,
     updateOrganizationSettingViaApi,
 } from './utils/api';
+import { showCalendarWeekends } from './utils/calendar';
+
+// Weekends are hidden by default; these tests work on "today", so show them (CI may run on a weekend)
+test.beforeEach(async ({ page }) => {
+    await showCalendarWeekends(page);
+});
 
 async function goToCalendar(page: Page) {
     await page.goto(PLAYWRIGHT_BASE_URL + '/calendar');
@@ -528,6 +534,7 @@ test.describe('Employee Calendar Isolation', () => {
             { description: employeeDescription, duration: '30min' }
         );
 
+        await showCalendarWeekends(employee.page);
         await employee.page.goto(PLAYWRIGHT_BASE_URL + '/calendar');
         await expect(employee.page.locator('.fc')).toBeVisible({ timeout: 10000 });
 

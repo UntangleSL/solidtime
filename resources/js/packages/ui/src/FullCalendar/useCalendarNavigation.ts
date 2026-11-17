@@ -8,11 +8,12 @@ export function useCalendarNavigation(callbacks: {
     onDatesChange: (payload: { start: Dayjs; end: Dayjs }) => void;
     scrollToCurrentTime: () => void;
     initialDate?: Dayjs | null;
-    // Fork (UX-01): week view hides Saturday and Sunday when this returns false. Missing means shown.
+    // Fork (UX-01): week view shows Saturday and Sunday only when this returns true. Missing means
+    // hidden, matching the calendar settings default.
     showWeekends?: () => boolean;
 }) {
     function weekendsHidden(): boolean {
-        return callbacks.showWeekends?.() === false;
+        return callbacks.showWeekends?.() !== true;
     }
 
     function isWeekend(day: Dayjs): boolean {

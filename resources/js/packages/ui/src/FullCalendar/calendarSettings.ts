@@ -3,8 +3,9 @@ export interface CalendarSettings {
     startHour: number;
     endHour: number;
     slotMinutes: number;
-    // Week view shows Saturday and Sunday unless this is false; undefined means shown (the default).
-    // Optional so existing typed settings objects stay valid.
+    // Week view shows Saturday and Sunday only when this is true; undefined means hidden (the
+    // default since the owner UAT of Phase 3.1). Optional so existing typed settings objects stay
+    // valid.
     showWeekends?: boolean;
 }
 
@@ -16,7 +17,7 @@ export const DEFAULT_CALENDAR_SETTINGS: Required<CalendarSettings> = {
     startHour: 0,
     endHour: 24,
     slotMinutes: 15,
-    showWeekends: true,
+    showWeekends: false,
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -60,4 +61,43 @@ export function sanitizeCalendarSettings(raw: unknown): Required<CalendarSetting
         showWeekends:
             typeof raw.showWeekends === 'boolean' ? raw.showWeekends : defaults.showWeekends,
     };
+}
+
+export const CALENDAR_SETTINGS_STORAGE_KEY = 'solidtime:calendar-settings';
+export const WEEKENDS_HIDDEN_DEFAULT_MIGRATION_KEY = 'solidtime:calendar-weekends-hidden-default';
+
+/**
+ * Weekends used to be shown by default, and useLocalStorage writes the defaults on first read,
+ * so every browser that opened the calendar before the change stores `showWeekends: true`
+ * without anyone having chosen it. Runs once per browser (guarded by its own key): resets that
+ * stored true to false so the new default reaches existing users; a choice made afterwards sticks.
+ */
+export function migrateWeekendsHiddenDefault(
+    getStorage: () => Pick<Storage, 'getItem' | 'setItem'>
+): void {
+    try {
+        // Inside the try: reading window.localStorage itself throws when storage is blocked
+        const storage = getStorage();
+        if (storage.getItem(WEEKENDS_HIDDEN_DEFAULT_MIGRATION_KEY) !== null) {
+            return;
+        }
+        const raw = storage.getItem(CALENDAR_SETTINGS_STORAGE_KEY);
+        if (raw !== null) {
+            let stored: unknown = null;
+            try {
+                stored = JSON.parse(raw);
+            } catch {
+                // Corrupted value: sanitizeCalendarSettings falls back to the defaults on read
+            }
+            if (isPlainObject(stored) && stored.showWeekends === true) {
+                storage.setItem(
+                    CALENDAR_SETTINGS_STORAGE_KEY,
+                    JSON.stringify({ ...stored, showWeekends: false })
+                );
+            }
+        }
+        storage.setItem(WEEKENDS_HIDDEN_DEFAULT_MIGRATION_KEY, '1');
+    } catch {
+        // Storage unavailable (private mode, quota): the calendar still works on the defaults
+    }
 }

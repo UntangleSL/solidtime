@@ -143,8 +143,13 @@ describe('datesAffectingSettingsKey', () => {
         expect(datesAffectingSettingsKey({ ...base, showWeekends: false })).not.toBe(key);
     });
 
-    it('treats a missing showWeekends as shown', () => {
+    it('treats a missing showWeekends as hidden', () => {
         const { showWeekends: _omitted, ...withoutWeekends } = base;
-        expect(datesAffectingSettingsKey(withoutWeekends)).toBe(datesAffectingSettingsKey(base));
+        expect(datesAffectingSettingsKey(withoutWeekends)).toBe(
+            datesAffectingSettingsKey({ ...base, showWeekends: false })
+        );
+        expect(datesAffectingSettingsKey(withoutWeekends)).not.toBe(
+            datesAffectingSettingsKey(base)
+        );
     });
 });

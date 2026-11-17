@@ -91,14 +91,22 @@ describe('useCalendarNavigation weekend hiding', () => {
         }
     });
 
-    it('shows seven days when the getter is missing or true', () => {
+    it('hides the weekend when the getter is missing', () => {
         const withoutGetter = setup();
-        expect(withoutGetter.nav.viewDays.value).toHaveLength(7);
-        expect(format(withoutGetter.nav.viewDays.value)[0]).toBe('2026-11-16');
-        expect(format(withoutGetter.nav.viewDays.value)[6]).toBe('2026-11-22');
+        expect(format(withoutGetter.nav.viewDays.value)).toEqual([
+            '2026-11-16',
+            '2026-11-17',
+            '2026-11-18',
+            '2026-11-19',
+            '2026-11-20',
+        ]);
+    });
 
+    it('shows seven days when the getter returns true', () => {
         const withTrue = setup({ showWeekends: () => true });
         expect(withTrue.nav.viewDays.value).toHaveLength(7);
+        expect(format(withTrue.nav.viewDays.value)[0]).toBe('2026-11-16');
+        expect(format(withTrue.nav.viewDays.value)[6]).toBe('2026-11-22');
     });
 
     it('reacts when the setting flips', () => {

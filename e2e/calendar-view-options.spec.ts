@@ -2,11 +2,15 @@ import type { Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 import { PLAYWRIGHT_BASE_URL } from '../playwright/config';
 import { test } from '../playwright/fixtures';
+import {
+    CALENDAR_SETTINGS_KEY as SETTINGS_KEY,
+    WEEKENDS_HIDDEN_DEFAULT_MIGRATION_KEY,
+    showCalendarWeekends,
+} from './utils/calendar';
 
 // Calendar view options (fork, Phase 3.1): weekend visibility; zoom tests are appended by 03.1-06.
 // Test users run in UTC with a monday week start. No test depends on today's weekday.
-
-const SETTINGS_KEY = 'solidtime:calendar-settings';
+// Weekends are hidden by default (owner UAT, 2026-11-17); the switch turns them on.
 
 async function goToCalendar(page: Page, query = '') {
     await page.goto(PLAYWRIGHT_BASE_URL + '/calendar' + query);
@@ -69,36 +73,40 @@ test.describe('Calendar view options: weekends', () => {
         await clearCalendarSettings(page);
     });
 
-    test('weekends can be hidden and the choice persists across reload', async ({ page }) => {
+    test('weekends are hidden by default, can be shown, and the choice persists across reload', async ({
+        page,
+    }) => {
         await goToCalendar(page);
+        await expect(page.locator('.fc-col-header-cell')).toHaveCount(5);
+        const hidden = await headerDates(page);
+        expect(hidden.filter((d) => [0, 6].includes(utcWeekday(d)))).toEqual([]);
+
+        await openSettingsPopover(page);
+        await expect(weekendSwitch(page)).toHaveAttribute('aria-checked', 'false');
+        await weekendSwitch(page).click();
+        await expect(weekendSwitch(page)).toHaveAttribute('aria-checked', 'true');
+        await page.keyboard.press('Escape');
+
+        await expect(page.locator('.fc-col-header-cell')).toHaveCount(7);
+        const shown = await headerDates(page);
+        expect(shown.filter((d) => [0, 6].includes(utcWeekday(d)))).toHaveLength(2);
+
+        expect((await readStoredSettings(page)).showWeekends).toBe(true);
+
+        await page.reload();
+        await expect(page.locator('.fc')).toBeVisible();
         await expect(page.locator('.fc-col-header-cell')).toHaveCount(7);
 
         await openSettingsPopover(page);
         await expect(weekendSwitch(page)).toHaveAttribute('aria-checked', 'true');
         await weekendSwitch(page).click();
-        await expect(weekendSwitch(page)).toHaveAttribute('aria-checked', 'false');
         await page.keyboard.press('Escape');
 
         await expect(page.locator('.fc-col-header-cell')).toHaveCount(5);
-        const hidden = await headerDates(page);
-        expect(hidden.filter((d) => [0, 6].includes(utcWeekday(d)))).toEqual([]);
-
         expect((await readStoredSettings(page)).showWeekends).toBe(false);
-
-        await page.reload();
-        await expect(page.locator('.fc')).toBeVisible();
-        await expect(page.locator('.fc-col-header-cell')).toHaveCount(5);
-
-        await openSettingsPopover(page);
-        await expect(weekendSwitch(page)).toHaveAttribute('aria-checked', 'false');
-        await weekendSwitch(page).click();
-        await page.keyboard.press('Escape');
-
-        await expect(page.locator('.fc-col-header-cell')).toHaveCount(7);
-        expect((await readStoredSettings(page)).showWeekends).toBe(true);
     });
 
-    test('an old stored object without the key still shows weekends', async ({ page }) => {
+    test('an old stored object without the key hides weekends', async ({ page }) => {
         await setCalendarSettings(page, {
             snapMinutes: 15,
             startHour: 0,
@@ -106,9 +114,49 @@ test.describe('Calendar view options: weekends', () => {
             slotMinutes: 15,
         });
 
-        await expect(page.locator('.fc-col-header-cell')).toHaveCount(7);
+        await expect(page.locator('.fc-col-header-cell')).toHaveCount(5);
         await openSettingsPopover(page);
-        await expect(weekendSwitch(page)).toHaveAttribute('aria-checked', 'true');
+        await expect(weekendSwitch(page)).toHaveAttribute('aria-checked', 'false');
+    });
+
+    test('the stored pre-change default is reset once, then a new choice sticks', async ({
+        page,
+    }) => {
+        // A browser from before the change: the old default stored, the migration not yet run
+        await goToCalendar(page);
+        await page.evaluate(
+            ([settingsKey, migrationKey]) => {
+                localStorage.removeItem(migrationKey);
+                localStorage.setItem(
+                    settingsKey,
+                    JSON.stringify({
+                        snapMinutes: 30,
+                        startHour: 0,
+                        endHour: 24,
+                        slotMinutes: 15,
+                        showWeekends: true,
+                    })
+                );
+            },
+            [SETTINGS_KEY, WEEKENDS_HIDDEN_DEFAULT_MIGRATION_KEY] as const
+        );
+        await page.reload();
+        await expect(page.locator('.fc')).toBeVisible({ timeout: 10000 });
+
+        await expect(page.locator('.fc-col-header-cell')).toHaveCount(5);
+        const migrated = await readStoredSettings(page);
+        expect(migrated.showWeekends).toBe(false);
+        expect(migrated.snapMinutes).toBe(30);
+
+        await openSettingsPopover(page);
+        await weekendSwitch(page).click();
+        await page.keyboard.press('Escape');
+        await expect(page.locator('.fc-col-header-cell')).toHaveCount(7);
+
+        await page.reload();
+        await expect(page.locator('.fc')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('.fc-col-header-cell')).toHaveCount(7);
+        expect((await readStoredSettings(page)).showWeekends).toBe(true);
     });
 
     test('tampered settings fall back to defaults', async ({ page }) => {
@@ -122,10 +170,10 @@ test.describe('Calendar view options: weekends', () => {
             snapMinutes: 0,
             startHour: 30,
             endHour: -1,
-            showWeekends: 'no',
+            showWeekends: 'yes',
         });
 
-        await expect(page.locator('.fc-col-header-cell')).toHaveCount(7);
+        await expect(page.locator('.fc-col-header-cell')).toHaveCount(5);
         await expect(page.locator('.fc-timegrid-slot-lane[data-time="00:00:00"]')).toHaveCount(1);
         await expect(lanes).toHaveCount(defaultLaneCount);
     });
@@ -138,6 +186,25 @@ test.describe('Calendar view options: weekends', () => {
 
         await expect(page.locator('.fc-col-header-cell')).toHaveCount(1);
         expect(await headerDates(page)).toEqual([saturday]);
+    });
+
+    test('with the default settings a weekend deep link opens in day view', async ({ page }) => {
+        const sunday = comingWeekday(0);
+
+        await goToCalendar(page, `?date=${sunday}`);
+
+        await expect(page.locator('.fc-col-header-cell')).toHaveCount(1);
+        expect(await headerDates(page)).toEqual([sunday]);
+    });
+
+    test('a weekend deep link stays in week view when weekends are shown', async ({ page }) => {
+        await setCalendarSettings(page, { showWeekends: true });
+        const saturday = comingWeekday(6);
+
+        await goToCalendar(page, `?date=${saturday}`);
+
+        await expect(page.locator('.fc-col-header-cell')).toHaveCount(7);
+        expect(await headerDates(page)).toContain(saturday);
     });
 
     test('day view keeps one-day navigation with weekends hidden', async ({ page }) => {
@@ -240,6 +307,8 @@ function zoomIndicator(page: Page) {
 
 test.describe('Calendar view options: zoom', () => {
     test.beforeEach(async ({ page }) => {
+        // Weekends shown: a test below places a meeting on "today" (CI may run on a weekend)
+        await showCalendarWeekends(page);
         await clearCalendarSettings(page);
     });
 

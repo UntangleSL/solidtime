@@ -3,6 +3,12 @@ import { test } from '../playwright/fixtures';
 import { expect } from '@playwright/test';
 import type { Page, TestInfo } from '@playwright/test';
 import { createProjectViaApi, createTimeEntryWithTimestampsViaApi } from './utils/api';
+import { showCalendarWeekends } from './utils/calendar';
+
+// Weekends are hidden by default; these tests work on "today", so show them (CI may run on a weekend)
+test.beforeEach(async ({ page }) => {
+    await showCalendarWeekends(page);
+});
 
 // Phase 3.1 meeting look (UX-02, D-02, D-04). The CI Playwright environment has no Microsoft
 // integration, so meetings are injected through window.__TEST_SET_OUTLOOK_MEETINGS__ like in

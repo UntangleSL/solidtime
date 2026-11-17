@@ -3,6 +3,12 @@ import { test } from '../playwright/fixtures';
 import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { createBareTimeEntryViaApi } from './utils/api';
+import { showCalendarWeekends } from './utils/calendar';
+
+// Weekends are hidden by default; these tests work on "today", so show them (CI may run on a weekend)
+test.beforeEach(async ({ page }) => {
+    await showCalendarWeekends(page);
+});
 
 // The CI Playwright environment sets no SOLIDTIME_MICROSOFT_* variables, so the integration is off
 // and there is no Graph. Ghosts are injected through window.__TEST_SET_OUTLOOK_MEETINGS__, the same

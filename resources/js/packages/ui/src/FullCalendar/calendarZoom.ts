@@ -146,6 +146,6 @@ export function datesAffectingSettingsKey(settings: CalendarSettings): string {
         settings.snapMinutes,
         settings.startHour,
         settings.endHour,
-        settings.showWeekends !== false,
+        settings.showWeekends === true,
     ].join('|');
 }

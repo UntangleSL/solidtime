@@ -3,6 +3,12 @@ import { expect } from '@playwright/test';
 import { PLAYWRIGHT_BASE_URL } from '../playwright/config';
 import { test } from '../playwright/fixtures';
 import { createBareTimeEntryViaApi, createTimeEntryWithTimestampsViaApi } from './utils/api';
+import { showCalendarWeekends } from './utils/calendar';
+
+// Weekends are hidden by default; these tests work on "today", so show them (CI may run on a weekend)
+test.beforeEach(async ({ page }) => {
+    await showCalendarWeekends(page);
+});
 
 async function goToCalendar(page: Page) {
     await page.goto(PLAYWRIGHT_BASE_URL + '/calendar');
