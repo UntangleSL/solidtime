@@ -41,12 +41,13 @@ import { fillLabel } from './labels';
 import { readLastProject, rememberLastProject, resolvePrefillProject } from './lastProject';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
-// Mini form that turns one Outlook meeting into a time entry (Phase 4, UI-SPEC section 3; D-02,
-// D-03). It lives in the meeting's detail panel (form mode) and talks only to the injected Outlook
+// Mini form that turns Outlook meetings into time entries (Phase 4). Single mode (UI-SPEC section
+// 3; D-02, D-03) lives in the meeting's detail panel (form mode); batch mode (section 7; D-07,
+// D-08) lives in the popover of the floating selection bar. Both talk only to the injected Outlook
 // context, which owns the request and the cache. Pickers are the core ones, imported unchanged.
 // Meeting values are only ever rendered through text interpolation and input values.
 const props = defineProps<{
-    mode: 'single';
+    mode: 'single' | 'batch';
     meetings: OutlookMeeting[];
     labels: OutlookCalendarLabels;
 }>();
@@ -76,20 +77,33 @@ const organizationId = getCurrentOrganizationId() ?? null;
 const currency = getOrganizationCurrencyString();
 const enableEstimatedTime = isAllowedToPerformPremiumAction();
 
+// The mode is fixed for the life of the form (the hosts mount one form per mode).
+const isBatch = props.mode === 'batch';
+
 const meeting = computed(() => props.meetings[0]!);
+
+function byStartThenId(a: OutlookMeeting, b: OutlookMeeting): number {
+    const diff = new Date(a.start).getTime() - new Date(b.start).getTime();
+    if (diff !== 0) return diff;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+// Batch: the meetings as they were when the form opened, in start order. Converted meetings leave
+// the selection (and so the host's list) while the form still has to show their row.
+const batchMeetings: OutlookMeeting[] = isBatch ? [...props.meetings].sort(byStartThenId) : [];
 
 const titleId = `outlook-convert-title-${useId()}`;
 const rootEl = ref<HTMLElement | null>(null);
 
-const description = ref(meeting.value.subject?.trim() ? meeting.value.subject : '');
+const description = ref(!isBatch && meeting.value.subject?.trim() ? meeting.value.subject : '');
 const projectId = ref<string | null>(null);
 const taskId = ref<string | null>(null);
 const selectedTags = ref<string[]>([]);
 const billable = ref(false);
 // Localized timestamps (TimePickerSimple edits hours and minutes only, so the dates stay the
 // meeting's own days, D-03).
-const localStart = ref(getLocalizedDayJs(meeting.value.start).format());
-const localEnd = ref(getLocalizedDayJs(meeting.value.end).format());
+const localStart = ref(isBatch ? '' : getLocalizedDayJs(meeting.value.start).format());
+const localEnd = ref(isBatch ? '' : getLocalizedDayJs(meeting.value.end).format());
 
 const saving = ref(false);
 const projectError = ref(false);
@@ -212,11 +226,17 @@ function focusPicker(): void {
     pickerTrigger()?.focus();
 }
 
+const submitTestId = isBatch ? 'outlook-batch-submit' : 'outlook-convert-submit';
+
 function focusSubmit(): void {
-    rootEl.value?.querySelector<HTMLElement>('[data-testid="outlook-convert-submit"]')?.focus();
+    rootEl.value?.querySelector<HTMLElement>(`[data-testid="${submitTestId}"]`)?.focus();
 }
 
-async function submit(): Promise<void> {
+function submit(): Promise<void> {
+    return isBatch ? submitBatch() : submitSingle();
+}
+
+async function submitSingle(): Promise<void> {
     if (saving.value) return;
     serverError.value = null;
 
@@ -273,6 +293,67 @@ async function submit(): Promise<void> {
     focusSubmit();
 }
 
+// --- Batch mode (D-07): one request for every listed meeting, no description and no times (each
+// meeting keeps its own time and its subject becomes the description, server side).
+const batchCount = computed(() => batchMeetings.length);
+
+function plural(one: string, many: string, count: number): string {
+    return count === 1 ? one : fillLabel(many, { count: String(count) });
+}
+
+const batchTitle = computed(() =>
+    plural(props.labels.assign_one, props.labels.assign_many, batchCount.value)
+);
+const batchSubmitLabel = computed(() =>
+    plural(props.labels.batch_submit_one, props.labels.batch_submit_many, batchCount.value)
+);
+
+// "Tue 10:00 – 11:00" (the end day is repeated only when the meeting ends on another day).
+function rowWhen(item: OutlookMeeting): string {
+    const start = getLocalizedDayJs(item.start);
+    const end = getLocalizedDayJs(item.end);
+    const startTime = formatTime(item.start, timeFormat.value);
+    const endTime = formatTime(item.end, timeFormat.value);
+    return start.isSame(end, 'day')
+        ? `${start.format('ddd')} ${startTime} – ${endTime}`
+        : `${start.format('ddd')} ${startTime} – ${end.format('ddd')} ${endTime}`;
+}
+
+async function submitBatch(): Promise<void> {
+    if (saving.value) return;
+
+    if (!projectId.value) {
+        projectError.value = true;
+        await nextTick();
+        focusPicker();
+        return;
+    }
+    if (!context) return;
+
+    const ids = batchMeetings.map((item) => item.id);
+    const project = projectId.value;
+    saving.value = true;
+    emit('busy', true);
+    let results: OutlookConversionResult[];
+    try {
+        results = await context.convert(ids, {
+            project_id: project,
+            task_id: taskId.value,
+            tags: [...selectedTags.value],
+            billable: billable.value,
+        });
+    } finally {
+        saving.value = false;
+        emit('busy', false);
+    }
+    if (results.length === 0) return;
+
+    if (results.every((result) => result.status !== 'failed')) {
+        if (organizationId) rememberLastProject(organizationId, project);
+        emit('done', results);
+    }
+}
+
 // Ctrl/Cmd+Enter submits from any field of the form. Open pickers render in their own layers
 // (portaled), so their Enter never reaches this handler.
 function onKeydown(event: KeyboardEvent): void {
@@ -305,14 +386,15 @@ onMounted(() => {
     <div
         ref="rootEl"
         class="space-y-4"
-        data-testid="outlook-convert-form"
+        :data-testid="isBatch ? 'outlook-batch-form' : 'outlook-convert-form'"
         :aria-busy="saving ? 'true' : undefined"
         @keydown="onKeydown">
         <div class="min-w-0">
             <h3 :id="titleId" class="text-sm font-semibold text-text-primary">
-                {{ labels.create_entry }}
+                {{ isBatch ? batchTitle : labels.create_entry }}
             </h3>
             <p
+                v-if="!isBatch"
                 class="mt-1 flex min-w-0 items-center gap-1 text-xs text-text-tertiary tabular-nums"
                 data-testid="outlook-convert-context">
                 <CalendarDays class="size-3 shrink-0" aria-hidden="true" />
@@ -320,8 +402,25 @@ onMounted(() => {
             </p>
         </div>
 
+        <ul v-if="isBatch" role="list" class="m-0 max-h-40 list-none overflow-y-auto p-0">
+            <li
+                v-for="item in batchMeetings"
+                :key="item.id"
+                class="flex min-h-8 items-center gap-2"
+                data-testid="outlook-batch-row">
+                <span class="flex size-4 shrink-0 items-center justify-center"></span>
+                <span class="min-w-0 flex-1 truncate text-xs font-semibold text-text-primary">
+                    {{ item.subject?.trim() ? item.subject : labels.no_subject }}
+                </span>
+                <span class="shrink-0 text-right text-xs text-text-tertiary tabular-nums">
+                    {{ rowWhen(item) }}
+                </span>
+            </li>
+        </ul>
+
         <fieldset :disabled="saving" class="m-0 min-w-0 space-y-4 border-0 p-0">
             <TextInput
+                v-if="!isBatch"
                 v-model="description"
                 type="text"
                 class="block w-full"
@@ -385,7 +484,7 @@ onMounted(() => {
                 </Select>
             </div>
 
-            <Field :data-invalid="timeError ? 'true' : undefined" class="gap-2">
+            <Field v-if="!isBatch" :data-invalid="timeError ? 'true' : undefined" class="gap-2">
                 <div class="grid grid-cols-2 gap-2">
                     <div class="min-w-0 space-y-2">
                         <FieldLabel class="text-sm font-normal" :for="`${titleId}-start`">
@@ -417,6 +516,8 @@ onMounted(() => {
             </Field>
         </fieldset>
 
+        <p v-if="isBatch" class="text-xs text-text-tertiary">{{ labels.batch_note }}</p>
+
         <p
             v-if="serverError"
             role="alert"
@@ -433,9 +534,9 @@ onMounted(() => {
             <PrimaryButton
                 type="button"
                 :loading="saving"
-                data-testid="outlook-convert-submit"
+                :data-testid="submitTestId"
                 @click="submit">
-                {{ labels.create_submit }}
+                {{ isBatch ? batchSubmitLabel : labels.create_submit }}
             </PrimaryButton>
         </div>
     </div>
