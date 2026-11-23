@@ -326,9 +326,11 @@ Plans:
 **Depends on**: Phase 4 (can run in parallel with Phase 5)
 **Requirements**: OSYNC-01, OSYNC-02, OSYNC-03
 **Success Criteria** (what must be TRUE):
-  1. After a converted meeting is moved, cancelled or removed in Outlook and the calendar syncs, its time entry shows an "out of sync" marker describing what changed (old vs new time, or cancelled/removed).
-  2. For a flagged entry, user can keep it as is (the flag clears), adjust it to the new Outlook time, or delete it.
-  3. No sync ever modifies or deletes a time entry; editing an entry's time in solidtime alone never flags it, and Graph errors or outages never flag it.
+  1. An entry of a meeting that had already started is never changed or flagged by any Outlook change. If that meeting was moved, it shows again at its new slot with "Create time entry" or "Move my entry here".
+  2. When a meeting that has not started yet is moved, its unedited entry follows the new time automatically.
+  3. An entry the user edited, or one whose meeting was cancelled or removed, is flagged with what changed and offers Keep / Adjust / Delete.
+  4. The calendar toolbar shows "N out of sync", counting only future entries and those from the last 60 days. A daily job keeps it current for weeks the user has not opened.
+  5. Nothing is ever deleted automatically. Subject or attendee changes, the user's own edits, and Graph errors or outages never flag or change an entry.
 
 **Plans**: TBD
 **Research focus**: how cancelled, declined and removed meetings appear in `calendarView` vs direct event lookups, per the Phase 1 decision document

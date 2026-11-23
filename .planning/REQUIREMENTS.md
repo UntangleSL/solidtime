@@ -63,8 +63,13 @@ Revised 2026-11-17 (owner): instead of rules the user must create, assignments a
 
 ### Out-of-Sync Detection (OSYNC)
 
-- [ ] **OSYNC-01**: If a meeting already converted to a time entry is moved, cancelled or removed in Outlook, the time entry is flagged as "out of sync" in the calendar, showing what changed
-- [ ] **OSYNC-02**: Time entries are never modified or deleted automatically because of Outlook changes; user edits to entry times alone never trigger the flag; Graph errors never trigger the flag
+- [ ] **OSYNC-01**: For entries created from meetings whose recorded start is in the future or within the last 60 days, Outlook changes are checked on calendar sync and by a daily background job. A meeting that had already started is never flagged and its entry is never changed. If such a meeting was moved, it shows again at its new slot, where the user can create a second entry or move the existing one there.
+- [ ] **OSYNC-02**: For a meeting that had not started:
+  - If it is moved and the entry still has the meeting's original times, the entry follows the new Outlook time automatically.
+  - If the user had edited the entry's times, or the meeting was cancelled or removed, the entry is flagged "out of sync" with what changed, and a toolbar counter shows the number of flagged entries.
+  - Entries are never deleted automatically. Subject or attendee changes, the user's own edits, and Graph errors never flag or change anything.
+
+  (Revised 2026-11-23, owner.)
 - [ ] **OSYNC-03**: For a flagged entry, user can choose: keep as is (clears flag), adjust to the new Outlook time, or delete the entry
 
 ### Operations (OPS)

@@ -68,7 +68,7 @@ A user opens the solidtime calendar and their Outlook meetings are already there
 - **Security**: refresh tokens encrypted at rest (`encrypted` cast), `$hidden`, excluded from audits/logs, state + PKCE validated, deleted with the user
 - **Deployment**: Docker image on Untangle's own Dokploy server — redirect URI must match the Dokploy public URL over HTTPS
 - **Mergeability**: changes isolated so upstream solidtime updates can still be merged
-- **Data safety**: Outlook changes never modify or delete existing time entries automatically
+- **Data safety**: Outlook changes never delete time entries and never modify entries of meetings that already started. The only automatic change: an entry of a meeting that has not started yet, and that the user has not edited, moves to the meeting's new Outlook time (owner, 2026-11-23)
 
 ## Key Decisions
 
