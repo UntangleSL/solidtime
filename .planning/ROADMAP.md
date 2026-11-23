@@ -332,7 +332,39 @@ Plans:
   4. The calendar toolbar shows "N out of sync", counting only future entries and those from the last 60 days. A daily job keeps it current for weeks the user has not opened.
   5. Nothing is ever deleted automatically. Subject or attendee changes, the user's own edits, and Graph errors or outages never flag or change an entry.
 
-**Plans**: TBD
+**Plans**: 17 plans
+
+Plans:
+**Wave 1**
+- [ ] 06-01-PLAN.md — Tracer: a not-started moved meeting moves its unedited entry through core on the next sync; link state columns + active-only unique index + snapshot backfill; pure rules matrix (local); docs aligned with D-12 (wave 1, CI anchor)
+- [ ] 06-02-PLAN.md — Graph lookup of one occurrence (GET /me/events/{id}) with the removed / cancelled / moved mapping and Phase 3 failure rules; out_of_sync config block (local unit tests) (wave 1)
+- [ ] 06-03-PLAN.md — Client foundation: 47 en/es keys (177 labels), types, defensive parsing, keep / adjust / move calls, reason and range helpers, aria-describedby helper, amber contrast rows (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 06-04-PLAN.md — Core update path and applier safety: updater contract, job-context auth reset, blocked org, stale observations, refusal -> flag, release moves the cached meeting (wave 2, CI anchor)
+- [ ] 06-05-PLAN.md — Interactive sync: absent linked meetings confirmed by lookups (removed), full sync matrix, throttled lookups, auto_adjusted in the sync answer (wave 2)
+- [ ] 06-06-PLAN.md — Read: out_of_sync items of the whole window, auto_adjusted, only active links hide a meeting, moved_from for D-03, empty under impersonation / disconnect (wave 2)
+- [ ] 06-07-PLAN.md — Composable: flags, review request, keep / adjust / delete / move with feedback, jump to first, auto-adjust announcement, test-hook options (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 06-08-PLAN.md — Keep / Adjust / Move my entry here endpoints, second conversion of a released occurrence, route count 11, calendar URLs (wave 3, CI anchor)
+- [ ] 06-09-PLAN.md — Daily check: m365:check-out-of-sync at 05:30 Europe/Madrid from the fork provider, per-user queued job (≤ 300 lookups, throttle stop), Microsoft variables on queue and scheduler (D-20) (wave 3)
+- [ ] 06-10-PLAN.md — Out-of-sync marker, auto-adjust note on the origin icon, "Review Outlook change" and "Move my entry here" menu items (wave 3)
+- [ ] 06-11-PLAN.md — Review popover: Keep / Adjust / two-step Delete with loading, failure, stale and focus rules (wave 3)
+- [ ] 06-12-PLAN.md — D-03 meeting UI: moved block in the panel, hover note, block label and pending state (wave 3)
+- [ ] 06-13-PLAN.md — Toolbar counter "N out of sync" with jump to the first flagged entry (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 06-14-PLAN.md — Calendar wiring: entry-menu slot and goToDate core seams, Calendar.vue fills, Phase 6 ledger section (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 06-15-PLAN.md — Browser proof of review, adjust, keep, confirmed delete, counter jump, entry menu, move my entry here and a second entry; Playwright gate (wave 5, CI anchor)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 06-16-PLAN.md — Release candidate: ledger reconciled, release sha green in ten workflows, commits listed, compose pinned; then the orchestrator deploys without owner approval (D-15) (wave 6)
+
+**Wave 7** *(blocked on the orchestrator's deploy)*
+- [ ] 06-17-PLAN.md — Public checks on production, runbook history row, STATE updated, owner UAT queued (wave 7)
 **Research focus**: how cancelled, declined and removed meetings appear in `calendarView` vs direct event lookups, per the Phase 1 decision document
 **UI hint**: yes
 
