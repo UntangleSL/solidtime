@@ -51,6 +51,13 @@ Covers OSYNC-01..03 as revised on 2026-11-23. Cleanup on user/org deletion, impe
 - **D-14:** Privacy and impersonation rules are unchanged (Phase 3 D-15/D-16/D-22). An impersonating admin sees no flags and cannot act on them.
 - **D-15:** The release ends with an owner-free deploy as soon as CI is green, because the system is not in production.
 
+### Decided after research (2026-11-23, orchestrator under owner delegation)
+- **D-16:** "Keep as is" on a moved flag accepts the new Outlook time as the new reference (snapshot := new time), so the same move never flags again; a later move compares against it.
+- **D-17:** A flag clears by itself when Outlook returns to the recorded time (or the meeting reappears un-cancelled) before the user acts.
+- **D-18:** A not-started meeting that becomes all-day is flagged and never adjusted automatically ("Adjust" hidden; Keep / Delete only).
+- **D-19:** Flags, marker and counter are hidden while the user is disconnected from Microsoft (and during impersonation, D-14); they come back after reconnecting.
+- **D-20:** The daily job needs the M365 env vars on the queue and scheduler services in the fork compose file (values already in the Dokploy Environment; no owner action).
+
 ### Claude's Discretion
 - Where the snapshot and flag are stored (columns on `outlook_meeting_links` or a new table).
 - How the snapshot is backfilled for links created before this phase: from the cached meeting when available, otherwise from the entry times.
