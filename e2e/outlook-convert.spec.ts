@@ -62,8 +62,8 @@ const LABELS = {
     online: 'Online meeting',
     open_in_outlook: 'Open in Outlook',
     opens_new_tab: '(opens in a new tab)',
-    dismiss: 'Dismiss meeting',
-    restore: 'Restore meeting',
+    dismiss: 'Dismiss',
+    restore: 'Restore',
     hover_hint: 'Click for details',
     // Phase 4: assigning meetings to projects
     create_entry: 'Create time entry',
@@ -646,6 +646,80 @@ test.describe('Outlook meeting conversion', () => {
         const panel = page.locator(DETAIL_PANEL);
         await expect(panel).toBeVisible();
         await expect(panel).toContainText('Plain two');
+    });
+
+    test('creates a project with a new client from the form picker and selects it', async ({
+        page,
+        ctx,
+    }) => {
+        const projectName = 'Picker Project ' + Math.floor(1 + Math.random() * 10000);
+        const clientName = 'Picker Client ' + Math.floor(1 + Math.random() * 10000);
+        const meetings: InjectedMeeting[] = [
+            {
+                id: 'm-newproj',
+                subject: 'Kick-off',
+                start: todayAt('10:00:00'),
+                end: todayAt('11:00:00'),
+            },
+        ];
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '10:00:00');
+        const conversions = await routeConversions(page, ctx, meetings);
+        await injectMeetings(page, meetings, convertUrl(ctx));
+
+        await ghost(page, 'm-newproj').click();
+        const panel = page.locator(DETAIL_PANEL);
+        await panel.locator('[data-testid="outlook-detail-create"]').click();
+        const form = panel.locator(CONVERT_FORM);
+        await expect(form).toBeVisible();
+
+        // Typing a name that does not exist offers "Create new Project", prefilled with it
+        await form.locator('[data-testid="outlook-convert-project"] button').first().click();
+        await page.getByTestId('client_dropdown_search').fill(projectName);
+        await page.getByText('Create new Project').click();
+        const dialog = page.getByRole('dialog').filter({ has: page.getByLabel('Project name') });
+        await expect(dialog.getByLabel('Project name')).toHaveValue(projectName);
+        await expect(form).toBeVisible();
+
+        // A client that does not exist yet is created from the modal's client picker
+        await dialog.getByRole('button', { name: 'No Client' }).click();
+        await page.getByPlaceholder('Search for a client...').fill(clientName);
+        await Promise.all([
+            page.waitForResponse(
+                (response) =>
+                    response.url().includes('/clients') &&
+                    response.request().method() === 'POST' &&
+                    response.status() === 201
+            ),
+            page.getByText(`Add "${clientName}" as a new Client`).click(),
+        ]);
+        await expect(dialog.getByRole('button', { name: clientName })).toBeVisible();
+
+        await Promise.all([
+            page.waitForResponse(
+                (response) =>
+                    response.url().includes('/projects') &&
+                    response.request().method() === 'POST' &&
+                    response.status() === 201
+            ),
+            dialog.getByRole('button', { name: 'Create Project' }).click(),
+        ]);
+
+        // The modal closes, the meeting form is still open and has the new project selected
+        await expect(page.getByLabel('Project name')).toHaveCount(0);
+        await expect(form).toBeVisible();
+        await expect(form.locator('[data-testid="outlook-convert-project"]')).toContainText(
+            projectName
+        );
+        await expect(form.locator('[data-testid="outlook-convert-description"]')).toHaveValue(
+            'Kick-off'
+        );
+
+        await form.locator('[data-testid="outlook-convert-submit"]').click();
+        await expect.poll(() => conversions.bodies.length).toBe(1);
+        expect(conversions.bodies[0]!.meeting_ids).toEqual(['m-newproj']);
+        expect(conversions.bodies[0]!.project_id).toBeTruthy();
     });
 
     test('without actions the panel stays read-only', async ({ page }) => {

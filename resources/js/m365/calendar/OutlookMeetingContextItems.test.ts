@@ -15,8 +15,8 @@ const labels = {
     no_subject: '(No subject)',
     open_in_outlook: 'Open in Outlook',
     opens_new_tab: '(opens in a new tab)',
-    dismiss: 'Dismiss meeting',
-    restore: 'Restore meeting',
+    dismiss: 'Dismiss',
+    restore: 'Restore',
     create_entry: 'Create time entry',
     select: 'Select meeting',
     deselect: 'Deselect meeting',
@@ -311,14 +311,14 @@ describe('OutlookMeetingContextItems', () => {
         const [block] = renderLane(['m-1']);
         const regular = fakeContext([meeting()]);
         await openMenu(block!, regular.context);
-        expect(item('outlook-menu-dismiss')?.textContent).toContain('Dismiss meeting');
+        expect(item('outlook-menu-dismiss')?.textContent).toContain('Dismiss');
         expect(item('outlook-menu-restore')).toBeNull();
         expect(menu()?.querySelector('[role="separator"]')).not.toBeNull();
 
         unmountMenu();
         const dismissed = fakeContext([meeting({ dismissed: true })]);
         await openMenu(block!, dismissed.context);
-        expect(item('outlook-menu-restore')?.textContent).toContain('Restore meeting');
+        expect(item('outlook-menu-restore')?.textContent).toContain('Restore');
         expect(item('outlook-menu-dismiss')).toBeNull();
 
         unmountMenu();

@@ -55,8 +55,8 @@ const labels = {
     online: 'Online meeting',
     open_in_outlook: 'Open in Outlook',
     opens_new_tab: '(opens in a new tab)',
-    dismiss: 'Dismiss meeting',
-    restore: 'Restore meeting',
+    dismiss: 'Dismiss',
+    restore: 'Restore',
     dismissed_suffix: ', dismissed',
     // Phase 5
     preassigned_suffix: ', pre-assigned to :project',
@@ -1081,6 +1081,16 @@ async function settle() {
     await nextTick();
 }
 
+// Dismiss / Restore live in the panel's More actions menu (owner feedback, 2026-11-23).
+async function chooseFromMore(testid: 'outlook-more-dismiss' | 'outlook-more-restore') {
+    document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-more"]')!.click();
+    await settle();
+    const item = document.body.querySelector<HTMLElement>(`[data-testid="${testid}"]`);
+    expect(item, testid).not.toBeNull();
+    item!.click();
+    await settle();
+}
+
 describe('OutlookGhostLayer detail panel', () => {
     let wrapper: VueWrapper | null = null;
 
@@ -1157,13 +1167,14 @@ describe('OutlookGhostLayer detail panel', () => {
         expect(ghost.hasAttribute('data-panel-open')).toBe(false);
     });
 
-    it('offers no Dismiss button when the context cannot act', async () => {
+    it('offers no Dismiss action when the context cannot act', async () => {
         wrapper = mountInteractive([meeting()], false).wrapper;
 
         ghostElements()[0]!.click();
         await settle();
 
         expect(document.body.querySelector('[data-testid="outlook-detail-action"]')).toBeNull();
+        expect(document.body.querySelector('[data-testid="outlook-detail-more"]')).toBeNull();
     });
 
     it('dismiss calls the context, closes the panel and focuses the next ghost of the day', async () => {
@@ -1180,8 +1191,7 @@ describe('OutlookGhostLayer detail panel', () => {
         ghostElements()[0]!.click();
         await settle();
 
-        document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-action"]')!.click();
-        await settle();
+        await chooseFromMore('outlook-more-dismiss');
 
         expect(mounted.dismiss).toHaveBeenCalledWith('a');
         expect(document.body.querySelector('[role="dialog"]')).toBeNull();
@@ -1196,8 +1206,7 @@ describe('OutlookGhostLayer detail panel', () => {
         ghostElements()[0]!.click();
         await settle();
 
-        document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-action"]')!.click();
-        await settle();
+        await chooseFromMore('outlook-more-dismiss');
 
         expect(ghostElements()).toHaveLength(0);
         expect(document.activeElement).toBe(
@@ -1252,12 +1261,7 @@ describe('OutlookGhostLayer dismissed variant', () => {
         ghostElements()[0]!.click();
         await settle();
 
-        const action = document.body.querySelector<HTMLElement>(
-            '[data-testid="outlook-detail-action"]'
-        )!;
-        expect(action.textContent?.trim()).toBe('Restore meeting');
-        action.click();
-        await settle();
+        await chooseFromMore('outlook-more-restore');
 
         expect(mounted.restore).toHaveBeenCalledWith('m-1');
         expect(mounted.dismiss).not.toHaveBeenCalled();
@@ -1287,8 +1291,7 @@ describe('OutlookGhostLayer dismissed variant', () => {
         first.click();
         await settle();
 
-        document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-action"]')!.click();
-        await settle();
+        await chooseFromMore('outlook-more-dismiss');
 
         expect(mounted.dismiss).toHaveBeenCalledWith('a');
         const ghosts = ghostElements();
@@ -1312,8 +1315,7 @@ describe('OutlookGhostLayer dismissed variant', () => {
         ghostElements()[0]!.click();
         await settle();
 
-        document.body.querySelector<HTMLElement>('[data-testid="outlook-detail-action"]')!.click();
-        await settle();
+        await chooseFromMore('outlook-more-dismiss');
 
         const remaining = ghostElements();
         expect(remaining).toHaveLength(1);

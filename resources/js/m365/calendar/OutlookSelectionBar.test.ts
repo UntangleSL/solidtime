@@ -35,6 +35,9 @@ vi.mock('@/utils/useTimeEntriesInfiniteQuery', async () => {
     };
 });
 vi.mock('@/utils/useTags', () => ({ useTagsStore: () => ({ createTag: vi.fn() }) }));
+vi.mock('@/utils/useProjects', () => ({ useProjectsStore: () => ({ createProject: vi.fn() }) }));
+vi.mock('@/utils/useClients', () => ({ useClientsStore: () => ({ createClient: vi.fn() }) }));
+vi.mock('@/utils/permissions', () => ({ canCreateProjects: () => true }));
 vi.mock('@/utils/useUser', () => ({ getCurrentOrganizationId: () => 'org-1' }));
 vi.mock('@/utils/billing', () => ({ isAllowedToPerformPremiumAction: () => true }));
 vi.mock('@/utils/money', () => ({ getOrganizationCurrencyString: () => 'EUR' }));

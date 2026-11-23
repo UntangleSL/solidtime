@@ -15,8 +15,8 @@ const labels = {
     online: 'Online meeting',
     open_in_outlook: 'Open in Outlook',
     opens_new_tab: '(opens in a new tab)',
-    dismiss: 'Dismiss meeting',
-    restore: 'Restore meeting',
+    dismiss: 'Dismiss',
+    restore: 'Restore',
     create_entry: 'Create time entry',
     edit: 'Edit',
     confirm: 'Confirm',
@@ -151,35 +151,6 @@ describe('OutlookGhostDetail', () => {
         expect(document.getElementById(labelledBy as string)?.textContent?.trim()).toBe(
             'Weekly sync'
         );
-    });
-
-    it('emits dismiss from the Dismiss meeting button', async () => {
-        const w = mountOpen(meeting());
-        await nextTick();
-
-        const button = document.body.querySelector<HTMLElement>(
-            '[data-testid="outlook-detail-action"]'
-        );
-        expect(button?.textContent?.trim()).toBe('Dismiss meeting');
-        button?.click();
-
-        expect(w.emitted('dismiss')).toHaveLength(1);
-        expect(w.emitted('restore')).toBeUndefined();
-    });
-
-    it('shows the dismissed eyebrow and emits restore for a dismissed meeting', async () => {
-        const w = mountOpen(meeting({ dismissed: true }));
-        await nextTick();
-
-        expect(panel().textContent).toContain('Outlook meeting · Dismissed');
-        const button = document.body.querySelector<HTMLElement>(
-            '[data-testid="outlook-detail-action"]'
-        );
-        expect(button?.textContent?.trim()).toBe('Restore meeting');
-        button?.click();
-
-        expect(w.emitted('restore')).toHaveLength(1);
-        expect(w.emitted('dismiss')).toBeUndefined();
     });
 
     it('renders no action button when it cannot act', async () => {
@@ -698,7 +669,7 @@ describe('OutlookGhostDetail', () => {
             expect(byTestId('outlook-detail-action')).toBeNull();
         });
 
-        it('pre-assigned menu: Dismiss, separator, Always ignore, Forget', async () => {
+        it('pre-assigned menu: Dismiss, Always ignore, Forget (like the right-click menu)', async () => {
             mountOpen(preassigned());
             await settle();
 
@@ -708,8 +679,8 @@ describe('OutlookGhostDetail', () => {
                 'outlook-more-ignore-series',
                 'outlook-more-forget-series',
             ]);
-            expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(1);
-            expect(menu.textContent).toContain('Dismiss meeting');
+            expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(0);
+            expect(menu.textContent).toContain('Dismiss');
             expect(menu.textContent).toContain('Always ignore this series');
             expect(menu.textContent).toContain('Forget this series');
             expect(
@@ -753,20 +724,20 @@ describe('OutlookGhostDetail', () => {
             expect(w.emitted('update:open')).toBeUndefined();
         });
 
-        it('recurring without assignment: More actions (Always ignore only), Dismiss, Create', async () => {
+        it('recurring without assignment: More actions (Dismiss, Always ignore) and Create', async () => {
             const w = mountOpen(recurring());
             await settle();
 
-            expect(byTestId('outlook-detail-action')?.textContent?.trim()).toBe('Dismiss meeting');
+            expect(byTestId('outlook-detail-action')).toBeNull();
             expect(byTestId('outlook-detail-create')).not.toBeNull();
             expect(byTestId('outlook-detail-confirm')).toBeNull();
             const html = panel().innerHTML;
             expect(html.indexOf('outlook-detail-more')).toBeLessThan(
-                html.indexOf('outlook-detail-action')
+                html.indexOf('outlook-detail-create')
             );
 
             const menu = await openMenu();
-            expect(itemIds(menu)).toEqual(['outlook-more-ignore-series']);
+            expect(itemIds(menu)).toEqual(['outlook-more-dismiss', 'outlook-more-ignore-series']);
             expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(0);
             byTestId('outlook-more-ignore-series')!.click();
             await settle();
@@ -777,9 +748,9 @@ describe('OutlookGhostDetail', () => {
             const w = mountOpen(recurring({ series_ignored: true, dismissed: true }));
             await settle();
 
-            expect(byTestId('outlook-detail-action')?.textContent?.trim()).toBe('Restore meeting');
+            expect(byTestId('outlook-detail-action')).toBeNull();
             const menu = await openMenu();
-            expect(itemIds(menu)).toEqual(['outlook-more-unignore-series']);
+            expect(itemIds(menu)).toEqual(['outlook-more-restore', 'outlook-more-unignore-series']);
             expect(menu.textContent).toContain('Stop ignoring this series');
             expect(
                 menu.querySelector('[data-testid="outlook-more-unignore-series"] svg.lucide-undo-2')
@@ -790,13 +761,43 @@ describe('OutlookGhostDetail', () => {
             expect(w.emitted('unignore-series')).toHaveLength(1);
         });
 
-        it('a single meeting keeps the Phase 4 footer without More actions', async () => {
+        it('a single meeting shows More actions with Dismiss only, and Create', async () => {
             mountOpen(meeting());
-            await nextTick();
+            await settle();
 
-            expect(byTestId('outlook-detail-more')).toBeNull();
-            expect(byTestId('outlook-detail-action')).not.toBeNull();
+            expect(byTestId('outlook-detail-more')).not.toBeNull();
+            expect(byTestId('outlook-detail-action')).toBeNull();
             expect(byTestId('outlook-detail-create')).not.toBeNull();
+            const menu = await openMenu();
+            expect(itemIds(menu)).toEqual(['outlook-more-dismiss']);
+        });
+
+        it('emits dismiss from the More actions menu, with no Dismiss button in the footer', async () => {
+            const w = mountOpen(meeting());
+            await settle();
+
+            expect(document.body.querySelector('[data-testid="outlook-detail-action"]')).toBeNull();
+            const menu = await openMenu();
+            expect(menu.textContent).toContain('Dismiss');
+            byTestId('outlook-more-dismiss')!.click();
+            await settle();
+
+            expect(w.emitted('dismiss')).toHaveLength(1);
+            expect(w.emitted('restore')).toBeUndefined();
+        });
+
+        it('shows the dismissed eyebrow and emits restore for a dismissed meeting', async () => {
+            const w = mountOpen(meeting({ dismissed: true }));
+            await settle();
+
+            expect(panel().textContent).toContain('Outlook meeting · Dismissed');
+            const menu = await openMenu();
+            expect(itemIds(menu)).toEqual(['outlook-more-restore']);
+            byTestId('outlook-more-restore')!.click();
+            await settle();
+
+            expect(w.emitted('restore')).toHaveLength(1);
+            expect(w.emitted('dismiss')).toBeUndefined();
         });
 
         it('without canAct there is no More actions', async () => {

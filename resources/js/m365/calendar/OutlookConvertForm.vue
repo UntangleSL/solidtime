@@ -2,7 +2,13 @@
 import { computed, inject, nextTick, onMounted, ref, useId, watch, type ComputedRef } from 'vue';
 import { CalendarDays, CircleX, Repeat } from '@lucide/vue';
 import { TagIcon } from '@heroicons/vue/20/solid';
-import type { Organization } from '@/packages/api/src';
+import type {
+    Client,
+    CreateClientBody,
+    CreateProjectBody,
+    Organization,
+    Project,
+} from '@/packages/api/src';
 import { Button } from '@/packages/ui/src/Buttons';
 import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
 import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
@@ -27,9 +33,12 @@ import {
 } from '@/packages/ui/src/utils/time';
 import { isAllowedToPerformPremiumAction } from '@/utils/billing';
 import { getOrganizationCurrencyString } from '@/utils/money';
+import { canCreateProjects } from '@/utils/permissions';
 import { useNotificationsStore } from '@/utils/notification';
 import { getLastWorkTimeEntry } from '@/utils/useCurrentTimeEntry';
+import { useClientsStore } from '@/utils/useClients';
 import { useClientsQuery } from '@/utils/useClientsQuery';
+import { useProjectsStore } from '@/utils/useProjects';
 import { useProjectsQuery } from '@/utils/useProjectsQuery';
 import { useTagsQuery } from '@/utils/useTagsQuery';
 import { useTagsStore } from '@/utils/useTags';
@@ -322,10 +331,24 @@ async function createTag(name: string) {
     return await useTagsStore().createTag(name);
 }
 
-// Core picker props for a flow that never creates projects (a modal over the popover).
-async function noCreate() {
-    return undefined;
+// "Create new Project" in the core picker opens the core project modal (with its own "create
+// client"); the modal is a portaled dialog, which the host popovers treat as a nested layer.
+async function createProject(project: CreateProjectBody): Promise<Project | undefined> {
+    const created = await useProjectsStore().createProject(project);
+    // The core picker does not select what it created; the form does, like a manual pick.
+    if (created) {
+        projectId.value = created.id;
+        taskId.value = null;
+        onProjectPicked();
+    }
+    return created;
 }
+
+async function createClient(client: CreateClientBody): Promise<Client | undefined> {
+    return await useClientsStore().createClient(client);
+}
+
+const allowCreateProject = computed(() => canCreateProjects());
 
 const timeFormat = computed(() => organization?.value?.time_format ?? '24-hours');
 
@@ -663,9 +686,9 @@ onMounted(() => {
                             :projects="projects"
                             :tasks="tasks"
                             :clients="clients"
-                            :create-project="noCreate"
-                            :create-client="noCreate"
-                            :can-create-project="false"
+                            :create-project="createProject"
+                            :create-client="createClient"
+                            :can-create-project="allowCreateProject"
                             :currency="currency"
                             :enable-estimated-time="enableEstimatedTime"
                             :organization-billable-rate="organization?.billable_rate ?? null"

@@ -109,8 +109,8 @@ const LABELS = {
     online: 'Online meeting',
     open_in_outlook: 'Open in Outlook',
     opens_new_tab: '(opens in a new tab)',
-    dismiss: 'Dismiss meeting',
-    restore: 'Restore meeting',
+    dismiss: 'Dismiss',
+    restore: 'Restore',
     dismiss_failed: 'Could not dismiss this meeting',
     restore_failed: 'Could not restore this meeting',
     retry_body: 'Try again in a moment.',
@@ -232,8 +232,8 @@ const LABELS_ES = {
     you_organize: 'Eres el organizador',
     online: 'Reunión en línea',
     open_in_outlook: 'Abrir en Outlook',
-    dismiss: 'Descartar reunión',
-    restore: 'Restaurar reunión',
+    dismiss: 'Descartar',
+    restore: 'Restaurar',
     hover_hint: 'Haz clic para ver los detalles',
     hover_hint_select: 'Haz clic para ver los detalles. Ctrl+clic para seleccionar varias.',
     hover_hint_select_mac: 'Haz clic para ver los detalles. ⌘+clic para seleccionar varias.',
@@ -1114,8 +1114,8 @@ test.describe('Outlook suggestion panel checks', () => {
         ]);
     });
 
-    // A recurring meeting without an assignment shows [More actions] … [Descartar reunión]
-    // [Crear registro]; the shorter Spanish label (was "Crear registro de tiempo", ~395px in a
+    // A recurring meeting without an assignment shows [More actions] … [Crear registro] (Dismiss
+    // lives in the More actions menu since 2026-11-23); the shorter Spanish label (was "Crear registro de tiempo", ~395px in a
     // 350px box) keeps the footer inside the w-96 panel.
     test('the Spanish footer of a recurring meeting without assignment fits', async ({
         page,
@@ -1147,15 +1147,11 @@ test.describe('Outlook suggestion panel checks', () => {
             contentType: 'image/png',
         });
         expect(
-            await footerOverflow(panel, [
-                'outlook-detail-more',
-                'outlook-detail-action',
-                'outlook-detail-create',
-            ])
+            await footerOverflow(panel, ['outlook-detail-more', 'outlook-detail-create'])
         ).toEqual([
             { id: 'outlook-detail-more', missing: false, clipped: false, outside: 0 },
-            { id: 'outlook-detail-action', missing: false, clipped: false, outside: 0 },
             { id: 'outlook-detail-create', missing: false, clipped: false, outside: 0 },
         ]);
+        await expect(panel.locator('[data-testid="outlook-detail-action"]')).toHaveCount(0);
     });
 });

@@ -13,12 +13,15 @@ import type {
 import OutlookConvertForm from './OutlookConvertForm.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
 
-const { state, addNotification } = vi.hoisted(() => ({
+const { state, addNotification, createProjectMock, createClientMock } = vi.hoisted(() => ({
     state: {
         projects: [] as unknown[],
         entries: [] as unknown[],
+        canCreateProjects: true,
     },
     addNotification: vi.fn(),
+    createProjectMock: vi.fn(),
+    createClientMock: vi.fn(),
 }));
 
 vi.mock('@/utils/useProjectsQuery', async () => {
@@ -53,6 +56,13 @@ vi.mock('@/utils/useTimeEntriesInfiniteQuery', async () => {
     };
 });
 vi.mock('@/utils/useTags', () => ({ useTagsStore: () => ({ createTag: vi.fn() }) }));
+vi.mock('@/utils/useProjects', () => ({
+    useProjectsStore: () => ({ createProject: createProjectMock }),
+}));
+vi.mock('@/utils/useClients', () => ({
+    useClientsStore: () => ({ createClient: createClientMock }),
+}));
+vi.mock('@/utils/permissions', () => ({ canCreateProjects: () => state.canCreateProjects }));
 vi.mock('@/utils/useUser', () => ({ getCurrentOrganizationId: () => 'org-1' }));
 vi.mock('@/utils/billing', () => ({ isAllowedToPerformPremiumAction: () => true }));
 vi.mock('@/utils/money', () => ({ getOrganizationCurrencyString: () => 'EUR' }));
@@ -278,6 +288,9 @@ beforeEach(() => {
         project('p-old', { is_archived: true, is_billable: true }),
     ];
     state.entries = [];
+    state.canCreateProjects = true;
+    createProjectMock.mockReset();
+    createClientMock.mockReset();
 });
 
 afterEach(() => {
@@ -639,6 +652,45 @@ describe('OutlookConvertForm (single)', () => {
 
         expect(el('outlook-convert-form').querySelector('img')).toBeNull();
         expect(input('outlook-convert-description').value).toBe('<img src=x onerror=alert(1)>');
+    });
+});
+
+describe('OutlookConvertForm (create project or client from the picker)', () => {
+    it('offers project creation only to members allowed to create projects', async () => {
+        mountForm();
+        await settle();
+        const dropdown = wrapper!.findComponent({ name: 'TimeTrackerProjectTaskDropdown' });
+        expect(dropdown.props('canCreateProject')).toBe(true);
+        wrapper!.unmount();
+
+        state.canCreateProjects = false;
+        mountForm();
+        await settle();
+        expect(
+            wrapper!
+                .findComponent({ name: 'TimeTrackerProjectTaskDropdown' })
+                .props('canCreateProject')
+        ).toBe(false);
+    });
+
+    it('selects the project it created and hands client creation to the core store', async () => {
+        const newProject = project('p-new', { is_billable: true });
+        createProjectMock.mockResolvedValue(newProject);
+        createClientMock.mockResolvedValue({ id: 'c-new', name: 'Acme' });
+        mountForm();
+        await settle();
+        const dropdown = wrapper!.findComponent({ name: 'TimeTrackerProjectTaskDropdown' });
+
+        const client = await dropdown.props('createClient')({ name: 'Acme' });
+        expect(createClientMock).toHaveBeenCalledWith({ name: 'Acme' });
+        expect(client).toEqual({ id: 'c-new', name: 'Acme' });
+
+        state.projects = [...state.projects, newProject];
+        const result = await dropdown.props('createProject')({ name: 'New' });
+        await settle();
+        expect(result).toEqual(newProject);
+        expect(dropdown.props('project')).toBe('p-new');
+        expect(dropdown.props('task')).toBeNull();
     });
 });
 

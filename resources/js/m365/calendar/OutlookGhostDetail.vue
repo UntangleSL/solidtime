@@ -20,7 +20,6 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
-    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/packages/ui/src/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/packages/ui/src/popover';
@@ -82,11 +81,6 @@ function labelDialogBySubject(el: HTMLElement): void {
     el.closest('[role="dialog"]')?.setAttribute('aria-labelledby', el.id);
 }
 
-function onAction() {
-    if (props.meeting.dismissed) emit('restore');
-    else emit('dismiss');
-}
-
 // The form is shown only while the caller may act (D-13: never in test-hook mode or impersonating).
 const showForm = computed(() => props.mode === 'form' && props.canAct);
 
@@ -98,11 +92,10 @@ const preassignment = computed(() =>
 
 const seriesIgnored = computed(() => props.meeting.series_ignored === true);
 
-const showMore = computed(
-    () =>
-        props.canAct &&
-        (preassignment.value !== null || isRecurring(props.meeting) || seriesIgnored.value)
-);
+// Dismiss / Restore always live in the "More actions" menu, in the same order as the meeting's
+// right-click menu (owner feedback, 2026-11-23); series actions follow for recurring meetings.
+const showMore = computed(() => props.canAct);
+const recurring = computed(() => isRecurring(props.meeting));
 
 function onConfirm(): void {
     if (!props.confirming) emit('confirm');
@@ -247,23 +240,20 @@ function onOpenAutoFocus(event: Event): void {
                             <!-- The shared DropdownMenuContent drops attributes (teleport root), so the
                                  test hook sits on a wrapper inside the menu -->
                             <div data-testid="outlook-detail-more-menu">
-                                <template v-if="preassignment">
-                                    <DropdownMenuItem
-                                        v-if="meeting.dismissed"
-                                        data-testid="outlook-more-restore"
-                                        @select="fromMenu(() => emit('restore'))">
-                                        <Eye class="text-icon-default" aria-hidden="true" />
-                                        <span>{{ labels.restore }}</span>
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                        v-else
-                                        data-testid="outlook-more-dismiss"
-                                        @select="fromMenu(() => emit('dismiss'))">
-                                        <EyeOff class="text-icon-default" aria-hidden="true" />
-                                        <span>{{ labels.dismiss }}</span>
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                </template>
+                                <DropdownMenuItem
+                                    v-if="meeting.dismissed"
+                                    data-testid="outlook-more-restore"
+                                    @select="fromMenu(() => emit('restore'))">
+                                    <Eye class="text-icon-default" aria-hidden="true" />
+                                    <span>{{ labels.restore }}</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    v-else
+                                    data-testid="outlook-more-dismiss"
+                                    @select="fromMenu(() => emit('dismiss'))">
+                                    <EyeOff class="text-icon-default" aria-hidden="true" />
+                                    <span>{{ labels.dismiss }}</span>
+                                </DropdownMenuItem>
                                 <DropdownMenuItem
                                     v-if="seriesIgnored"
                                     data-testid="outlook-more-unignore-series"
@@ -272,7 +262,7 @@ function onOpenAutoFocus(event: Event): void {
                                     <span>{{ labels.unignore_series }}</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                    v-else
+                                    v-else-if="recurring"
                                     data-testid="outlook-more-ignore-series"
                                     @select="fromMenu(() => emit('ignore-series'))">
                                     <CalendarOff class="text-icon-default" aria-hidden="true" />
@@ -307,14 +297,6 @@ function onOpenAutoFocus(event: Event): void {
                             </PrimaryButton>
                         </template>
                         <template v-else-if="canAct">
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                data-testid="outlook-detail-action"
-                                @click="onAction">
-                                {{ meeting.dismissed ? labels.restore : labels.dismiss }}
-                            </Button>
                             <PrimaryButton
                                 type="button"
                                 :icon="ClockPlus"

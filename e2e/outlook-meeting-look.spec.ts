@@ -34,8 +34,8 @@ const LABELS = {
     online: 'Online meeting',
     open_in_outlook: 'Open in Outlook',
     opens_new_tab: '(opens in a new tab)',
-    dismiss: 'Dismiss meeting',
-    restore: 'Restore meeting',
+    dismiss: 'Dismiss',
+    restore: 'Restore',
 };
 
 // The project colour that collides with the default sky accent (UI-SPEC 3.1 "Known collision")
