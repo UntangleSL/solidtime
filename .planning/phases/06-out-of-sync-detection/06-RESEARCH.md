@@ -514,23 +514,24 @@ try {
 |---|-------|---------|---------------|
 | A1 | `GraphAccessGuard::blocked()` answers false in queue/console (unstarted session store) | Pattern 7 | Job silently does nothing. Wave 0 test catches it; fix by short-circuiting the guard when `app()->runningInConsole()` and no session is started |
 | A2 | Core route name is `v1.time-entries.update` and can be bound in-process | Pattern 4 | Updater cannot build its request. Contract test catches it; fall back to constructing a `Route` with the same URI |
-| A3 | Not-started meeting turned all-day → flag moved, no auto adjust, Adjust hidden; started → nothing | Pattern 1 | Owner may prefer another treatment; low frequency |
+| A3 | Not-started meeting turned all-day → flag moved, no auto adjust, Adjust hidden; started → nothing (RESOLVED: CONTEXT D-18) | Pattern 1 | Owner may prefer another treatment; low frequency |
 | A4 | Lookup of a cancelled series occurrence answers 404 (E1 not captured) | Pitfall 8 | Wording "removed" instead of "cancelled"; same actions |
 | A5 | Organizer-deleted own meeting answers 404 (only attendee decline captured) | Pitfall 9 | No flag (fail-safe) |
 | A6 | Default unique index name `outlook_meeting_links_user_id_graph_id_unique` | Pattern 2 | `dropUnique([...])` derives the same name; migration test on CI Postgres confirms |
 | A7 | 05:30 Europe/Madrid, 10 s stagger, 300 lookups per user, 5 lookups per interactive sync | Pattern 6/7 | Tunable constants in `config/microsoft365.php` `graph` block (no env) |
 | A8 | "First" flagged entry = earliest entry start | Pattern 8 | UX preference only |
-| A9 | Keep on moved re-baselines the snapshot (further moves detected); Keep on cancelled/removed detaches | Pattern 5 | Owner could want "never ask again" for moved too |
-| A10 | Auto clear of a flag when Outlook returns to the recorded slot or the user aligns the entry by hand | Pattern 1 | Owner could prefer flags to persist until acted on |
+| A9 | Keep on moved re-baselines the snapshot (further moves detected); Keep on cancelled/removed detaches (RESOLVED: CONTEXT D-16) | Pattern 5 | Owner could want "never ask again" for moved too |
+| A10 | Auto clear of a flag when Outlook returns to the recorded slot or the user aligns the entry by hand (RESOLVED: CONTEXT D-17) | Pattern 1 | Owner could prefer flags to persist until acted on |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should flags show while disconnected?**
+1. **Should flags show while disconnected?** RESOLVED: hidden while disconnected (CONTEXT D-19); flags return on reconnect.
    - What we know: links (and flags) survive Disconnect (Phase 4 D-15). The read returns nothing when not connected.
-   - Recommendation: hide them (no checks run, D-11). They come back on reconnect.
-2. **Daily job fetch shape.** RESOLVED (discretion): per-link lookups, sequential, no `$batch`.
-3. **Where "Move my entry here" lives.** RESOLVED (discretion): meeting panel + context menu, next to Create (Create stays primary).
-4. **Organizer-deleted meetings (A5) and series cancellations (A4).** Confirm during owner UAT with a real cancel and delete; the rules already fail safe.
+   - Resolution: the read's empty branch serves `out_of_sync.items: []` while not connected or impersonating, and the actions answer 404 (D-14, D-19); a reconnect-state account keeps serving its flags. Planned in 06-06 (read test: disconnected -> empty, reconnect state -> listed, Disconnect then a new connect -> the same flags listed again) and 06-10 (actions 404 while disconnected).
+2. **Daily job fetch shape.** RESOLVED (discretion): per-link lookups, sequential, no `$batch` (06-15).
+3. **Where "Move my entry here" lives.** RESOLVED (discretion, UI-SPEC section 4): meeting panel body + context menu, next to Create (Create stays primary); planned in 06-11 and 06-13.
+4. **Organizer-deleted meetings (A5) and series cancellations (A4).** RESOLVED: the rules fail safe (Unknown never acts; a 200 at the same times changes nothing; a 404 or a cancellation of a not-started meeting only flags, never deletes, D-05/D-07); real-world confirmation in the 06-19 owner UAT (human check on a real cancel, delete and decline).
+5. **Assumptions A3, A9, A10 (all-day, Keep semantics, automatic clear).** RESOLVED by CONTEXT D-16 (Keep on a moved flag re-baselines the snapshot; Keep on cancelled / removed detaches), D-17 (a flag clears by itself when Outlook returns to the recorded time or the meeting reappears) and D-18 (a not-started meeting that becomes all-day is flagged, never auto-adjusted, Adjust hidden). D-19 resolves question 1 and D-20 the compose variables of Pattern 7 (queue and scheduler services, no owner action; planned in 06-15).
 
 ## Environment Availability
 
