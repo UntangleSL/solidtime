@@ -43,6 +43,7 @@ vi.mock('@/utils/useTagsQuery', async () => {
             tags: c(() => [
                 { id: 't-1', name: 'Internal' },
                 { id: 't-2', name: 'Client' },
+                { id: 't-3', name: 'admin' },
             ]),
         }),
     };
@@ -652,6 +653,17 @@ describe('OutlookConvertForm (single)', () => {
 
         expect(el('outlook-convert-form').querySelector('img')).toBeNull();
         expect(input('outlook-convert-description').value).toBe('<img src=x onerror=alert(1)>');
+    });
+});
+
+describe('OutlookConvertForm (tags)', () => {
+    it('lists tags alphabetically, ignoring case', async () => {
+        mountForm();
+        await settle();
+        const names = (
+            wrapper!.findComponent({ name: 'TagDropdown' }).props('tags') as { name: string }[]
+        ).map((tag) => tag.name);
+        expect(names).toEqual(['admin', 'Client', 'Internal']);
     });
 });
 

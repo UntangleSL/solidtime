@@ -95,6 +95,10 @@ const { projects } = useProjectsQuery();
 const { tasks } = useTasksQuery();
 const { clients } = useClientsQuery();
 const { tags } = useTagsQuery();
+// Tags A-Z (the core picker keeps the given order after the selected ones; owner, 2026-11-23).
+const tagsAlphabetical = computed(() =>
+    [...tags.value].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+);
 // Loaded when the form mounts (only then): the fallback prefill is the project of the latest entry.
 const timeEntriesQuery = useTimeEntriesInfiniteQuery();
 
@@ -727,7 +731,7 @@ onMounted(() => {
                 <TagDropdown
                     v-model="selectedTags"
                     :create-tag="createTag"
-                    :tags="tags"
+                    :tags="tagsAlphabetical"
                     :show-no-tag-option="false">
                     <template #trigger>
                         <Button variant="input" type="button" data-testid="outlook-convert-tags">
