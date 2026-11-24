@@ -16,6 +16,7 @@ import OutlookMeetingHoverCard from './OutlookMeetingHoverCard.vue';
 import OutlookProjectDot from './OutlookProjectDot.vue';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
 import { isFaded, isPreassigned } from './suggestions';
+import { shortDate } from './syncFlagReason';
 import {
     HOVER_CLOSE_DELAY_MS,
     hoverOpenDelay,
@@ -375,8 +376,21 @@ async function onConverted(meeting: OutlookMeeting): Promise<void> {
 
 // A confirm of this meeting runs, from any surface (panel, hover card, menu, bulk): the block shows
 // a spinner instead of the project dot, aria-busy and the progress cursor (UI-SPEC section 1).
+// Phase 6 (D-03): a move of its logged entry ("Move my entry here", panel or menu) shows the same.
 function isPending(id: string): boolean {
-    return context?.isConfirmPending?.(id) === true || confirmingIds.value.includes(id);
+    return (
+        context?.isConfirmPending?.(id) === true || confirmingIds.value.includes(id) || isMoving(id)
+    );
+}
+
+function isMoving(id: string): boolean {
+    return context?.isMovePending?.(id) === true;
+}
+
+// A block without a project dot gets the move spinner on its own: before the subject on one-line
+// tiers, in place of the calendar icon of the time line otherwise.
+function showsMoveSpinner(meeting: OutlookMeeting): boolean {
+    return !preassignmentOf(meeting) && isMoving(meeting.id);
 }
 
 function confirmErrorOf(id: string): string | null {
@@ -411,6 +425,50 @@ async function onConfirm(meeting: OutlookMeeting): Promise<void> {
     if (openId.value === id) {
         confirmError.value = { id, message: result.error?.message || props.labels.confirm_failed };
     }
+}
+
+function panelElement(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('[data-testid="outlook-ghost-detail"]');
+}
+
+// "Move my entry here" from the panel (D-03, UI-SPEC section 4). The context runs the move and owns
+// the toasts and the announcement; the panel stays open, undismissable, until it settles. Ok: the
+// meeting has left the lane, focus goes to the moved entry block when rendered, else the Phase 4
+// removal rule. Failed: the reason goes to the panel's alert line and focus back to the button.
+// Stale: the context refreshed the calendar, the panel closes and focus stays on the meeting while
+// it is still in the lane (as a plain suggestion), else follows the removal rule.
+async function onMoveEntry(meeting: OutlookMeeting): Promise<void> {
+    const id = meeting.id;
+    if (!canAct.value || !context || openId.value !== id || isMoving(id)) return;
+    if (confirmingIds.value.includes(id)) return;
+    const entryId = meeting.moved_from?.time_entry_id ?? null;
+    const neighbour = neighbourOf(id);
+    confirmError.value = null;
+
+    const result = await context.moveEntry(id);
+
+    if (result.status === 'ok') {
+        if (openId.value === id) openId.value = null;
+        await nextTick();
+        const entry = entryId
+            ? document.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(entryId)}"]`)
+            : null;
+        if (entry) entry.focus();
+        else await focusAfterRemoval(neighbour);
+        return;
+    }
+    if (result.status === 'failed') {
+        if (openId.value !== id) return;
+        confirmError.value = { id, message: result.message || props.labels.move_entry_failed };
+        await nextTick();
+        panelElement()
+            ?.querySelector<HTMLElement>('[data-testid="outlook-detail-move-entry"]')
+            ?.focus();
+        return;
+    }
+    if (openId.value === id) openId.value = null;
+    if (ghostElement(id)) await keepFocusOn(id);
+    else await focusAfterRemoval(neighbour);
 }
 
 async function onCancelForm(meeting: OutlookMeeting): Promise<void> {
@@ -580,6 +638,12 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
     if (assignment) {
         label += fillLabel(props.labels.preassigned_suffix, { project: assignment.project_name });
     }
+    // D-03: the meeting moved after it started and its entry is already logged (UI-SPEC section 4).
+    if (meeting.moved_from) {
+        label += fillLabel(props.labels.moved_suffix, {
+            date: shortDate(meeting.moved_from.entry_start),
+        });
+    }
     // An occurrence of an ignored series reads as such instead of ", dismissed" (UI-SPEC section 5).
     if (meeting.series_ignored === true) label += props.labels.series_ignored_suffix;
     else if (meeting.dismissed) label += props.labels.dismissed_suffix;
@@ -619,6 +683,7 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                 :mode="modeOf(box.meeting.id)"
                 :confirming="confirmingIds.includes(box.meeting.id)"
                 :confirm-error="confirmErrorOf(box.meeting.id)"
+                :moving="isMoving(box.meeting.id)"
                 @update:open="(value: boolean) => setOpen(box.meeting.id, value)"
                 @dismiss="onDismiss(box.meeting)"
                 @restore="onRestore(box.meeting)"
@@ -628,7 +693,8 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                 @unignore-series="onUnignoreSeries(box.meeting)"
                 @forget-series="onForgetSeries(box.meeting)"
                 @converted="onConverted(box.meeting)"
-                @cancel-form="onCancelForm(box.meeting)">
+                @cancel-form="onCancelForm(box.meeting)"
+                @move-entry="onMoveEntry(box.meeting)">
                 <HoverCardTrigger as-child>
                     <div
                         class="m365-ghost m365-meeting absolute pointer-events-auto select-none rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"
@@ -647,6 +713,7 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                         :data-panel-open="openId === box.meeting.id ? '' : undefined"
                         :data-selected="isSelected(box.meeting.id) ? '' : undefined"
                         :data-preassigned="preassignmentOf(box.meeting) ? '' : undefined"
+                        :data-moved-from="box.meeting.moved_from ? '' : undefined"
                         role="button"
                         tabindex="0"
                         :aria-label="ariaLabelOf(box.meeting)"
@@ -672,6 +739,10 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                         v-else
                                         :color="preassignmentOf(box.meeting)!.project_color" />
                                 </template>
+                                <LoadingSpinner
+                                    v-else-if="showsMoveSpinner(box.meeting)"
+                                    class="m365-meeting__meta m-0 h-3 w-3 shrink-0"
+                                    data-testid="outlook-move-spinner" />
                                 <span
                                     class="m365-meeting__subject min-w-0 truncate"
                                     :class="{ 'font-semibold': !isFaded(box.meeting) }"
@@ -704,8 +775,12 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                     v-if="showsTimeLine(box)"
                                     class="m365-meeting__meta flex min-w-0 items-center gap-1"
                                     data-ghost-time>
+                                    <LoadingSpinner
+                                        v-if="showsMoveSpinner(box.meeting)"
+                                        class="m-0 h-3 w-3 shrink-0 text-current"
+                                        data-testid="outlook-move-spinner" />
                                     <EyeOff
-                                        v-if="isFaded(box.meeting)"
+                                        v-else-if="isFaded(box.meeting)"
                                         class="size-3 shrink-0"
                                         aria-hidden="true" />
                                     <CalendarDays

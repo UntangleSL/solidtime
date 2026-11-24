@@ -31,6 +31,11 @@ const labels = {
     ignore_series: 'Always ignore this series',
     unignore_series: 'Stop ignoring this series',
     forget_series: 'Forget this series',
+    // Phase 6 (D-03)
+    moved_eyebrow: 'Moved in Outlook · Already logged',
+    moved_body:
+        'You logged it on :when. Create a new entry for this session, or move that one here.',
+    move_entry_here: 'Move my entry here',
 } as OutlookCalendarLabels;
 
 // The form talks to the Outlook context and the query caches; here only its events matter.
@@ -98,7 +103,7 @@ function mountOpen(
     canAct = true,
     slots: Record<string, string> = {},
     mode: 'detail' | 'form' = 'detail',
-    extra: { confirming?: boolean; confirmError?: string | null } = {}
+    extra: { confirming?: boolean; confirmError?: string | null; moving?: boolean } = {}
 ) {
     wrapper = mount(OutlookGhostDetail, {
         attachTo: document.body,
@@ -805,6 +810,219 @@ describe('OutlookGhostDetail', () => {
             await nextTick();
 
             expect(byTestId('outlook-detail-more')).toBeNull();
+        });
+    });
+
+    describe('moved meeting (Phase 6, D-03)', () => {
+        const movedFrom = {
+            time_entry_id: 'te-1',
+            entry_start: '2026-11-24T10:00:00Z',
+            entry_end: '2026-11-24T11:00:00Z',
+        };
+
+        function moved(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
+            return meeting({ moved_from: movedFrom, ...overrides });
+        }
+
+        function byTestId(id: string): HTMLElement | null {
+            return document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        }
+
+        async function settle() {
+            await nextTick();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            await nextTick();
+        }
+
+        it('renders the moved block after the summary and link, before the footer', async () => {
+            mountOpen(moved({ web_link: 'https://outlook.office.com/calendar/item/1' }));
+            await nextTick();
+
+            expect(byTestId('outlook-moved-block')).not.toBeNull();
+            expect(byTestId('outlook-moved-eyebrow')?.textContent?.trim()).toBe(
+                'Moved in Outlook · Already logged'
+            );
+            expect(byTestId('outlook-moved-body')?.textContent?.trim()).toBe(
+                'You logged it on Tue, Nov 24 · 10:00 – 11:00. Create a new entry for this session, or move that one here.'
+            );
+            expect(byTestId('outlook-detail-move-entry')?.textContent?.trim()).toBe(
+                'Move my entry here'
+            );
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-moved-block')).toBeGreaterThan(
+                html.indexOf('outlook-detail-link')
+            );
+            expect(html.indexOf('outlook-moved-block')).toBeLessThan(
+                html.indexOf('outlook-detail-create')
+            );
+        });
+
+        it('a pre-assigned moved meeting shows the block after the pre-assignment', async () => {
+            mountOpen(moved({ series_key: 'series-1', assignment }));
+            await nextTick();
+
+            const html = panel().innerHTML;
+            expect(html.indexOf('outlook-moved-block')).toBeGreaterThan(
+                html.indexOf('outlook-detail-preassignment')
+            );
+            expect(html.indexOf('outlook-moved-block')).toBeLessThan(
+                html.indexOf('outlook-detail-confirm')
+            );
+            // The footer keeps Edit and Confirm
+            expect(byTestId('outlook-detail-edit')).not.toBeNull();
+            expect(byTestId('outlook-detail-confirm')).not.toBeNull();
+        });
+
+        it('the block sits before the separator', async () => {
+            mountOpen(moved());
+            await nextTick();
+
+            const block = byTestId('outlook-moved-block')!;
+            const separator = panel().querySelector('[data-orientation="horizontal"]');
+            expect(separator).not.toBeNull();
+            expect(
+                block.compareDocumentPosition(separator!) & Node.DOCUMENT_POSITION_FOLLOWING
+            ).toBeTruthy();
+        });
+
+        it('keeps the footer: More actions and Create time entry, which stays the default', async () => {
+            mountOpen(moved());
+            await settle();
+
+            expect(byTestId('outlook-detail-more')).not.toBeNull();
+            const create = byTestId('outlook-detail-create') as HTMLButtonElement;
+            expect(create).not.toBeNull();
+            expect(create.disabled).toBe(false);
+            // No Dismiss button in the footer: Dismiss / Restore stay in More actions
+            expect(byTestId('outlook-detail-dismiss')).toBeNull();
+            // The move button lives in the body, not in the footer row
+            expect(create.parentElement?.contains(byTestId('outlook-detail-move-entry'))).toBe(
+                false
+            );
+            // Create time entry stays the default: focus lands on it, never on the move button
+            expect(document.activeElement).toBe(create);
+            expect(document.activeElement).not.toBe(byTestId('outlook-detail-move-entry'));
+        });
+
+        it('Move my entry here emits move-entry once and nothing else', async () => {
+            const w = mountOpen(moved());
+            await nextTick();
+
+            byTestId('outlook-detail-move-entry')!.click();
+
+            expect(w.emitted('move-entry')).toHaveLength(1);
+            expect(w.emitted('create')).toBeUndefined();
+            expect(w.emitted('confirm')).toBeUndefined();
+        });
+
+        it('while moving the button spins, Create and More actions are disabled', async () => {
+            const w = mountOpen(moved(), true, {}, 'detail', { moving: true });
+            await nextTick();
+
+            const move = byTestId('outlook-detail-move-entry') as HTMLButtonElement;
+            expect(move.disabled).toBe(true);
+            expect(move.querySelector('svg.animate-spin')).not.toBeNull();
+            const create = byTestId('outlook-detail-create') as HTMLButtonElement;
+            expect(create.disabled).toBe(true);
+            expect((byTestId('outlook-detail-more') as HTMLButtonElement).disabled).toBe(true);
+
+            move.click();
+            create.click();
+            expect(w.emitted('move-entry')).toBeUndefined();
+            expect(w.emitted('create')).toBeUndefined();
+        });
+
+        it('while moving a pre-assigned meeting Confirm and Edit are disabled', async () => {
+            const w = mountOpen(moved({ series_key: 'series-1', assignment }), true, {}, 'detail', {
+                moving: true,
+            });
+            await nextTick();
+
+            const confirm = byTestId('outlook-detail-confirm') as HTMLButtonElement;
+            expect(confirm.disabled).toBe(true);
+            expect((byTestId('outlook-detail-edit') as HTMLButtonElement).disabled).toBe(true);
+            confirm.click();
+            expect(w.emitted('confirm')).toBeUndefined();
+        });
+
+        it('while confirming the move button is disabled', async () => {
+            const w = mountOpen(moved({ series_key: 'series-1', assignment }), true, {}, 'detail', {
+                confirming: true,
+            });
+            await nextTick();
+
+            const move = byTestId('outlook-detail-move-entry') as HTMLButtonElement;
+            expect(move.disabled).toBe(true);
+            expect(move.querySelector('svg.animate-spin')).toBeNull();
+            move.click();
+            expect(w.emitted('move-entry')).toBeUndefined();
+        });
+
+        it('while moving neither Escape nor an outside pointer closes the panel', async () => {
+            const outside = document.createElement('div');
+            document.body.appendChild(outside);
+            const w = mountOpen(moved(), true, {}, 'detail', { moving: true });
+            await settle();
+
+            document.body.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+            );
+            outside.dispatchEvent(
+                new PointerEvent('pointerdown', {
+                    bubbles: true,
+                    cancelable: true,
+                    button: 0,
+                    pointerType: 'mouse',
+                })
+            );
+            await settle();
+
+            expect(w.emitted('update:open')).toBeUndefined();
+        });
+
+        it('a move failure shows in the existing alert line', async () => {
+            mountOpen(moved(), true, {}, 'detail', {
+                confirmError: 'Could not move the time entry',
+            });
+            await nextTick();
+
+            const alert = byTestId('outlook-detail-alert');
+            expect(alert?.getAttribute('role')).toBe('alert');
+            expect(alert?.textContent?.trim()).toBe('Could not move the time entry');
+        });
+
+        it('without canAct there is no moved block and no move button', async () => {
+            mountOpen(moved(), false);
+            await nextTick();
+
+            expect(byTestId('outlook-moved-block')).toBeNull();
+            expect(byTestId('outlook-detail-move-entry')).toBeNull();
+        });
+
+        it('in form mode the moved block is not shown', async () => {
+            mountOpen(moved(), true, {}, 'form');
+            await nextTick();
+
+            expect(byTestId('outlook-convert-form')).not.toBeNull();
+            expect(byTestId('outlook-moved-block')).toBeNull();
+        });
+
+        it('a meeting without moved_from renders exactly what it rendered before', async () => {
+            mountOpen(meeting({ moved_from: null }));
+            await nextTick();
+            const withNull = panel().innerHTML;
+            wrapper?.unmount();
+            document.body.innerHTML = '';
+
+            mountOpen(meeting());
+            await nextTick();
+            const without = panel().innerHTML;
+
+            expect(byTestId('outlook-moved-block')).toBeNull();
+            expect(byTestId('outlook-detail-move-entry')).toBeNull();
+            // Only generated ids may differ between two mounts
+            const strip = (html: string) => html.replace(/(id|aria-[a-z]+)="[^"]*"/g, '');
+            expect(strip(withNull)).toBe(strip(without));
         });
     });
 });

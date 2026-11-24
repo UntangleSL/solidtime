@@ -22,6 +22,7 @@ import type {
     OutlookConversionResult,
     OutlookMeeting,
 } from '@/m365/types';
+import type { OutlookFlagActionResult } from './conversionApi';
 
 const DAY = '2026-10-20';
 const LANE = ghostLaneWidth(false);
@@ -76,6 +77,14 @@ const labels = {
     eyebrow_series_ignored: 'Outlook meeting · Series ignored',
     series_ignored_suffix: ', series ignored',
     selected_suffix: ', selected',
+    // Phase 6 (D-03)
+    moved_eyebrow: 'Moved in Outlook · Already logged',
+    moved_body:
+        'You logged it on :when. Create a new entry for this session, or move that one here.',
+    moved_hover_note: 'Moved in Outlook. You logged it on :date.',
+    moved_suffix: ', already logged on :date',
+    move_entry_here: 'Move my entry here',
+    move_entry_failed: 'Could not move the time entry',
 } as OutlookCalendarLabels;
 
 const settings: CalendarSettings = { snapMinutes: 15, startHour: 0, endHour: 24, slotMinutes: 15 };
@@ -2670,6 +2679,464 @@ describe('OutlookGhostLayer pre-assigned meetings (Phase 5)', () => {
 
             expect(mounted.context.dismiss).toHaveBeenCalledWith('a');
             expect(panel()).toBeNull();
+        });
+    });
+});
+
+// Phase 6 (D-03, UI-SPEC section 4): a meeting Outlook moved after it started. The context is a
+// stand-in for the composable: moveEntry marks the meeting pending, settles with the queued answer
+// and, on ok, removes the meeting from the list (it is linked now). A logged entry block with
+// [data-event-id] stands in for the core calendar entry.
+describe('OutlookGhostLayer moved meeting (Phase 6, D-03)', () => {
+    let wrapper: VueWrapper | null = null;
+
+    const movedFrom = {
+        time_entry_id: 'te-old',
+        entry_start: '2026-10-19T08:00:00Z',
+        entry_end: '2026-10-19T09:00:00Z',
+    };
+
+    const at = (id: string, hour: number, overrides: Partial<OutlookMeeting> = {}) =>
+        meeting({
+            id,
+            subject: 'Meeting ' + id,
+            start: `2026-10-20T${String(hour).padStart(2, '0')}:00:00Z`,
+            end: `2026-10-20T${String(hour + 1).padStart(2, '0')}:00:00Z`,
+            ...overrides,
+        });
+
+    const moved = (id: string, hour: number, overrides: Partial<OutlookMeeting> = {}) =>
+        at(id, hour, { moved_from: movedFrom, ...overrides });
+
+    function mountMoved(
+        initial: OutlookMeeting[],
+        options: { canAct?: boolean; withEntry?: boolean } = {}
+    ) {
+        const root = document.createElement('div');
+        root.className = 'fc';
+        document.body.appendChild(root);
+        const list = ref(initial);
+        const movePending = ref<string[]>([]);
+        const confirmPending = ref<string[]>([]);
+        let settleMove: (result: OutlookFlagActionResult) => void = () => undefined;
+        const moveEntry = vi.fn(async (id: string) => {
+            movePending.value = [...movePending.value, id];
+            const result = await new Promise<OutlookFlagActionResult>((resolve) => {
+                settleMove = resolve;
+            });
+            movePending.value = movePending.value.filter((item) => item !== id);
+            if (result.status === 'ok') list.value = list.value.filter((item) => item.id !== id);
+            return result;
+        });
+        const selectedIds = ref<string[]>([]);
+        const context = {
+            canAct: ref(options.canAct ?? true),
+            includeDismissed: ref(false),
+            dismiss: vi.fn(),
+            restore: vi.fn(),
+            formRequest: ref(null),
+            confirmOne: vi.fn(),
+            isConfirmPending: (id: string) => confirmPending.value.includes(id),
+            moveEntry,
+            isMovePending: (id: string) => movePending.value.includes(id),
+            selection: {
+                selectedIds,
+                isSelected: (id: string) => selectedIds.value.includes(id),
+                clear: () => (selectedIds.value = []),
+                toggle: vi.fn(),
+                selectRange: vi.fn(),
+            },
+        } as unknown as OutlookMeetingsContext;
+        const Host = defineComponent({
+            setup() {
+                return () =>
+                    h('div', [
+                        options.withEntry === false
+                            ? null
+                            : h('div', { 'data-event-id': 'te-old', tabindex: 0 }, 'Logged entry'),
+                        h(OutlookGhostLayer, {
+                            meetings: list.value,
+                            labels,
+                            dayStr: DAY,
+                            isDayView: false,
+                            minutesToPixels,
+                            settings,
+                        }),
+                        h('button', { 'data-testid': 'outlook-sync-button' }, 'Sync'),
+                    ]);
+            },
+        });
+        wrapper = mount(Host, {
+            attachTo: root,
+            global: {
+                provide: {
+                    [OUTLOOK_MEETINGS_KEY as symbol]: context,
+                    organization: computed(() => ({ time_format: '24-hours' })),
+                },
+            },
+        });
+        passMountTime();
+        return {
+            list,
+            context,
+            moveEntry,
+            movePending,
+            confirmPending,
+            answer: async (result: OutlookFlagActionResult) => {
+                settleMove(result);
+                await advance(20);
+            },
+        };
+    }
+
+    function block(id: string): HTMLElement {
+        return document.body.querySelector<HTMLElement>(`[data-ghost-id="${id}"]`)!;
+    }
+
+    function panel(): HTMLElement | null {
+        return document.body.querySelector('[data-testid="outlook-ghost-detail"]');
+    }
+
+    function byTestId(id: string): HTMLElement | null {
+        return document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    }
+
+    async function advance(ms: number) {
+        await vi.advanceTimersByTimeAsync(ms);
+        await nextTick();
+    }
+
+    async function openPanel(id: string) {
+        block(id).click();
+        await advance(20);
+        expect(panel()).not.toBeNull();
+    }
+
+    async function pressMove() {
+        byTestId('outlook-detail-move-entry')!.click();
+        await advance(20);
+    }
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        resetHoverCardDelay();
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+    });
+
+    afterEach(() => {
+        wrapper?.unmount();
+        wrapper = null;
+        document.body.innerHTML = '';
+        resetHoverCardDelay();
+        vi.useRealTimers();
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+    });
+
+    describe('Move my entry here from the panel', () => {
+        it('the panel of a moved meeting shows the moved block and keeps Create time entry', async () => {
+            mountMoved([moved('a', 8)]);
+            await openPanel('a');
+
+            expect(byTestId('outlook-moved-block')).not.toBeNull();
+            expect(byTestId('outlook-moved-body')?.textContent?.trim()).toBe(
+                'You logged it on Mon, Oct 19 · 08:00 – 09:00. Create a new entry for this session, or move that one here.'
+            );
+            expect(byTestId('outlook-detail-create')).not.toBeNull();
+        });
+
+        it('a meeting without moved_from has no moved block', async () => {
+            mountMoved([at('a', 8)]);
+            await openPanel('a');
+
+            expect(byTestId('outlook-moved-block')).toBeNull();
+            expect(byTestId('outlook-detail-move-entry')).toBeNull();
+        });
+
+        it('calls moveEntry once with the meeting id', async () => {
+            const mounted = mountMoved([moved('a', 8)]);
+            await openPanel('a');
+
+            await pressMove();
+            await pressMove();
+
+            expect(mounted.moveEntry).toHaveBeenCalledTimes(1);
+            expect(mounted.moveEntry).toHaveBeenCalledWith('a');
+        });
+
+        it('while the move runs: button loading, Create and More disabled, panel not dismissable', async () => {
+            mountMoved([moved('a', 8)]);
+            await openPanel('a');
+
+            await pressMove();
+
+            const move = byTestId('outlook-detail-move-entry') as HTMLButtonElement;
+            expect(move.disabled).toBe(true);
+            expect(move.querySelector('svg.animate-spin')).not.toBeNull();
+            expect((byTestId('outlook-detail-create') as HTMLButtonElement).disabled).toBe(true);
+            expect((byTestId('outlook-detail-more') as HTMLButtonElement).disabled).toBe(true);
+
+            document.body.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+            );
+            await advance(20);
+            expect(panel()).not.toBeNull();
+        });
+
+        it('ok: the meeting leaves the lane, the panel closes, focus goes to the moved entry', async () => {
+            const mounted = mountMoved([moved('a', 8), at('b', 10)]);
+            await openPanel('a');
+            await pressMove();
+
+            await mounted.answer({ status: 'ok' });
+
+            expect(panel()).toBeNull();
+            expect(block('a')).toBeNull();
+            expect(document.activeElement).toBe(
+                document.body.querySelector('[data-event-id="te-old"]')
+            );
+        });
+
+        it('ok without a rendered entry block: focus follows the removal rule', async () => {
+            const mounted = mountMoved([moved('a', 8), at('b', 10)], { withEntry: false });
+            await openPanel('a');
+            await pressMove();
+
+            await mounted.answer({ status: 'ok' });
+
+            expect(panel()).toBeNull();
+            expect(document.activeElement).toBe(block('b'));
+        });
+
+        it('ok on the last meeting without an entry block: focus goes to the Sync button', async () => {
+            const mounted = mountMoved([moved('a', 8)], { withEntry: false });
+            await openPanel('a');
+            await pressMove();
+
+            await mounted.answer({ status: 'ok' });
+
+            expect(document.activeElement).toBe(byTestId('outlook-sync-button'));
+        });
+
+        it('failed: the panel stays open with the alert and focus returns to the button', async () => {
+            const mounted = mountMoved([moved('a', 8)]);
+            await openPanel('a');
+            await pressMove();
+
+            await mounted.answer({ status: 'failed', message: 'This project is archived.' });
+
+            expect(panel()).not.toBeNull();
+            const alert = byTestId('outlook-detail-alert');
+            expect(alert?.getAttribute('role')).toBe('alert');
+            expect(alert?.textContent?.trim()).toBe('This project is archived.');
+            const move = byTestId('outlook-detail-move-entry') as HTMLButtonElement;
+            expect(move.disabled).toBe(false);
+            expect(document.activeElement).toBe(move);
+            expect(block('a')).not.toBeNull();
+        });
+
+        it('failed without a message falls back to the move failure copy', async () => {
+            const mounted = mountMoved([moved('a', 8)]);
+            await openPanel('a');
+            await pressMove();
+
+            await mounted.answer({ status: 'failed', message: '' });
+
+            expect(byTestId('outlook-detail-alert')?.textContent?.trim()).toBe(
+                'Could not move the time entry'
+            );
+        });
+
+        it('a new move clears the previous failure', async () => {
+            const mounted = mountMoved([moved('a', 8)]);
+            await openPanel('a');
+            await pressMove();
+            await mounted.answer({ status: 'failed', message: 'Try again.' });
+            expect(byTestId('outlook-detail-alert')).not.toBeNull();
+
+            await pressMove();
+
+            expect(byTestId('outlook-detail-alert')).toBeNull();
+        });
+
+        it('stale: the panel closes and focus stays on the meeting', async () => {
+            const mounted = mountMoved([moved('a', 8), at('b', 10)]);
+            await openPanel('a');
+            await pressMove();
+
+            await mounted.answer({ status: 'stale' });
+
+            expect(panel()).toBeNull();
+            expect(document.activeElement).toBe(block('a'));
+        });
+
+        it('without canAct there is no move button and nothing is called', async () => {
+            const mounted = mountMoved([moved('a', 8)], { canAct: false });
+            // Read on the render that opens the panel: in happy-dom a panel without any focusable
+            // content closes again on the next focus pass (pre-existing, any meeting).
+            block('a').click();
+            await nextTick();
+
+            expect(panel()).not.toBeNull();
+            expect(byTestId('outlook-moved-block')).toBeNull();
+            expect(byTestId('outlook-detail-move-entry')).toBeNull();
+            expect(mounted.moveEntry).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('moved block: label, attribute and pending state', () => {
+        function moveSpinnerOf(id: string): Element | null {
+            return block(id).querySelector('[data-testid="outlook-move-spinner"]');
+        }
+
+        it('the aria-label ends with the already-logged suffix and the block carries data-moved-from', () => {
+            mountMoved([moved('a', 8), at('b', 10)]);
+
+            expect(block('a').getAttribute('aria-label')).toBe(
+                'Meeting a, 08:00 to 09:00, Outlook meeting suggestion, already logged on Mon, Oct 19'
+            );
+            expect(block('a').hasAttribute('data-moved-from')).toBe(true);
+            expect(block('b').getAttribute('aria-label')).toBe(
+                'Meeting b, 10:00 to 11:00, Outlook meeting suggestion'
+            );
+            expect(block('b').hasAttribute('data-moved-from')).toBe(false);
+        });
+
+        it('the suffix comes after the pre-assigned one and before dismissed and selected', async () => {
+            mountMoved([
+                moved('a', 8, { series_key: 'series-a', assignment }),
+                moved('b', 10, { dismissed: true }),
+            ]);
+
+            expect(block('a').getAttribute('aria-label')).toBe(
+                'Meeting a, 08:00 to 09:00, Outlook meeting suggestion, pre-assigned to Acme Website, already logged on Mon, Oct 19'
+            );
+            expect(block('b').getAttribute('aria-label')).toMatch(
+                /, already logged on Mon, Oct 19, dismissed$/
+            );
+        });
+
+        it('the suffix comes before the selected suffix', async () => {
+            const mounted = mountMoved([moved('a', 8), at('b', 10)]);
+            const selection = mounted.context.selection as unknown as {
+                selectedIds: Ref<string[]>;
+            };
+            selection.selectedIds.value = ['a'];
+            await nextTick();
+
+            expect(block('a').getAttribute('aria-label')).toMatch(
+                /, already logged on Mon, Oct 19, selected$/
+            );
+        });
+
+        it('the suffix uses the local date of the logged entry', () => {
+            vi.mocked(window.getTimezoneSetting).mockReturnValue('Pacific/Auckland');
+            mountMoved([
+                at('a', 8, {
+                    moved_from: {
+                        time_entry_id: 'te-old',
+                        entry_start: '2026-10-19T12:00:00Z',
+                        entry_end: '2026-10-19T13:00:00Z',
+                    },
+                }),
+            ]);
+
+            expect(block('a').getAttribute('aria-label')).toMatch(
+                /, already logged on Tue, Oct 20$/
+            );
+        });
+
+        it('without canAct the label still says already logged and nothing else changes', async () => {
+            const mounted = mountMoved([moved('a', 8)], { canAct: false });
+
+            expect(block('a').getAttribute('aria-label')).toMatch(
+                /, already logged on Mon, Oct 19$/
+            );
+            expect(block('a').hasAttribute('aria-busy')).toBe(false);
+            expect(moveSpinnerOf('a')).toBeNull();
+            expect(mounted.moveEntry).not.toHaveBeenCalled();
+        });
+
+        it('a move started elsewhere (menu) shows the block pending: aria-busy, cursor, 12px spinner', async () => {
+            const mounted = mountMoved([moved('a', 8), at('b', 10)]);
+            expect(block('a').hasAttribute('aria-busy')).toBe(false);
+            expect(block('a').classList.contains('cursor-pointer')).toBe(true);
+            expect(moveSpinnerOf('a')).toBeNull();
+
+            mounted.movePending.value = ['a'];
+            await nextTick();
+
+            expect(block('a').getAttribute('aria-busy')).toBe('true');
+            expect(block('a').classList.contains('cursor-progress')).toBe(true);
+            expect(block('a').classList.contains('cursor-pointer')).toBe(false);
+            const spinner = moveSpinnerOf('a');
+            expect(spinner).not.toBeNull();
+            expect(spinner!.getAttribute('class')).toContain('h-3');
+            expect(spinner!.getAttribute('class')).toContain('w-3');
+            // The calendar icon of the time line gives way to the spinner
+            expect(
+                block('a').querySelector('[data-ghost-time] svg.lucide-calendar-days')
+            ).toBeNull();
+            expect(block('b').hasAttribute('aria-busy')).toBe(false);
+            expect(moveSpinnerOf('b')).toBeNull();
+
+            mounted.movePending.value = [];
+            await nextTick();
+
+            expect(block('a').hasAttribute('aria-busy')).toBe(false);
+            expect(moveSpinnerOf('a')).toBeNull();
+            expect(
+                block('a').querySelector('[data-ghost-time] svg.lucide-calendar-days')
+            ).not.toBeNull();
+        });
+
+        it('on one-line tiers the move spinner sits before the subject', async () => {
+            const mounted = mountMoved([moved('a', 8, { end: '2026-10-20T08:20:00Z' })]);
+            expect(
+                block('a').querySelector('[data-ghost-tier]')!.getAttribute('data-ghost-tier')
+            ).toBe('2');
+
+            mounted.movePending.value = ['a'];
+            await nextTick();
+
+            const html = block('a').innerHTML;
+            expect(html.indexOf('outlook-move-spinner')).toBeGreaterThan(-1);
+            expect(html.indexOf('outlook-move-spinner')).toBeLessThan(
+                html.indexOf('data-ghost-subject')
+            );
+        });
+
+        it('a pre-assigned moved meeting uses the pre-assigned spinner in place of its dot', async () => {
+            const mounted = mountMoved([moved('a', 8, { series_key: 'series-a', assignment })]);
+
+            mounted.movePending.value = ['a'];
+            await nextTick();
+
+            expect(block('a').getAttribute('aria-busy')).toBe('true');
+            expect(
+                block('a').querySelector('[data-testid="outlook-preassigned-spinner"]')
+            ).not.toBeNull();
+            expect(block('a').querySelector('[data-testid="outlook-project-dot"]')).toBeNull();
+            expect(moveSpinnerOf('a')).toBeNull();
+        });
+
+        it('a confirm pending on a plain meeting still shows no move spinner', async () => {
+            const mounted = mountMoved([at('a', 8)]);
+
+            mounted.confirmPending.value = ['a'];
+            await nextTick();
+
+            expect(block('a').getAttribute('aria-busy')).toBe('true');
+            expect(moveSpinnerOf('a')).toBeNull();
+        });
+
+        it('a panel move shows the block pending too', async () => {
+            mountMoved([moved('a', 8)]);
+            await openPanel('a');
+
+            await pressMove();
+
+            expect(block('a').getAttribute('aria-busy')).toBe('true');
+            expect(moveSpinnerOf('a')).not.toBeNull();
         });
     });
 });
