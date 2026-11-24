@@ -35,16 +35,16 @@ A user opens the solidtime calendar and their Outlook meetings are already there
 - [ ] User can dismiss/ignore a meeting suggestion so it stops appearing
 - [ ] For a recurring meeting, user can create a rule "this series → project X" that pre-assigns all future (and current unassigned) occurrences; each occurrence still needs a one-click confirmation to become a time entry
 - [ ] User can view, edit and delete their recurring-meeting rules
-- [ ] If a meeting already converted to a time entry changes time or is cancelled in Outlook, the time entry is flagged as "out of sync" — never modified or deleted automatically
+- [ ] If a meeting already converted to a time entry changes time or is cancelled in Outlook: entries of meetings that already started are never changed; the unedited entry of a not-started meeting follows the new time; everything else is flagged 'out of sync' for the user to decide; nothing is ever deleted automatically (D-04, D-12)
 - [ ] Microsoft tokens stored encrypted, hidden from serialization/audits, revoked on user deletion; user can disconnect their Microsoft account
 
 ### Out of Scope
 
 - Multi-tenant M365 (each customer org connecting its own tenant) — only Untangle's tenant is needed; keep config single-tenant
-- Real-time sync via Graph webhooks / background periodic sync — chosen "sync on open + manual button" for simplicity; no public webhook endpoint or subscription renewal
+- Real-time sync via Graph webhooks / background periodic sync — chosen "sync on open + manual button" for simplicity; no public webhook endpoint or subscription renewal. Since Phase 6 a daily background check of already-linked meetings exists (D-11); meeting import stays on open + Sync
 - Writing back to Outlook (creating/editing events from solidtime) — read-only integration
 - Auto-creating time entries without user confirmation (both for single meetings and recurring rules) — user wants to confirm each occurrence
-- Automatically adjusting or deleting time entries when Outlook changes — never lose logged hours; flag instead
+- Automatically deleting time entries, or adjusting entries of meetings that already started or that the user edited, when Outlook changes — flag instead (D-12)
 - Disabling email/password login — both login methods coexist
 - Google Calendar / CalDAV / ICS — only Microsoft 365 needed
 - Upstreaming to solidtime-io — fork-only feature; but keep it isolated to ease upstream merges

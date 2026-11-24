@@ -7,6 +7,10 @@ namespace App\Microsoft365\Graph;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookSyncWindow;
+use App\Microsoft365\OutOfSync\LinkedSightings;
+use App\Microsoft365\OutOfSync\Observation;
+use App\Microsoft365\OutOfSync\OutOfSyncApplier;
+use App\Microsoft365\OutOfSync\OutOfSyncScope;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
@@ -14,10 +18,14 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
- * Pulls a user's Outlook meetings for a window from Microsoft Graph into the outlook_meetings cache.
+ * Pulls a user's Outlook meetings for a window from Microsoft Graph into the outlook_meetings cache, and
+ * checks the user's converted meetings seen in that window for Outlook changes (Phase 6).
  *
- * Read-only towards Graph and never touches time entries: Outlook changes must not modify or delete
- * existing time entries (PROJECT.md data safety).
+ * Read-only towards Graph. Time entries follow the PROJECT.md data-safety rule (D-04, D-12): this class
+ * never deletes an entry and never changes the entry of a meeting that already started. The one
+ * automatic change is the unedited entry of a meeting that has not started yet, which moves to the
+ * meeting's new Outlook time, and only through CoreTimeEntryUpdater (core's own update path, called by
+ * OutOfSyncApplier). Everything else is at most a flag for the user to decide.
  */
 final class OutlookMeetingSyncService
 {
@@ -33,6 +41,9 @@ final class OutlookMeetingSyncService
         private readonly OutlookMeetingEligibility $eligibility,
         private readonly MicrosoftTokenService $tokens,
         private readonly GraphAccessGuard $access,
+        private readonly OutOfSyncScope $scope,
+        private readonly LinkedSightings $sightings,
+        private readonly OutOfSyncApplier $applier,
     ) {}
 
     /**
@@ -123,10 +134,22 @@ final class OutlookMeetingSyncService
             return new SyncOutcome(SyncStatus::NoMailbox);
         }
 
+        // The user's converted meetings that the out-of-sync check covers (D-10), as a set of Graph ids
+        $tracked = $this->scope->activeGraphIds($user, $syncStartedAt);
+        /** @var array<string, Observation> $sightings */
+        $sightings = [];
+
         $rows = [];
         $ineligibleIds = [];
         $nonUtc = 0;
         foreach ($result['events'] as $event) {
+            // Taken before the eligibility filter, so a cancelled meeting is seen as cancelled and not
+            // as absent (RESEARCH Pitfall 2). Ids, times and flags only, never the subject (D-06)
+            $id = $event['id'] ?? null;
+            if (is_string($id) && isset($tracked[$id])) {
+                $sightings[$id] = $this->sightings->observe($event, $syncStartedAt);
+            }
+
             // The filter runs before any row is built: an ineligible event's subject never reaches a query
             if (! $this->eligibility->isEligible($event)) {
                 if (is_string($event['id'] ?? null)) {
@@ -167,6 +190,10 @@ final class OutlookMeetingSyncService
         if ($result['complete']) {
             // Only a complete traversal proves that an unseen meeting is gone (never after a partial one)
             $this->markUnseenGone($user, $start, $end, $syncStartedAt);
+
+            // Sightings act only after a complete, failure-free traversal (D-07), still inside the sync
+            // lock, so a concurrent sync of this user can not apply them twice
+            $this->applier->apply($user, $sightings, $syncStartedAt);
         }
 
         // A traversal with a failure records no sync window
