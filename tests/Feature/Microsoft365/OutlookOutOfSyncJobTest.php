@@ -45,13 +45,16 @@ use Illuminate\Http\Client\ResponseSequence;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\Feature\Microsoft365\Support\InteractsWithGraphFixtures;
 use Tests\Feature\Microsoft365\Support\InteractsWithMicrosoft365;
 use Tests\TestCaseWithDatabase;
+use TiMacDonald\Log\LogEntry;
 
 /**
  * The daily out-of-sync check (D-11), end to end: m365:check-out-of-sync queues one job per eligible
@@ -348,5 +351,311 @@ class OutlookOutOfSyncJobTest extends TestCaseWithDatabase
         $this->assertCount(1, $lookups);
         $this->assertStringStartsWith('https://graph.microsoft.com/v1.0/me/events/evt-1?', $lookups[0]->url());
         $this->assertNotNull($this->linkOf($data->user, 'evt-1')->last_checked_at);
+    }
+
+    public function test_command_does_nothing_while_the_integration_is_not_configured(): void
+    {
+        // Arrange: an eligible user, but the client secret is missing
+        $data = $this->employee();
+        $this->linkedEntry($data->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->configureMicrosoft365(null, ['client_secret' => null]);
+        Queue::fake();
+
+        // Act
+        $exitCode = $this->withoutMockingConsoleOutput()->artisan('m365:check-out-of-sync');
+        $output = Artisan::output();
+
+        // Assert
+        $this->assertSame(Command::SUCCESS, $exitCode);
+        $this->assertStringContainsString('configured: no', $output);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_command_staggers_the_dispatches(): void
+    {
+        // Arrange: two eligible users
+        $first = $this->employee();
+        $this->linkedEntry($first->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $second = $this->createUserWithRole(Role::Employee);
+        $second->user->save();
+        $this->connectedAccount($second->user, objectId: $this->nextObjectId());
+        $this->linkedEntry($second->user, 'evt-2', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        Queue::fake();
+
+        // Act
+        $this->withoutMockingConsoleOutput()->artisan('m365:check-out-of-sync');
+
+        // Assert: 0 s and 10 s (microsoft365.out_of_sync.dispatch_stagger_seconds)
+        $delays = [];
+        Queue::assertPushed(CheckOutOfSyncForUser::class, function (CheckOutOfSyncForUser $job) use (&$delays): bool {
+            $this->assertInstanceOf(\DateTimeInterface::class, $job->delay);
+            $delays[] = $job->delay->getTimestamp() - CarbonImmutable::now()->getTimestamp();
+
+            return true;
+        });
+        sort($delays);
+        $this->assertSame([0, 10], $delays);
+    }
+
+    public function test_job_releases_itself_while_backed_off(): void
+    {
+        // Arrange: Graph asked to wait two more minutes
+        $data = $this->employee();
+        $this->linkedEntry($data->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $account = $this->account($data->user);
+        $account->graph_backoff_until = Carbon::now()->addSeconds(120);
+        $account->save();
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $job = $this->runJob($data->user, fakeQueue: true);
+
+        // Assert: back on the queue once the back-off is over, without a Graph call
+        $job->assertReleased(delay: 120);
+        $this->assertSame([], $this->lookupRequests());
+        $this->assertNull($this->linkOf($data->user, 'evt-1')->last_checked_at);
+    }
+
+    public function test_job_stops_at_a_throttled_lookup(): void
+    {
+        // Arrange: three not-started links; Graph throttles the second lookup
+        $data = $this->employee();
+        $this->linkedEntry($data->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->linkedEntry($data->user, 'evt-2', '2026-12-04 10:00:00', '2026-12-04 11:00:00');
+        $this->linkedEntry($data->user, 'evt-3', '2026-12-05 10:00:00', '2026-12-05 11:00:00');
+        $this->fakeLookups(Http::sequence()
+            ->pushResponse($this->lookupAt('evt-1', '2026-12-03T10:00:00', '2026-12-03T11:00:00'))
+            ->push(['error' => ['code' => 'TooManyRequests']], 429, ['Retry-After' => '90']));
+
+        // Act
+        $job = $this->runJob($data->user, fakeQueue: true);
+
+        // Assert: two lookups, the back-off is persisted, the third link is left for the next run
+        $lookups = $this->lookupRequests();
+        $this->assertCount(2, $lookups);
+        $this->assertStringStartsWith('https://graph.microsoft.com/v1.0/me/events/evt-1?', $lookups[0]->url());
+        $this->assertStringStartsWith('https://graph.microsoft.com/v1.0/me/events/evt-2?', $lookups[1]->url());
+        $this->assertSame('2026-12-01 08:01:30', $this->utc($this->account($data->user)->graph_backoff_until));
+        $this->assertNotNull($this->linkOf($data->user, 'evt-1')->last_checked_at);
+        $this->assertNull($this->linkOf($data->user, 'evt-2')->last_checked_at);
+        $this->assertNull($this->linkOf($data->user, 'evt-3')->last_checked_at);
+        // The job itself never retries a throttled lookup
+        $job->assertNotReleased();
+    }
+
+    public function test_job_stops_at_reconnect(): void
+    {
+        // Arrange: two links; the lookup is rejected before and after a token refresh
+        $data = $this->employee();
+        $this->linkedEntry($data->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->linkedEntry($data->user, 'evt-2', '2026-12-04 10:00:00', '2026-12-04 11:00:00');
+        Http::fake(['https://login.microsoftonline.com/*/oauth2/v2.0/token' => Http::response([
+            'access_token' => 'at-new-5b2e',
+            'expires_in' => 3600,
+            'refresh_token' => 'rt-new-8c4a',
+        ])]);
+        $this->fakeLookups(Http::sequence()
+            ->push(['error' => ['code' => 'InvalidAuthenticationToken']], 401)
+            ->push(['error' => ['code' => 'InvalidAuthenticationToken']], 401));
+
+        // Act
+        $this->runJob($data->user);
+
+        // Assert: Phase 3 rule, one refresh then reconnect; the second link is not looked up
+        $lookups = $this->lookupRequests();
+        $this->assertCount(2, $lookups);
+        $this->assertSame($lookups[0]->url(), $lookups[1]->url());
+        $this->assertNotNull($this->account($data->user)->reconnect_required_at);
+        foreach (['evt-1', 'evt-2'] as $graphId) {
+            $link = $this->linkOf($data->user, $graphId);
+            $this->assertNull($link->flag_reason, $graphId);
+            $this->assertNull($link->last_checked_at, $graphId);
+        }
+    }
+
+    public function test_job_skips_users_without_a_valid_connection(): void
+    {
+        // Arrange: a disconnected user, a user who must reconnect, and a user id that no longer exists
+        $disconnected = $this->employee();
+        $this->linkedEntry($disconnected->user, 'evt-d', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $account = $this->account($disconnected->user);
+        $account->refresh_token = null;
+        $account->access_token = null;
+        $account->disconnected_at = Carbon::now();
+        $account->save();
+        $reconnect = $this->createUserWithRole(Role::Employee);
+        $reconnect->user->save();
+        $account = $this->connectedAccount($reconnect->user, objectId: $this->nextObjectId());
+        $account->reconnect_required_at = Carbon::now();
+        $account->save();
+        $this->linkedEntry($reconnect->user, 'evt-r', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $this->runJob($disconnected->user);
+        $this->runJob($reconnect->user);
+        $this->runJob('00000000-0000-4000-8000-ffffffffffff');
+
+        // Assert: no Graph request, nothing changed (D-11)
+        $this->assertSame([], $this->lookupRequests());
+        $this->assertNull($this->linkOf($disconnected->user, 'evt-d')->last_checked_at);
+        $this->assertNull($this->linkOf($reconnect->user, 'evt-r')->last_checked_at);
+        $this->assertNull($this->linkOf($reconnect->user, 'evt-r')->flag_reason);
+    }
+
+    public function test_job_caps_lookups(): void
+    {
+        // Arrange: five not-started links, checked at different times; the budget is two lookups
+        Config::set('microsoft365.out_of_sync.lookups_per_job', 2);
+        $data = $this->employee();
+        $checked = ['2026-11-29 08:00:00', null, '2026-11-25 08:00:00', '2026-11-30 08:00:00', '2026-11-28 08:00:00'];
+        foreach ($checked as $i => $at) {
+            $this->linkedEntry($data->user, 'evt-'.$i, sprintf('2026-12-%02d 10:00:00', 2 + $i), sprintf('2026-12-%02d 11:00:00', 2 + $i));
+            if ($at !== null) {
+                $link = $this->linkOf($data->user, 'evt-'.$i);
+                $link->last_checked_at = Carbon::parse($at, 'UTC');
+                $link->save();
+            }
+        }
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $this->runJob($data->user);
+
+        // Assert: never checked first, then the least recently checked
+        $lookups = $this->lookupRequests();
+        $this->assertCount(2, $lookups);
+        $this->assertStringStartsWith('https://graph.microsoft.com/v1.0/me/events/evt-1?', $lookups[0]->url());
+        $this->assertStringStartsWith('https://graph.microsoft.com/v1.0/me/events/evt-2?', $lookups[1]->url());
+        foreach ([0, 1, 2, 3, 4] as $i) {
+            $expected = in_array($i, [1, 2], true) ? Decision::REASON_REMOVED : null;
+            $this->assertSame($expected, $this->linkOf($data->user, 'evt-'.$i)->flag_reason, 'evt-'.$i);
+        }
+    }
+
+    public function test_job_scope(): void
+    {
+        // Arrange: one link in the window; one recorded 61 days ago; one released; one detached
+        $data = $this->employee();
+        $this->linkedEntry($data->user, 'evt-in', '2026-11-20 10:00:00', '2026-11-20 11:00:00');
+        $this->linkedEntry($data->user, 'evt-old', '2026-10-01 07:00:00', '2026-10-01 08:00:00');
+        $this->linkedEntry($data->user, 'evt-released', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->linkedEntry($data->user, 'evt-detached', '2026-12-04 10:00:00', '2026-12-04 11:00:00');
+        $released = $this->linkOf($data->user, 'evt-released');
+        $released->released_at = Carbon::now()->subDay();
+        $released->save();
+        $detached = $this->linkOf($data->user, 'evt-detached');
+        $detached->detached_at = Carbon::now()->subDay();
+        $detached->save();
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $this->runJob($data->user);
+
+        // Assert: only the link in scope was looked up (D-10)
+        $lookups = $this->lookupRequests();
+        $this->assertCount(1, $lookups);
+        $this->assertStringStartsWith('https://graph.microsoft.com/v1.0/me/events/evt-in?', $lookups[0]->url());
+        foreach (['evt-old', 'evt-released', 'evt-detached'] as $graphId) {
+            $this->assertNull($this->linkOf($data->user, $graphId)->last_checked_at, $graphId);
+        }
+    }
+
+    public function test_job_releases_a_started_meeting_and_moves_its_cached_row(): void
+    {
+        // Arrange: the meeting started at 10:00; Outlook moved it to next week; its cached row is at the old slot
+        $data = $this->employee('2026-12-03 10:30:00');
+        $entry = $this->linkedEntry($data->user, 'evt-s', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $meeting = OutlookMeeting::query()->create([
+            'user_id' => $data->user->getKey(),
+            'graph_id' => 'evt-s',
+            'event_type' => 'singleInstance',
+            'subject' => 'Weekly sync',
+            'starts_at' => '2026-12-03 10:00:00',
+            'ends_at' => '2026-12-03 11:00:00',
+            'organizer_name' => 'Org Name',
+            'is_organizer' => false,
+            'is_online_meeting' => true,
+            'web_link' => 'https://outlook.office.com/owa/?itemid=evt-s',
+            'last_seen_at' => '2026-11-30 08:00:00',
+        ]);
+        $this->fakeLookups(Http::sequence()->pushResponse($this->lookupAt('evt-s', '2026-12-09T10:00:00', '2026-12-09T11:00:00')));
+
+        // Act
+        $this->runJob($data->user);
+
+        // Assert: released, the entry unchanged, the meeting shows again at its new slot (D-03, Pitfall 5)
+        $link = $this->linkOf($data->user, 'evt-s');
+        $this->assertNotNull($link->released_at);
+        $this->assertNull($link->flag_reason);
+        $this->assertNull($link->auto_adjusted_at);
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($entry->end));
+        $meeting->refresh();
+        $this->assertSame('2026-12-09 10:00:00', $this->utc($meeting->starts_at));
+        $this->assertSame('2026-12-09 11:00:00', $this->utc($meeting->ends_at));
+    }
+
+    public function test_job_flags_cancelled_and_removed_not_started_meetings(): void
+    {
+        // Arrange: two not-started links; Outlook answers cancelled (S3) for the first, gone (S4) for the second
+        $data = $this->employee();
+        $cancelled = $this->linkedEntry($data->user, 'evt-3', '2026-12-04 09:00:00', '2026-12-04 09:30:00');
+        $removed = $this->linkedEntry($data->user, 'evt-4', '2026-12-05 10:00:00', '2026-12-05 11:00:00');
+        $this->fakeLookups(Http::sequence()
+            ->pushResponse($this->lookupFixture('S3'))
+            ->pushResponse($this->lookupFixture('S4')));
+
+        // Act
+        $this->runJob($data->user);
+
+        // Assert: both flagged for the user's choice; nothing is ever deleted (D-05)
+        $this->assertCount(2, $this->lookupRequests());
+        $this->assertSame(Decision::REASON_CANCELLED, $this->linkOf($data->user, 'evt-3')->flag_reason);
+        $this->assertSame(Decision::REASON_REMOVED, $this->linkOf($data->user, 'evt-4')->flag_reason);
+        foreach ([$cancelled, $removed] as $entry) {
+            $this->assertTrue(TimeEntry::query()->whereKey($entry->getKey())->exists());
+            $before = [$this->utc($entry->start), $this->utc($entry->end)];
+            $entry->refresh();
+            $this->assertSame($before, [$this->utc($entry->start), $this->utc($entry->end)]);
+        }
+    }
+
+    public function test_job_logs_counts_only(): void
+    {
+        // Arrange: one moved, unedited meeting; Graph throttles the next lookup
+        $data = $this->employee();
+        $this->linkedEntry($data->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->linkedEntry($data->user, 'evt-2', '2026-12-04 10:00:00', '2026-12-04 11:00:00');
+        $this->fakeLookups(Http::sequence()
+            ->pushResponse($this->lookupAt('evt-1', '2026-12-03T12:00:00', '2026-12-03T13:00:00'))
+            ->push(['error' => ['code' => 'TooManyRequests']], 429, ['Retry-After' => '60']));
+
+        // Act
+        $this->runJob($data->user);
+
+        // Assert: one summary line with fixed keys, integer counts and the stop reason
+        $lines = Log::allLogs()->filter(fn (LogEntry $log): bool => $log->message === self::CHECK_MESSAGE)->values();
+        $this->assertCount(1, $lines);
+        $this->assertSame('info', $lines[0]->level);
+        $this->assertSame([
+            'checked' => 2,
+            'adjusted' => 1,
+            'flagged' => 0,
+            'released' => 0,
+            'cleared' => 0,
+            'stopped' => 'throttled',
+        ], $lines[0]->context);
+        // No Graph id, time, subject or user data in any out-of-sync line (T-06-35)
+        $everything = json_encode(Log::allLogs()
+            ->filter(fn (LogEntry $log): bool => str_starts_with((string) $log->message, 'Outlook out-of-sync'))
+            ->map(fn (LogEntry $log): array => $log->toArray())
+            ->values()
+            ->all(), JSON_THROW_ON_ERROR);
+        $this->assertStringNotContainsString('evt-', $everything);
+        $this->assertStringNotContainsString('2026-12', $everything);
+        $this->assertStringNotContainsString((string) $data->user->getKey(), $everything);
+        $this->assertStringNotContainsString($data->user->email, $everything);
     }
 }
