@@ -60,6 +60,64 @@ export interface OutlookMeeting {
     assignment?: OutlookAssignment | null;
     // At most 3, server order; only the first may be confident; empty when an assignment exists.
     suggestions?: OutlookSuggestion[];
+    // Phase 6 (D-03): set by the server read (06-06) when this occurrence is a started meeting that
+    // Outlook moved to this slot while its link still points to the entry logged at the old time.
+    // Optional so earlier fixtures stay valid; fetchMeetings turns a malformed value into null.
+    moved_from?: OutlookMovedFrom | null;
+}
+
+// Phase 6 (D-03): the entry already logged for a meeting that moved after it started. Times are the
+// entry's current UTC start and end ('YYYY-MM-DDTHH:mm:ssZ').
+export interface OutlookMovedFrom {
+    time_entry_id: string;
+    entry_start: string;
+    entry_end: string;
+}
+
+// Phase 6 (D-08): why a linked time entry is out of sync with its Outlook meeting.
+export type OutlookFlagKind = 'moved' | 'cancelled' | 'removed';
+
+// Phase 6: one flagged time entry, served by the read (06-06) under out_of_sync.items for the whole
+// flagged window (entries whose recorded start is in the future or within the last 60 days, D-10),
+// owner only (D-14). Every time is UTC 'YYYY-MM-DDTHH:mm:ssZ'.
+export interface OutlookOutOfSyncItem {
+    time_entry_id: string;
+    kind: OutlookFlagKind;
+    // The meeting times recorded when the entry was created or last resolved (D-01 snapshot), not
+    // what Outlook says now.
+    meeting_start: string;
+    meeting_end: string;
+    // The meeting's new times in Outlook; only filled for 'moved' (null otherwise).
+    new_start: string | null;
+    new_end: string | null;
+    all_day: boolean;
+    // The entry's current times (end null for a running entry).
+    entry_start: string;
+    entry_end: string | null;
+    // The entry's description ('' when it has none; the UI shows the core "No description").
+    description: string;
+}
+
+// Phase 6 (D-04, D-12): an entry the server moved silently with its meeting, served by the read for
+// 7 days after the adjust (06-10). Drives the second line of the origin icon tooltip.
+export interface OutlookAutoAdjusted {
+    time_entry_id: string;
+    // When the adjust happened (UTC).
+    at: string;
+    from_start: string;
+    from_end: string;
+    to_start: string;
+    to_end: string;
+}
+
+// Phase 6: which resolve popover to open and where. `anchor` is where it is attached (the entry
+// block, or the toolbar counter when the block is not rendered); `origin` is what opened it (decides
+// where focus goes afterwards); `seq` changes on every request so the same entry can be reopened.
+export interface OutlookFlagPanelRequest {
+    timeEntryId: string;
+    anchor: 'entry' | 'counter';
+    origin: 'entry' | 'counter';
+    seq: number;
 }
 
 // Series pre-assignment of a recurring meeting (the project, task, tags and billable used the last
@@ -239,6 +297,55 @@ export interface OutlookCalendarLabels {
     include_meeting: string;
     row_upcoming: string;
     error_no_assignment: string;
+    // Phase 6 (out-of-sync detection): the flag marker and its resolve popover, the toolbar
+    // counter, the D-03 "Move my entry here" block and the silent auto-adjust feedback.
+    osync_reason_moved: string;
+    osync_reason_cancelled: string;
+    osync_reason_removed: string;
+    osync_click_hint: string;
+    osync_described: string;
+    osync_review: string;
+    osync_title_moved: string;
+    osync_title_cancelled: string;
+    osync_title_removed: string;
+    osync_row_before: string;
+    osync_row_now: string;
+    osync_row_entry: string;
+    osync_row_meeting: string;
+    osync_note_moved: string;
+    osync_note_gone: string;
+    osync_not_in_view: string;
+    osync_adjust: string;
+    osync_keep: string;
+    osync_delete: string;
+    osync_delete_question: string;
+    osync_delete_confirm: string;
+    osync_adjusted: string;
+    osync_kept: string;
+    osync_deleted_announcement: string;
+    osync_adjust_failed: string;
+    osync_keep_failed: string;
+    osync_delete_failed: string;
+    osync_stale: string;
+    osync_stale_body: string;
+    osync_error_forbidden: string;
+    osync_count_one: string;
+    osync_count_many: string;
+    osync_count_aria_one: string;
+    osync_count_aria_many: string;
+    osync_count_tooltip: string;
+    moved_eyebrow: string;
+    moved_body: string;
+    moved_hover_note: string;
+    moved_suffix: string;
+    move_entry_here: string;
+    move_entry_success: string;
+    move_entry_from: string;
+    move_entry_announcement: string;
+    move_entry_failed: string;
+    auto_adjusted_note: string;
+    auto_adjusted_one: string;
+    auto_adjusted_many: string;
 }
 
 // 'connected': Graph access works; 'reconnect': the Microsoft grant expired or lacks the calendar
@@ -258,6 +365,12 @@ export interface OutlookMeetingsResponse {
     // fetchMeetings always sets it (empty when absent or malformed); optional so cache entries and
     // fixtures written without it stay valid, readers treat a missing list as empty.
     linked_time_entry_ids?: string[];
+    // Phase 6 (06-06): the user's flagged entries over the whole flagged window (future plus the
+    // last 60 days, D-10/D-11), not only this range. fetchMeetings always sets it ({ items: [] }
+    // when absent or malformed); optional for the same cache and fixture reason as above.
+    out_of_sync?: { items: OutlookOutOfSyncItem[] };
+    // Phase 6 (06-10): entries adjusted silently in the last 7 days. Always set by fetchMeetings.
+    auto_adjusted?: OutlookAutoAdjusted[];
 }
 
 export type OutlookSyncStatus =
@@ -276,6 +389,9 @@ export interface OutlookSyncResponse {
     retry_after: number | null;
     last_synced_at: string | null;
     truncated: boolean;
+    // Phase 6 (06-10): how many of the user's entries this sync moved silently with their meeting
+    // (D-04). postSync always sets it (0 when absent); optional so older fixtures stay valid.
+    auto_adjusted?: number;
 }
 
 // The `microsoft.calendar` shared prop, only present on the calendar route.
@@ -283,7 +399,16 @@ export interface OutlookCalendarProps {
     state: OutlookConnectionState;
     // `convert` is the conversion endpoint of the user's current organization (null without one);
     // optional so fixtures written before Phase 4 keep compiling.
-    urls: { meetings: string; sync: string; convert?: string | null };
+    // Phase 6 (optional for the same reason): `out_of_sync` is the base of the resolve actions
+    // (`/{entryId}/keep` and `/{entryId}/adjust`); `organization_meetings` is the base of the D-03
+    // move (`/{meetingId}/move-entry`) for the current organization (null without one).
+    urls: {
+        meetings: string;
+        sync: string;
+        convert?: string | null;
+        out_of_sync?: string;
+        organization_meetings?: string | null;
+    };
     // Phase 2 connect flow that returns to the calendar (Connect and Reconnect navigate here)
     connect_url: string;
     // One-time outcome of a connect that returned to the calendar, shown as a notification
