@@ -12,6 +12,7 @@ import {
 } from '@/packages/ui/src/tooltip';
 import { navigateTo } from '@/m365/navigation';
 import OutlookConfirmAll from './OutlookConfirmAll.vue';
+import OutlookSyncFlagCounter from './OutlookSyncFlagCounter.vue';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 import {
     cooldownProgress,
@@ -32,7 +33,10 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * 6;
 // position (reconnect) or only "Connect Microsoft 365" (not connected); no error banner anywhere.
 // "Confirm N pre-assigned" (Phase 5, D-04) sits immediately before Sync while connected. In the
 // browser-test mode (integration off, injected meetings with actions) it is the only control: Sync,
-// Connect and Reconnect need the calendar prop.
+// Connect and Reconnect need the calendar prop. The Phase 6 counter "N out of sync" (D-09) comes
+// right after the status: [status] [N out of sync] [Confirm N] [Sync]. Resolving a flag needs no
+// Graph call, so it also renders next to Reconnect and in the browser-test mode; it renders itself
+// only with flags and canAct, and the composable serves none while not connected (D-19).
 const context = inject(OUTLOOK_MEETINGS_KEY, null);
 const organization = inject<ComputedRef<Organization | undefined> | undefined>(
     'organization',
@@ -161,7 +165,10 @@ function onConnect() {
         v-if="context && (context.calendar.value || context.canAct?.value)"
         data-testid="outlook-calendar-controls"
         class="flex items-center gap-2">
-        <OutlookConfirmAll v-if="!context.calendar.value" />
+        <template v-if="!context.calendar.value">
+            <OutlookSyncFlagCounter />
+            <OutlookConfirmAll />
+        </template>
         <template v-else-if="isConnected && labels">
             <div
                 role="status"
@@ -181,6 +188,7 @@ function onConnect() {
                     {{ context.announcement.value }}
                 </span>
             </div>
+            <OutlookSyncFlagCounter />
             <OutlookConfirmAll />
             <TooltipProvider :delay-duration="300">
                 <Tooltip>
@@ -271,6 +279,8 @@ function onConnect() {
                     {{ context.announcement.value }}
                 </span>
             </div>
+            <!-- Not connected: no flags are served (D-19), so no counter there -->
+            <OutlookSyncFlagCounter v-if="isReconnect" />
             <TooltipProvider :delay-duration="300">
                 <Tooltip>
                     <TooltipTrigger as-child>

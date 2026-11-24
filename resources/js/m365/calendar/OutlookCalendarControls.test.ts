@@ -8,6 +8,7 @@ import type {
     OutlookConnectionState,
     OutlookMeeting,
     OutlookMeetingsResponse,
+    OutlookOutOfSyncItem,
     OutlookSyncResponse,
 } from '@/m365/types';
 import { getLocalizedDayJs } from '@/packages/ui/src/utils/time';
@@ -124,6 +125,9 @@ function fakeContext(initial: Partial<Record<string, unknown>> = {}) {
         // Phase 5 bulk confirm (OutlookConfirmAll): off unless a test opts in
         canAct: ref(false),
         preassignedInRange: ref<OutlookMeeting[]>([]),
+        // Phase 6 out-of-sync counter (OutlookSyncFlagCounter): no flags unless a test opts in
+        outOfSync: ref<OutlookOutOfSyncItem[]>([]),
+        jumpBusy: ref(false),
     };
     for (const [key, value] of Object.entries(initial)) {
         (state as Record<string, Ref<unknown>>)[key]!.value = value;
@@ -137,6 +141,7 @@ function fakeContext(initial: Partial<Record<string, unknown>> = {}) {
         announcement: ref(''),
         requestSync,
         confirmPreassigned: vi.fn(async () => []),
+        jumpToFirst: vi.fn(async () => {}),
         announce: vi.fn(),
         dayOverlayLane: () => null,
     } as unknown as OutlookMeetingsContext;
@@ -556,6 +561,221 @@ describe('OutlookCalendarControls bulk confirm', () => {
         await settle();
 
         expect(wrapper.find('[data-testid="outlook-calendar-controls"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+});
+
+describe('OutlookCalendarControls out-of-sync counter', () => {
+    const flagLabels = {
+        ...labels,
+        osync_count_one: '1 out of sync',
+        osync_count_many: ':count out of sync',
+        osync_count_aria_one: '1 time entry out of sync with Outlook. Show it.',
+        osync_count_aria_many: ':count time entries out of sync with Outlook. Show the first one.',
+        osync_count_tooltip: 'Show the first entry that changed in Outlook',
+        confirm_all_short: 'Confirm :count',
+        confirm_all_long: 'Confirm :count pre-assigned',
+        confirm_all_tooltip: 'Review and confirm the pre-assigned meetings in view',
+        confirm_all_title_one: 'Confirm 1 pre-assigned meeting',
+        confirm_all_title_many: 'Confirm :count pre-assigned meetings',
+    } as OutlookCalendarLabels;
+
+    function flag(id: string, start: string): OutlookOutOfSyncItem {
+        return {
+            time_entry_id: id,
+            kind: 'cancelled',
+            meeting_start: start,
+            meeting_end: start.replace('T09', 'T10'),
+            new_start: null,
+            new_end: null,
+            all_day: false,
+            entry_start: start,
+            entry_end: start.replace('T09', 'T10'),
+            description: '',
+        };
+    }
+
+    // One flag in the visible week and one weeks ago: the count covers the whole window
+    const FLAGS = [flag('te-1', '2026-11-03T09:00:00Z'), flag('te-2', '2026-10-20T09:00:00Z')];
+
+    const preassigned: OutlookMeeting = {
+        id: 'pre-1',
+        subject: 'Weekly sync',
+        start: '2026-11-03T09:00:00Z',
+        end: '2026-11-03T10:00:00Z',
+        organizer_name: null,
+        is_organizer: false,
+        is_online_meeting: false,
+        web_link: null,
+        dismissed: false,
+        series_key: 'series-1',
+        assignment: {
+            project_id: 'p-1',
+            project_name: 'Internal',
+            project_color: '#ef5350',
+            client_name: null,
+            task_id: null,
+            task_name: null,
+            tags: [],
+            billable: false,
+            converted_at: '2026-10-27T09:00:00Z',
+        },
+        suggestions: [],
+    };
+
+    function flagContext(initial: Partial<Record<string, unknown>> = {}) {
+        const fake = fakeContext({ canAct: true, outOfSync: FLAGS, ...initial });
+        (fake.context as unknown as { labels: Ref<OutlookCalendarLabels> }).labels.value =
+            flagLabels;
+        return fake;
+    }
+
+    function renderBlocks(ids: string[]): void {
+        const root = document.createElement('div');
+        root.className = 'fc';
+        ids.forEach((id) => {
+            const block = document.createElement('div');
+            block.dataset.ghostId = id;
+            root.appendChild(block);
+        });
+        document.body.appendChild(root);
+    }
+
+    // The data-testid of each direct child of the controls (or of the first one inside it)
+    function order(wrapper: VueWrapper): (string | null | undefined)[] {
+        const root = wrapper.find('[data-testid="outlook-calendar-controls"]').element;
+        return Array.from(root.children).map(
+            (child) =>
+                child.getAttribute('data-testid') ??
+                child.querySelector('[data-testid]')?.getAttribute('data-testid')
+        );
+    }
+
+    const counter = (wrapper: VueWrapper) => wrapper.find('[data-testid="outlook-out-of-sync"]');
+    const settle = async () => {
+        await nextTick();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await nextTick();
+    };
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    it('sits between the status and Sync while connected, with the whole-window count', async () => {
+        const { context } = flagContext();
+        const wrapper = mountWithContext(context);
+        await settle();
+
+        expect(counter(wrapper).exists()).toBe(true);
+        expect(counter(wrapper).attributes('data-count')).toBe('2');
+        expect(counter(wrapper).attributes('aria-label')).toBe(
+            '2 time entries out of sync with Outlook. Show the first one.'
+        );
+        expect(order(wrapper).slice(0, 3)).toEqual([
+            'outlook-sync-status',
+            'outlook-out-of-sync',
+            'outlook-sync-button',
+        ]);
+        wrapper.unmount();
+    });
+
+    it('comes before Confirm N when both are shown: status, counter, Confirm, Sync', async () => {
+        renderBlocks(['pre-1']);
+        const { context } = flagContext({ preassignedInRange: [preassigned] });
+        const wrapper = mountWithContext(context);
+        await settle();
+
+        expect(order(wrapper).slice(0, 4)).toEqual([
+            'outlook-sync-status',
+            'outlook-out-of-sync',
+            'outlook-confirm-all',
+            'outlook-sync-button',
+        ]);
+        wrapper.unmount();
+    });
+
+    it('jumps to the first flagged entry on click', async () => {
+        const { context } = flagContext();
+        const wrapper = mountWithContext(context);
+        await settle();
+
+        await counter(wrapper).trigger('click');
+        await settle();
+
+        expect(context.jumpToFirst).toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+    });
+
+    it('renders next to Reconnect in the reconnect state', async () => {
+        const { context } = flagContext({
+            connectionState: 'reconnect',
+            syncedAt: '2026-11-05T14:32:00Z',
+        });
+        const wrapper = mountWithContext(context);
+        await settle();
+
+        expect(counter(wrapper).exists()).toBe(true);
+        expect(order(wrapper)).toEqual([
+            'outlook-sync-status',
+            'outlook-out-of-sync',
+            'outlook-reconnect-button',
+        ]);
+        expect(syncButton(wrapper).exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it('renders with Confirm all in the browser-test mode with actions, without Sync or Connect', async () => {
+        renderBlocks(['pre-1']);
+        const { context } = flagContext({
+            calendar: null,
+            connectionState: null,
+            preassignedInRange: [preassigned],
+        });
+        const wrapper = mountWithContext(context);
+        await settle();
+
+        expect(order(wrapper)).toEqual(['outlook-out-of-sync', 'outlook-confirm-all']);
+        expect(syncButton(wrapper).exists()).toBe(false);
+        expect(connectButton(wrapper).exists()).toBe(false);
+        expect(reconnectButton(wrapper).exists()).toBe(false);
+        expect(statusRegion(wrapper).exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it('renders the counter alone in the browser-test mode when only flags are injected', async () => {
+        const { context } = flagContext({ calendar: null, connectionState: null });
+        const wrapper = mountWithContext(context);
+        await settle();
+
+        expect(order(wrapper)).toEqual(['outlook-out-of-sync']);
+        wrapper.unmount();
+    });
+
+    it('renders no counter at 0 or without canAct', async () => {
+        for (const initial of [
+            { outOfSync: [] },
+            { canAct: false },
+            { connectionState: 'reconnect', outOfSync: [] },
+            { connectionState: 'reconnect', canAct: false },
+            { calendar: null, connectionState: null, outOfSync: [] },
+        ]) {
+            const { context } = flagContext(initial);
+            const wrapper = mountWithContext(context);
+            await settle();
+
+            expect(counter(wrapper).exists()).toBe(false);
+            wrapper.unmount();
+        }
+    });
+
+    it('renders no counter while not connected, even with a stray list', async () => {
+        const { context } = flagContext({ connectionState: 'not_connected' });
+        const wrapper = mountWithContext(context);
+        await settle();
+
+        expect(counter(wrapper).exists()).toBe(false);
+        expect(connectButton(wrapper).exists()).toBe(true);
         wrapper.unmount();
     });
 });
@@ -1202,6 +1422,116 @@ describe('OutlookCalendarControls with the real composable', () => {
             wrapper.unmount();
             await advance(20_000);
         }
+    });
+
+    it('shows the whole-window out-of-sync count of the read between the status and Sync', async () => {
+        const item = (id: string, start: string): OutlookOutOfSyncItem => ({
+            time_entry_id: id,
+            kind: 'cancelled',
+            meeting_start: start,
+            meeting_end: start.replace('T09', 'T10'),
+            new_start: null,
+            new_end: null,
+            all_day: false,
+            entry_start: start,
+            entry_end: start.replace('T09', 'T10'),
+            description: '',
+        });
+        (pageProps.microsoft as { calendar: { labels: OutlookCalendarLabels } }).calendar.labels = {
+            ...labels,
+            osync_count_one: '1 out of sync',
+            osync_count_many: ':count out of sync',
+            osync_count_aria_one: '1 time entry out of sync with Outlook. Show it.',
+            osync_count_aria_many:
+                ':count time entries out of sync with Outlook. Show the first one.',
+            osync_count_tooltip: 'Show the first entry that changed in Outlook',
+        } as OutlookCalendarLabels;
+        axiosGet.mockImplementation(async () => {
+            const read = readResponse();
+            // Flags outside the visible week count as well (future plus the last 60 days)
+            read.data.out_of_sync = {
+                items: [
+                    item('te-1', '2026-11-03T09:00:00Z'),
+                    item('te-2', '2026-10-01T09:00:00Z'),
+                    item('te-3', '2026-12-01T09:00:00Z'),
+                ],
+            };
+            return read;
+        });
+        const { wrapper } = mountPage();
+        await advance(0);
+        await advance(0);
+
+        const counter = wrapper.find('[data-testid="outlook-out-of-sync"]');
+        expect(counter.exists()).toBe(true);
+        expect(counter.attributes('data-count')).toBe('3');
+        const root = wrapper.find('[data-testid="outlook-calendar-controls"]').element;
+        const order = Array.from(root.children).map(
+            (child) =>
+                child.getAttribute('data-testid') ??
+                child.querySelector('[data-testid]')?.getAttribute('data-testid')
+        );
+        expect(order.slice(0, 3)).toEqual([
+            'outlook-sync-status',
+            'outlook-out-of-sync',
+            'outlook-sync-button',
+        ]);
+        wrapper.unmount();
+    });
+
+    it('shows injected flags next to Confirm all in the browser-test mode with actions', async () => {
+        delete pageProps.microsoft;
+        const { wrapper } = mountPage(true);
+        await advance(0);
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (
+                    list: OutlookMeeting[],
+                    labels?: Partial<OutlookCalendarLabels>,
+                    options?: { actions?: boolean; outOfSync?: OutlookOutOfSyncItem[] }
+                ) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__(
+            [],
+            {
+                ...labels,
+                osync_count_one: '1 out of sync',
+                osync_count_many: ':count out of sync',
+                osync_count_aria_one: '1 time entry out of sync with Outlook. Show it.',
+                osync_count_aria_many:
+                    ':count time entries out of sync with Outlook. Show the first one.',
+            },
+            {
+                actions: true,
+                outOfSync: [
+                    {
+                        time_entry_id: 'te-1',
+                        kind: 'removed',
+                        meeting_start: '2026-11-03T09:00:00Z',
+                        meeting_end: '2026-11-03T10:00:00Z',
+                        new_start: null,
+                        new_end: null,
+                        all_day: false,
+                        entry_start: '2026-11-03T09:00:00Z',
+                        entry_end: '2026-11-03T10:00:00Z',
+                        description: '',
+                    },
+                ],
+            }
+        );
+        await advance(0);
+        await advance(0);
+
+        const counter = wrapper.find('[data-testid="outlook-out-of-sync"]');
+        expect(counter.exists()).toBe(true);
+        expect(counter.attributes('data-count')).toBe('1');
+        expect(counter.attributes('aria-label')).toBe(
+            '1 time entry out of sync with Outlook. Show it.'
+        );
+        expect(syncButton(wrapper).exists()).toBe(false);
+        expect(connectButton(wrapper).exists()).toBe(false);
+        expect(reconnectButton(wrapper).exists()).toBe(false);
+        wrapper.unmount();
     });
 
     it('counts the rendered pre-assigned injected meetings in the browser-test mode with actions', async () => {
