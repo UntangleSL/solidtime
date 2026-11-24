@@ -13,9 +13,12 @@ use App\Microsoft365\Graph\RetryAfter;
 use App\Microsoft365\Graph\SyncStatus;
 use Closure;
 use GuzzleHttp\Promise\PromiseInterface;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\TestCase;
 
@@ -225,5 +228,252 @@ class GraphEventLookupTest extends TestCase
         // Assert
         $this->assertSame(EventLookupStatus::Unknown, $result->status);
         $this->assertSame(200, $result->httpStatus);
+    }
+
+    public function test_rejected_token_is_refreshed_once_and_the_lookup_retried(): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => Http::sequence()
+            ->push(['error' => ['code' => 'InvalidAuthenticationToken']], 401)
+            ->push($this->eventBody())]);
+        $calls = [];
+        $token = function (?string $rejected) use (&$calls): string {
+            $calls[] = $rejected;
+
+            return $rejected === null ? 'tok-1' : 'tok-2';
+        };
+
+        // Act
+        $result = $this->lookup($token);
+
+        // Assert
+        $this->assertSame([null, 'tok-1'], $calls);
+        Http::assertSentCount(2);
+        Http::assertSent(fn (Request $request): bool => $request->hasHeader('Authorization', 'Bearer tok-2'));
+        $this->assertSame(EventLookupStatus::Present, $result->status);
+    }
+
+    /**
+     * @return array<string, array{0: int}>
+     */
+    public static function rejectedStatusProvider(): array
+    {
+        return [
+            '401 twice' => [401],
+            '403 twice' => [403],
+        ];
+    }
+
+    #[DataProvider('rejectedStatusProvider')]
+    public function test_second_rejection_is_reconnect_without_a_third_request(int $status): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => Http::sequence()
+            ->push([], $status)
+            ->push([], $status)
+            ->push($this->eventBody())]);
+
+        // Act
+        $result = $this->lookup();
+
+        // Assert
+        Http::assertSentCount(2);
+        $this->assertSame(EventLookupStatus::Reconnect, $result->status);
+        $this->assertSame($status, $result->httpStatus);
+    }
+
+    public function test_429_is_throttled_with_retry_after_and_no_retry(): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => Http::sequence()
+            ->push([], 429, ['Retry-After' => '120'])
+            ->push($this->eventBody())]);
+
+        // Act
+        $result = $this->lookup();
+
+        // Assert
+        Http::assertSentCount(1);
+        $this->assertSame(EventLookupStatus::Throttled, $result->status);
+        $this->assertSame(120, $result->retryAfter);
+        $this->assertSame(429, $result->httpStatus);
+    }
+
+    public function test_429_retry_after_is_clamped(): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => Http::response([], 429, ['Retry-After' => '99999'])]);
+
+        // Act
+        $result = $this->lookup();
+
+        // Assert
+        $this->assertSame(EventLookupStatus::Throttled, $result->status);
+        $this->assertSame(RetryAfter::MAX_SECONDS, $result->retryAfter);
+    }
+
+    public function test_503_with_retry_after_is_throttled(): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => Http::response([], 503, ['Retry-After' => '7'])]);
+
+        // Act
+        $result = $this->lookup();
+
+        // Assert
+        Http::assertSentCount(1);
+        $this->assertSame(EventLookupStatus::Throttled, $result->status);
+        $this->assertSame(7, $result->retryAfter);
+        $this->assertSame(503, $result->httpStatus);
+    }
+
+    /**
+     * @return array<string, array{0: int, 1: array<string, mixed>}>
+     */
+    public static function unknownAnswerProvider(): array
+    {
+        return [
+            '503 without Retry-After' => [503, []],
+            '504 without Retry-After' => [504, []],
+            '500' => [500, ['error' => ['code' => 'ErrorInternalServerError']]],
+            '404 MailboxNotEnabledForRESTAPI' => [404, ['error' => ['code' => 'MailboxNotEnabledForRESTAPI']]],
+            '404 MailboxNotSupportedForRESTAPI' => [404, ['error' => ['code' => 'MailboxNotSupportedForRESTAPI']]],
+            '404 without error code' => [404, []],
+            '404 other code' => [404, ['error' => ['code' => 'ResourceNotFound']]],
+            '400' => [400, ['error' => ['code' => 'ErrorInvalidIdMalformed']]],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     */
+    #[DataProvider('unknownAnswerProvider')]
+    public function test_graph_error_is_unknown_never_removed(int $status, array $body): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => Http::sequence()
+            ->push($body, $status)
+            ->push($this->eventBody())]);
+
+        // Act
+        $result = $this->lookup();
+
+        // Assert
+        Http::assertSentCount(1);
+        $this->assertSame(EventLookupStatus::Unknown, $result->status);
+        $this->assertSame($status, $result->httpStatus);
+        $this->assertNull($result->retryAfter);
+    }
+
+    public function test_connection_failure_is_unknown(): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => function (): never {
+            throw new ConnectionException('timed out');
+        }]);
+
+        // Act
+        $result = $this->lookup();
+
+        // Assert
+        $this->assertSame(EventLookupStatus::Unknown, $result->status);
+        $this->assertNull($result->httpStatus);
+    }
+
+    public function test_throttled_token_endpoint_is_throttled_without_a_graph_request(): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => Http::response($this->eventBody())]);
+        $token = function (?string $rejected): string {
+            throw new GraphException(SyncStatus::Throttled, 45);
+        };
+
+        // Act
+        $result = $this->lookup($token);
+
+        // Assert
+        Http::assertNothingSent();
+        $this->assertSame(EventLookupStatus::Throttled, $result->status);
+        $this->assertSame(45, $result->retryAfter);
+    }
+
+    public function test_reconnect_from_token_closure_is_reconnect_without_a_graph_request(): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => Http::response($this->eventBody())]);
+        $token = function (?string $rejected): string {
+            throw new GraphException(SyncStatus::Reconnect);
+        };
+
+        // Act
+        $result = $this->lookup($token);
+
+        // Assert
+        Http::assertNothingSent();
+        $this->assertSame(EventLookupStatus::Reconnect, $result->status);
+    }
+
+    public function test_reconnect_from_forced_refresh_is_reconnect_after_one_request(): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => Http::sequence()
+            ->push([], 401)
+            ->push($this->eventBody())]);
+        $token = function (?string $rejected): string {
+            if ($rejected !== null) {
+                throw new GraphException(SyncStatus::Reconnect);
+            }
+
+            return 'tok';
+        };
+
+        // Act
+        $result = $this->lookup($token);
+
+        // Assert
+        Http::assertSentCount(1);
+        $this->assertSame(EventLookupStatus::Reconnect, $result->status);
+    }
+
+    public function test_unavailable_token_endpoint_is_unknown(): void
+    {
+        // Arrange
+        Http::fake(['https://graph.microsoft.com/*' => Http::response($this->eventBody())]);
+        $token = function (?string $rejected): string {
+            throw new GraphException(SyncStatus::Unavailable);
+        };
+
+        // Act
+        $result = $this->lookup($token);
+
+        // Assert
+        Http::assertNothingSent();
+        $this->assertSame(EventLookupStatus::Unknown, $result->status);
+    }
+
+    public function test_out_of_sync_config_has_the_phase_constants(): void
+    {
+        // Assert
+        $this->assertSame(5, config('microsoft365.out_of_sync.lookups_per_sync'));
+        $this->assertSame(300, config('microsoft365.out_of_sync.lookups_per_job'));
+        $this->assertSame(10, config('microsoft365.out_of_sync.dispatch_stagger_seconds'));
+        $this->assertSame('05:30', config('microsoft365.out_of_sync.daily_at'));
+        $this->assertSame('Europe/Madrid', config('microsoft365.out_of_sync.daily_timezone'));
+        $this->assertSame(30, config('microsoft365.out_of_sync.lock_seconds'));
+        $this->assertSame(7, config('microsoft365.out_of_sync.auto_adjusted_days'));
+    }
+
+    public function test_invalid_timeout_config_falls_back_and_keeps_the_answer(): void
+    {
+        // Arrange
+        Config::set('microsoft365.graph.connect_timeout', 'not-an-int');
+        Config::set('microsoft365.graph.timeout', 0);
+        Http::fake(['https://graph.microsoft.com/*' => $this->fixtureResponse('S5')]);
+
+        // Act
+        $result = $this->lookup();
+
+        // Assert
+        $this->assertSame(EventLookupStatus::Present, $result->status);
     }
 }

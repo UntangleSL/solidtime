@@ -142,18 +142,63 @@ final class GraphCalendarClient
         $connectTimeout = $this->intConfig('microsoft365.graph.connect_timeout', 3);
         $timeout = $this->intConfig('microsoft365.graph.timeout', 8);
 
-        $response = $this->get($url, $token(null), $connectTimeout, $timeout);
+        try {
+            $accessToken = $token(null);
+        } catch (GraphException $exception) {
+            return $this->lookupTokenFailure($exception);
+        }
+
+        try {
+            $response = $this->get($url, $accessToken, $connectTimeout, $timeout);
+
+            if ($response->status() === 401 || $response->status() === 403) {
+                // One forced refresh and one retry, as in calendarView; a second rejection means reconnect
+                try {
+                    $accessToken = $token($accessToken);
+                } catch (GraphException $exception) {
+                    return $this->lookupTokenFailure($exception);
+                }
+                $response = $this->get($url, $accessToken, $connectTimeout, $timeout);
+                if ($response->status() === 401 || $response->status() === 403) {
+                    return EventLookup::reconnect($response->status());
+                }
+            }
+        } catch (ConnectionException) {
+            // Timeout, refused or reset connection: nothing can be concluded about the occurrence
+            return EventLookup::unknown();
+        }
 
         if ($response->successful()) {
             return $this->lookupFromBody($response);
         }
 
+        $status = $response->status();
+
+        // No in-request retry: the caller persists the back-off (Phase 3 D-12)
+        if ($status === 429 || (($status === 503 || $status === 504) && $response->hasHeader('Retry-After'))) {
+            return EventLookup::throttled(RetryAfter::seconds($response->header('Retry-After')), $status);
+        }
+
         // Allow-list only: a 404 without ErrorItemNotFound (no mailbox, unknown code) proves nothing
-        if ($response->status() === 404 && $response->json('error.code') === 'ErrorItemNotFound') {
+        if ($status === 404 && $response->json('error.code') === 'ErrorItemNotFound') {
             return EventLookup::removed();
         }
 
-        return EventLookup::unknown($response->status());
+        return EventLookup::unknown($status);
+    }
+
+    /**
+     * Maps a GraphException of the token closure. Only throttling and reconnect are actionable; any other
+     * token failure (an outage of the token endpoint) is Unknown.
+     */
+    private function lookupTokenFailure(GraphException $exception): EventLookup
+    {
+        return match ($exception->status) {
+            // The token endpoint only ever throttles with a 429
+            SyncStatus::Throttled => EventLookup::throttled($exception->retryAfter ?? RetryAfter::DEFAULT_SECONDS, 429),
+            SyncStatus::Reconnect => EventLookup::reconnect(),
+            default => EventLookup::unknown(),
+        };
     }
 
     private function lookupFromBody(Response $response): EventLookup
