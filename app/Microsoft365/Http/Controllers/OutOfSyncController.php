@@ -7,12 +7,17 @@ namespace App\Microsoft365\Http\Controllers;
 use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Microsoft365\Http\Requests\MeetingConversionRequest;
 use App\Microsoft365\Models\MicrosoftAccount;
+use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookMeetingLink;
 use App\Microsoft365\TimeEntries\CoreTimeEntryUpdater;
+use App\Models\Member;
+use App\Models\Organization;
 use App\Models\TimeEntry;
 use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -20,8 +25,10 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
- * The user's answers to an out-of-sync flag (Phase 6, OSYNC-03). Each call names one of the session
- * user's own flagged time entries by id and nothing else: no user, member or target time is ever read
+ * The user's answers to an out-of-sync change (Phase 6): "Keep as is" and "Adjust to Outlook" on a
+ * flagged entry (OSYNC-03), and "Move my entry here" for a started meeting Outlook moved (D-03,
+ * OSYNC-01). Keep and Adjust name one of the session user's own flagged time entries by id, Move names
+ * one of the user's own meetings and the organization; no user, member or target time is ever read
  * from the request (D-13, T-06-27). Deleting a flagged entry is core's own DELETE: the link cascades
  * with the entry, so no fork route is needed (D-05).
  *
@@ -125,6 +132,149 @@ class OutOfSyncController extends Controller
             'start' => $slot['start'],
             'end' => $slot['end'],
         ]);
+    }
+
+    /**
+     * "Move my entry here" (D-03): a started meeting Outlook moved to a new slot released its link, so the
+     * meeting shows again at the new slot. Instead of a second entry, the entry logged on the old slot
+     * moves to the meeting's current slot through core's update path, and its link becomes active again
+     * with the new slot as the reference.
+     *
+     * - The meeting is one of the session user's own, non-gone meetings, locked for the whole call: the
+     *   same row lock as "Create time entry", so the two never both win (T-06-30).
+     * - An active link already exists (a second entry was created, or a concurrent request won) ->
+     *   'existing' with that link's entry, nothing changes. An active link whose entry now belongs to
+     *   someone else is stale and is dropped, as the conversion does.
+     * - Otherwise the latest released link of the occurrence whose entry is live, has an end, belongs to
+     *   the user and lives in {organization} (T-06-29). None -> 404.
+     * - The target is the cached meeting's own slot; the body is never read (T-06-27).
+     * - Core refusals answer core's error and roll everything back; a unique-index race answers with the
+     *   winner's entry.
+     *
+     * @throws AuthorizationException the session user is not a member of the organization
+     */
+    public function moveEntry(Organization $organization, Request $request, string $meeting, CoreTimeEntryUpdater $updater): JsonResponse
+    {
+        $user = $this->sessionUser($request);
+        $this->ensureAccess($user, $meeting);
+
+        $isMember = Member::query()
+            ->whereBelongsTo($organization, 'organization')
+            ->whereBelongsTo($user, 'user')
+            ->exists();
+        if (! $isMember) {
+            throw new AuthorizationException;
+        }
+
+        try {
+            $result = DB::transaction(fn (): array => $this->moveOne($organization, $user, $meeting, $updater));
+        } catch (UniqueConstraintViolationException) {
+            // A concurrent conversion activated a link for the occurrence first; this call left nothing
+            $result = $this->afterConflict($user, $meeting);
+        }
+
+        return response()->json($result);
+    }
+
+    /**
+     * @return array{meeting_id: string, status: 'moved'|'existing', time_entry_id: string}
+     */
+    private function moveOne(Organization $organization, User $user, string $meetingId, CoreTimeEntryUpdater $updater): array
+    {
+        $meeting = OutlookMeeting::query()
+            ->where('user_id', '=', $user->getKey())
+            ->whereKey($meetingId)
+            ->whereNull('gone_at')
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        $active = $this->activeLink($user, $meeting->graph_id);
+        if ($active !== null) {
+            if ($active->timeEntry !== null && $active->timeEntry->user_id === $user->getKey()) {
+                return $this->moveResult($meetingId, 'existing', $active->time_entry_id);
+            }
+            $active->delete();
+        }
+
+        $link = OutlookMeetingLink::query()
+            ->where('user_id', '=', $user->getKey())
+            ->where('graph_id', '=', $meeting->graph_id)
+            ->whereNotNull('released_at')
+            ->whereHas('timeEntry', fn (Builder $query): Builder => $query
+                ->where('user_id', '=', $user->getKey())
+                ->where('organization_id', '=', $organization->getKey())
+                ->whereNotNull('end'))
+            ->orderByDesc('released_at')
+            ->orderByDesc('id')
+            ->lockForUpdate()
+            ->first();
+        if ($link === null) {
+            throw (new ModelNotFoundException)->setModel(OutlookMeeting::class, [$meetingId]);
+        }
+        $entry = $this->ownEntry($user, $link->time_entry_id);
+
+        $start = $meeting->starts_at->copy()->utc();
+        $end = $meeting->ends_at->copy()->utc();
+        $updater->updateTimes(
+            $user,
+            $entry,
+            $start->format(MeetingConversionRequest::FORMAT),
+            $end->format(MeetingConversionRequest::FORMAT),
+        );
+
+        $link->released_at = null;
+        $link->detached_at = null;
+        $link->meeting_starts_at = $start;
+        $link->meeting_ends_at = $end;
+        $this->clearFlag($link);
+        $link->last_checked_at = Carbon::now();
+        $link->save();
+
+        // Like a conversion, acting on a dismissed meeting brings it back from the dismissed state
+        if ($meeting->dismissed_at !== null) {
+            $meeting->dismissed_at = null;
+            $meeting->save();
+        }
+
+        return $this->moveResult($meetingId, 'moved', $link->time_entry_id);
+    }
+
+    /**
+     * After a unique-index violation: the winner's entry when it belongs to the user, else a 409.
+     *
+     * @return array{meeting_id: string, status: 'moved'|'existing', time_entry_id: string}
+     */
+    private function afterConflict(User $user, string $meetingId): array
+    {
+        $graphId = OutlookMeeting::query()
+            ->where('user_id', '=', $user->getKey())
+            ->whereKey($meetingId)
+            ->value('graph_id');
+        $active = is_string($graphId) ? $this->activeLink($user, $graphId) : null;
+        if ($active === null || $active->timeEntry === null || $active->timeEntry->user_id !== $user->getKey()) {
+            abort(409);
+        }
+
+        return $this->moveResult($meetingId, 'existing', $active->time_entry_id);
+    }
+
+    private function activeLink(User $user, string $graphId): ?OutlookMeetingLink
+    {
+        return OutlookMeetingLink::query()
+            ->with('timeEntry')
+            ->where('user_id', '=', $user->getKey())
+            ->where('graph_id', '=', $graphId)
+            ->whereNull('released_at')
+            ->first();
+    }
+
+    /**
+     * @param  'moved'|'existing'  $status
+     * @return array{meeting_id: string, status: 'moved'|'existing', time_entry_id: string}
+     */
+    private function moveResult(string $meetingId, string $status, string $timeEntryId): array
+    {
+        return ['meeting_id' => $meetingId, 'status' => $status, 'time_entry_id' => $timeEntryId];
     }
 
     /**

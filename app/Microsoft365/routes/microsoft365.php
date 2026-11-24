@@ -79,4 +79,12 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
             ->whereUuid('entry')
             ->middleware('throttle:60,1,m365-osync:')
             ->name('microsoft.meetings.out-of-sync.adjust');
+        // "Move my entry here" (Phase 6 D-03): the entry logged on a started meeting that Outlook moved
+        // follows it to the new slot, through core's update path. The parameter must be named
+        // `organization` for core's blocked-organization middleware; the meeting is one of the session
+        // user's own (a foreign, unknown or gone id is a 404) and the body is never read.
+        Route::post('/organizations/{organization}/meetings/{meeting}/move-entry', [OutOfSyncController::class, 'moveEntry'])
+            ->whereUuid(['organization', 'meeting'])
+            ->middleware(['check-organization-blocked', 'throttle:30,1,m365-move:'])
+            ->name('microsoft.meetings.move-entry');
     });
