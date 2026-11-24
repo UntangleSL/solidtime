@@ -113,3 +113,41 @@ export function conversionErrorMessage(error: unknown, fallback: string): string
     }
     return fallback;
 }
+
+// Out-of-sync resolve actions and the D-03 move (Phase 6). Same web-route rules as above: global
+// axios, ids encoded into one path segment, and every helper rejects when the request fails.
+export type OutlookFlagActionResult =
+    { status: 'ok' } | { status: 'failed'; message: string } | { status: 'stale' };
+
+// Keep the logged entry as it is and clear its flag.
+export async function keepFlag(outOfSyncUrl: string, entryId: string): Promise<void> {
+    await axios.post(`${outOfSyncUrl}/${encodeURIComponent(entryId)}/keep`);
+}
+
+// Move the logged entry to the meeting's current times.
+export async function adjustFlag(outOfSyncUrl: string, entryId: string): Promise<void> {
+    await axios.post(`${outOfSyncUrl}/${encodeURIComponent(entryId)}/adjust`);
+}
+
+// Move the entry logged for this meeting's earlier slot onto the meeting's new slot (D-03).
+export async function moveEntry(organizationMeetingsUrl: string, meetingId: string): Promise<void> {
+    await axios.post(`${organizationMeetingsUrl}/${encodeURIComponent(meetingId)}/move-entry`);
+}
+
+// Maps a failed resolve or move to what the UI shows (UI-SPEC "Error messages"): 404 / 409 mean
+// the flag or entry changed elsewhere (stale, the caller refreshes); otherwise the server's 422
+// validation message, then the forbidden copy for a 403, then the retry copy. A failure is never
+// mapped to ok, whatever the status.
+export function flagActionFailure(
+    error: unknown,
+    messages: { forbidden: string; retry: string }
+): OutlookFlagActionResult {
+    const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response;
+    const status = response?.status;
+    if (status === 404 || status === 409) return { status: 'stale' };
+    if (status === 422) {
+        return { status: 'failed', message: conversionErrorMessage(error, messages.retry) };
+    }
+    if (status === 403) return { status: 'failed', message: messages.forbidden };
+    return { status: 'failed', message: messages.retry };
+}
