@@ -9,6 +9,7 @@ import {
 import OutlookMeetingContextItems from './OutlookMeetingContextItems.vue';
 import { OUTLOOK_MEETINGS_KEY, type OutlookMeetingsContext } from './useOutlookMeetings';
 import { useOutlookSelection } from './useOutlookSelection';
+import type { OutlookFlagActionResult } from './conversionApi';
 import type { OutlookAssignment, OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 
 const labels = {
@@ -25,6 +26,7 @@ const labels = {
     ignore_series: 'Always ignore this series',
     unignore_series: 'Stop ignoring this series',
     forget_series: 'Forget this series',
+    move_entry_here: 'Move my entry here',
 } as OutlookCalendarLabels;
 
 const assignment: OutlookAssignment = {
@@ -64,6 +66,10 @@ interface FakeOptions {
     includeDismissed?: boolean;
     // Ids whose confirm is in flight (isConfirmPending).
     pending?: string[];
+    // Ids whose D-03 move is in flight (isMovePending).
+    movePending?: string[];
+    // What moveEntry answers (ok by default).
+    moveResult?: OutlookFlagActionResult;
 }
 
 function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
@@ -128,6 +134,20 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
     });
     const pending = new Set<string>(options.pending ?? []);
     const isConfirmPending = vi.fn((id: string) => pending.has(id));
+    // D-03 move: records whether the menu was still open when the move was sent; ok removes the
+    // meeting from the lane like the composable (it is linked now).
+    const menuAtMove: boolean[] = [];
+    const movePending = new Set<string>(options.movePending ?? []);
+    const isMovePending = vi.fn((id: string) => movePending.has(id));
+    const moveEntry = vi.fn(async (id: string): Promise<OutlookFlagActionResult> => {
+        menuAtMove.push(menu() !== null);
+        const result = options.moveResult ?? { status: 'ok' };
+        if (result.status === 'ok') {
+            list.value = list.value.filter((m) => m.id !== id);
+            document.querySelectorAll(`[data-ghost-id="${id}"]`).forEach((el) => el.remove());
+        }
+        return result;
+    });
     const selection = useOutlookSelection();
     const context = {
         labels: ref(labels),
@@ -143,6 +163,8 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
         unignoreSeries,
         forgetSeries,
         selection,
+        moveEntry,
+        isMovePending,
     } as unknown as OutlookMeetingsContext;
     return {
         context,
@@ -157,6 +179,8 @@ function fakeContext(meetings: OutlookMeeting[], options: FakeOptions = {}) {
         unignoreSeries,
         forgetSeries,
         selection,
+        moveEntry,
+        menuAtMove,
     };
 }
 
@@ -888,5 +912,182 @@ describe('OutlookMeetingContextItems focus', () => {
         await vi.waitFor(() => expect(document.activeElement).toBe(middle));
         expect(forgetSeries).toHaveBeenCalledWith('b');
         expect(list.value.find((m) => m.id === 'b')?.assignment).toBeNull();
+    });
+});
+
+// Phase 6 (06-UI-SPEC section 4, D-03): a started meeting moved to this slot can take its entry along.
+describe('OutlookMeetingContextItems "Move my entry here"', () => {
+    // The entry was logged on Tue Nov 24 2026 (UTC in tests); the meeting now sits on Wed.
+    const movedFrom = {
+        time_entry_id: 'te-1',
+        entry_start: '2026-11-24T10:00:00Z',
+        entry_end: '2026-11-24T11:00:00Z',
+    };
+
+    function moved(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
+        return meeting({
+            start: '2026-11-25T12:00:00Z',
+            end: '2026-11-25T13:00:00Z',
+            moved_from: movedFrom,
+            ...overrides,
+        });
+    }
+
+    // The core entry block of the moved entry (rendered at its new slot after the refresh).
+    function renderEntryBlock(id: string): HTMLElement {
+        const entry = document.createElement('div');
+        entry.setAttribute('data-event-id', id);
+        entry.setAttribute('tabindex', '0');
+        entry.setAttribute('role', 'button');
+        document.body.appendChild(entry);
+        return entry;
+    }
+
+    it('follows "Create time entry" with the old date as a trailing hint', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([moved()]);
+        await openMenu(block!, context);
+
+        expect(itemOrder()).toEqual([
+            'outlook-menu-label',
+            'outlook-menu-create',
+            'outlook-menu-move-entry',
+            'outlook-menu-move-entry-hint',
+            'outlook-menu-select',
+            'separator',
+            'outlook-menu-dismiss',
+        ]);
+
+        const move = item('outlook-menu-move-entry') as HTMLElement;
+        expect(move.textContent).toContain('Move my entry here');
+        expect(move.querySelector('svg')?.getAttribute('class')).toContain('lucide-move-right');
+        expect(move.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+        const hint = item('outlook-menu-move-entry-hint') as HTMLElement;
+        expect(hint.textContent?.trim()).toBe('Tue, Nov 24');
+        for (const cls of ['ml-auto', 'text-xs', 'text-text-tertiary', 'tabular-nums']) {
+            expect(hint.className).toContain(cls);
+        }
+    });
+
+    it('follows Confirm and Edit for a pre-assigned meeting', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context } = fakeContext([preassigned({ series_key: null, moved_from: movedFrom })]);
+        await openMenu(block!, context);
+
+        expect(itemOrder()).toEqual([
+            'outlook-menu-label',
+            'outlook-menu-confirm',
+            'outlook-project-dot',
+            'outlook-menu-project-hint',
+            'outlook-menu-edit',
+            'outlook-menu-move-entry',
+            'outlook-menu-move-entry-hint',
+            'outlook-menu-select',
+            'separator',
+            'outlook-menu-dismiss',
+            'outlook-menu-forget-series',
+        ]);
+    });
+
+    it('runs the move once, after the menu has closed', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context, moveEntry, menuAtMove, openForm, confirmOne } = fakeContext([moved()]);
+        await openMenu(block!, context);
+
+        item('outlook-menu-move-entry')?.click();
+
+        await vi.waitFor(() => expect(moveEntry).toHaveBeenCalledTimes(1));
+        expect(moveEntry).toHaveBeenCalledWith('m-1');
+        expect(menuAtMove).toEqual([false]);
+        expect(menu()).toBeNull();
+        expect(openForm).not.toHaveBeenCalled();
+        expect(confirmOne).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing while a move of the meeting runs', async () => {
+        const [block] = renderLane(['m-1']);
+        const { context, moveEntry } = fakeContext([moved()], { movePending: ['m-1'] });
+        await openMenu(block!, context);
+
+        const move = item('outlook-menu-move-entry') as HTMLElement;
+        expect(move.hasAttribute('data-disabled')).toBe(true);
+        move.click();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        expect(moveEntry).not.toHaveBeenCalled();
+    });
+
+    it('focuses the moved entry block after a successful move', async () => {
+        const [, middle] = renderLane(['a', 'm-1', 'c']);
+        renderSyncButton();
+        const entry = renderEntryBlock('te-1');
+        const { context, moveEntry } = fakeContext([
+            meeting({ id: 'a' }),
+            moved(),
+            meeting({ id: 'c' }),
+        ]);
+        await openMenu(middle!, context);
+
+        item('outlook-menu-move-entry')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(entry));
+        expect(moveEntry).toHaveBeenCalledWith('m-1');
+    });
+
+    it('without the entry block focuses the next meeting of the day, else Sync', async () => {
+        const [, middle] = renderLane(['a', 'm-1', 'c']);
+        renderSyncButton();
+        const { context } = fakeContext([meeting({ id: 'a' }), moved(), meeting({ id: 'c' })]);
+        await openMenu(middle!, context);
+
+        item('outlook-menu-move-entry')?.click();
+
+        await vi.waitFor(() =>
+            expect(document.activeElement).toBe(document.body.querySelector('[data-ghost-id="c"]'))
+        );
+
+        unmountMenu();
+        document.body.innerHTML = '';
+        const [only] = renderLane(['m-1']);
+        const sync = renderSyncButton();
+        const second = fakeContext([moved()]);
+        await openMenu(only!, second.context);
+
+        item('outlook-menu-move-entry')?.click();
+
+        await vi.waitFor(() => expect(document.activeElement).toBe(sync));
+    });
+
+    it('leaves the meeting in the lane and moves no focus when the move fails', async () => {
+        const [block] = renderLane(['m-1']);
+        const sync = renderSyncButton();
+        const entry = renderEntryBlock('te-1');
+        const { context, moveEntry, list } = fakeContext([moved()], {
+            moveResult: { status: 'failed', message: 'Please try again.' },
+        });
+        await openMenu(block!, context);
+
+        item('outlook-menu-move-entry')?.click();
+
+        await vi.waitFor(() => expect(moveEntry).toHaveBeenCalledTimes(1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(list.value.map((m) => m.id)).toEqual(['m-1']);
+        expect(document.activeElement).not.toBe(entry);
+        expect(document.activeElement).not.toBe(sync);
+    });
+
+    it('shows no move item without moved_from or when the context cannot act', async () => {
+        const [block] = renderLane(['m-1']);
+        const plain = fakeContext([meeting({ moved_from: null })]);
+        await openMenu(block!, plain.context);
+        expect(menu()).not.toBeNull();
+        expect(item('outlook-menu-move-entry')).toBeNull();
+
+        unmountMenu();
+        const readOnly = fakeContext([moved()], { canAct: false });
+        await openMenu(block!, readOnly.context);
+        expect(menu()).not.toBeNull();
+        expect(item('outlook-menu-move-entry')).toBeNull();
+        expect(readOnly.moveEntry).not.toHaveBeenCalled();
     });
 });
