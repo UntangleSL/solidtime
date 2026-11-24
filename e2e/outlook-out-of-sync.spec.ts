@@ -257,6 +257,7 @@ const LABELS: Record<string, string> = {
 
 const FLAG_PANEL = '[data-testid="outlook-sync-flag-panel"]';
 const MARKER = '[data-testid="outlook-sync-flag-marker"]';
+const COUNTER = '[data-testid="outlook-out-of-sync"]';
 const OUT_OF_SYNC_ROUTE = '**/m365/out-of-sync/**';
 
 async function goToCalendar(page: Page) {
@@ -513,5 +514,244 @@ test.describe('Outlook out-of-sync review', () => {
         await expect(
             page.getByRole('dialog').getByPlaceholder('What did you work on?')
         ).toHaveValue('Moved standup');
+    });
+
+    test('keeps a moved flag as it is', async ({ page, ctx }) => {
+        const today = utcDay();
+        const entry = await createTimeEntryWithTimestampsViaApi(ctx, {
+            description: 'Kept review',
+            start: at(today, '11:00:00'),
+            end: at(today, '12:00:00'),
+        });
+        const flag = flagFor(
+            entry,
+            'moved',
+            { start: at(today, '11:00:00'), end: at(today, '12:00:00') },
+            { start: at(today, '16:00:00'), end: at(today, '17:00:00') }
+        );
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '11:00:00');
+        const requests = await routeFlagActions(page, ctx, [flag]);
+        await injectFlags(page, [], { outOfSync: [flag], outOfSyncUrl: outOfSyncUrl() });
+        await expect(page.locator(COUNTER)).toHaveAttribute('data-count', '1');
+
+        const block = entryBlock(page, entry.id);
+        await block.locator(MARKER).click();
+        const panel = page.locator(FLAG_PANEL);
+        await expect(panel).toBeVisible();
+        await panel.locator('[data-testid="outlook-sync-flag-keep"]').click();
+
+        // The routed keep answered; the popover, the marker and the counter are gone
+        await expect(page.locator(FLAG_PANEL)).toHaveCount(0);
+        await expect(block.locator(MARKER)).toHaveCount(0);
+        await expect(page.locator(COUNTER)).toHaveCount(0);
+        expect(requests).toEqual([{ action: 'keep', timeEntryId: entry.id }]);
+
+        // The entry keeps its times (nothing moved it), and no failure or adjust toast was shown.
+        // "Kept as is" is announced only (no toast); the live region lives in the connected
+        // toolbar, which the CI calendar (integration off) does not render.
+        const kept = await entryById(ctx, entry.id);
+        expect(kept?.start).toBe(at(today, '11:00:00'));
+        expect(kept?.end).toBe(at(today, '12:00:00'));
+        await expect.poll(() => offsetFromSlot(page, block, '11:00:00')).toBeLessThan(4);
+        await expect(page.getByText(LABELS.osync_keep_failed!)).toHaveCount(0);
+        await expect(page.getByText(LABELS.osync_adjusted!)).toHaveCount(0);
+    });
+
+    test('deletes a cancelled flagged entry only after confirming', async ({ page, ctx }) => {
+        const today = utcDay();
+        const cancelledEntry = await createTimeEntryWithTimestampsViaApi(ctx, {
+            description: 'Cancelled sync',
+            start: at(today, '09:00:00'),
+            end: at(today, '10:00:00'),
+        });
+        const removedEntry = await createTimeEntryWithTimestampsViaApi(ctx, {
+            description: 'Removed planning',
+            start: at(today, '11:00:00'),
+            end: at(today, '12:00:00'),
+        });
+        const cancelled = flagFor(cancelledEntry, 'cancelled', {
+            start: cancelledEntry.start,
+            end: cancelledEntry.end,
+        });
+        const removed = flagFor(removedEntry, 'removed', {
+            start: removedEntry.start,
+            end: removedEntry.end,
+        });
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '09:00:00');
+        const requests = await routeFlagActions(page, ctx, [cancelled, removed]);
+        await injectFlags(page, [], {
+            outOfSync: [cancelled, removed],
+            outOfSyncUrl: outOfSyncUrl(),
+        });
+
+        const counter = page.locator(COUNTER);
+        await expect(counter).toHaveAttribute('data-count', '2');
+        const cancelledBlock = entryBlock(page, cancelledEntry.id);
+        await expect(cancelledBlock.locator(MARKER)).toHaveAttribute('data-flag-kind', 'cancelled');
+        await expect(entryBlock(page, removedEntry.id).locator(MARKER)).toHaveAttribute(
+            'data-flag-kind',
+            'removed'
+        );
+
+        await cancelledBlock.locator(MARKER).click();
+        const panel = page.locator(FLAG_PANEL);
+        await expect(panel).toBeVisible();
+        await expect(panel).toHaveAttribute('data-kind', 'cancelled');
+        await expect(panel.locator('[data-testid="outlook-sync-flag-title"]')).toHaveText(
+            'Meeting cancelled in Outlook'
+        );
+        // Cancelled: Keep and Delete, never Adjust
+        await expect(panel.locator('[data-testid="outlook-sync-flag-adjust"]')).toHaveCount(0);
+
+        // First step, then Cancel: nothing is deleted
+        await panel.locator('[data-testid="outlook-sync-flag-delete"]').click();
+        const question = panel.locator('[data-testid="outlook-sync-flag-delete-question"]');
+        await expect(question).toHaveText("Delete this time entry? This can't be undone.");
+        await panel.locator('[data-testid="outlook-sync-flag-delete-cancel"]').click();
+        await expect(question).toHaveCount(0);
+        await expect(panel).toBeVisible();
+        await expect(panel.locator('[data-testid="outlook-sync-flag-delete"]')).toBeVisible();
+        expect(await entryById(ctx, cancelledEntry.id)).not.toBeNull();
+        await expect(cancelledBlock).toBeVisible();
+        await expect(counter).toHaveAttribute('data-count', '2');
+
+        // Delete entry, then Delete: the real core DELETE removes it
+        await panel.locator('[data-testid="outlook-sync-flag-delete"]').click();
+        await Promise.all([
+            page.waitForResponse(
+                (response) =>
+                    response.url().includes(`/time-entries/${cancelledEntry.id}`) &&
+                    response.request().method() === 'DELETE' &&
+                    response.status() === 204
+            ),
+            panel.locator('[data-testid="outlook-sync-flag-delete-confirm"]').click(),
+        ]);
+
+        await expect(page.locator(FLAG_PANEL)).toHaveCount(0);
+        await expect(cancelledBlock).toHaveCount(0);
+        await expect(counter).toHaveAttribute('data-count', '1');
+        await expect(page.getByText('Time entry deleted successfully').first()).toBeVisible();
+        expect(await entryById(ctx, cancelledEntry.id)).toBeNull();
+
+        // The second flag resolved with Keep: the counter disappears at 0
+        const removedBlock = entryBlock(page, removedEntry.id);
+        await removedBlock.locator(MARKER).click();
+        await expect(panel).toBeVisible();
+        await expect(panel).toHaveAttribute('data-kind', 'removed');
+        await panel.locator('[data-testid="outlook-sync-flag-keep"]').click();
+
+        await expect(page.locator(FLAG_PANEL)).toHaveCount(0);
+        await expect(counter).toHaveCount(0);
+        await expect(removedBlock.locator(MARKER)).toHaveCount(0);
+        expect(requests).toEqual([{ action: 'keep', timeEntryId: removedEntry.id }]);
+        expect(await entryById(ctx, removedEntry.id)).not.toBeNull();
+    });
+
+    test('jumps to the first flagged entry in another week without reloading', async ({
+        page,
+        ctx,
+    }) => {
+        const nextWeek = utcDay(7);
+        const entry = await createTimeEntryWithTimestampsViaApi(ctx, {
+            description: 'Next week review',
+            start: at(nextWeek, '10:00:00'),
+            end: at(nextWeek, '11:00:00'),
+        });
+        const flag = flagFor(
+            entry,
+            'moved',
+            { start: at(nextWeek, '10:00:00'), end: at(nextWeek, '11:00:00') },
+            { start: at(nextWeek, '12:00:00'), end: at(nextWeek, '13:00:00') }
+        );
+
+        await goToCalendar(page);
+        await injectFlags(page, [], { outOfSync: [flag], outOfSyncUrl: outOfSyncUrl() });
+
+        // The flagged entry is not in the week on screen
+        const nextWeekHeader = page.locator(`.fc-col-header-cell[data-date="${nextWeek}"]`);
+        await expect(nextWeekHeader).toHaveCount(0);
+        await expect(entryBlock(page, entry.id)).toHaveCount(0);
+
+        // A value on window survives only without a page reload; focus moves are recorded (the
+        // popover takes focus from the entry right after the jump focused it).
+        await page.evaluate(() => {
+            const w = window as unknown as { __osyncPageMark?: string; __osyncFocused?: string[] };
+            w.__osyncPageMark = 'same page';
+            w.__osyncFocused = [];
+            document.addEventListener('focusin', (event) => {
+                const id = (event.target as HTMLElement | null)?.dataset?.eventId;
+                if (id) w.__osyncFocused?.push(id);
+            });
+        });
+
+        const counter = page.locator(COUNTER);
+        await expect(counter).toHaveAttribute('data-count', '1');
+        await counter.click();
+
+        await expect(nextWeekHeader).toHaveCount(1);
+        const panel = page.locator(FLAG_PANEL);
+        await expect(panel).toBeVisible({ timeout: 10000 });
+        await expect(panel).toHaveAttribute('data-anchor', 'entry');
+        await expect(panel.locator('[data-testid="outlook-sync-flag-description"]')).toHaveText(
+            'Next week review'
+        );
+        await expect(panel.locator('[data-testid="outlook-sync-flag-not-in-view"]')).toHaveCount(0);
+        await expect(entryBlock(page, entry.id)).toBeVisible();
+        await expect
+            .poll(() =>
+                page.evaluate(
+                    () => (window as unknown as { __osyncFocused?: string[] }).__osyncFocused ?? []
+                )
+            )
+            .toContain(entry.id);
+        expect(
+            await page.evaluate(
+                () => (window as unknown as { __osyncPageMark?: string }).__osyncPageMark
+            )
+        ).toBe('same page');
+    });
+
+    test('opens the review from the entry context menu', async ({ page, ctx }) => {
+        const today = utcDay();
+        const entry = await createTimeEntryWithTimestampsViaApi(ctx, {
+            description: 'Menu review',
+            start: at(today, '14:00:00'),
+            end: at(today, '15:00:00'),
+        });
+        const flag = flagFor(entry, 'cancelled', { start: entry.start, end: entry.end });
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '14:00:00');
+        await injectFlags(page, [], { outOfSync: [flag], outOfSyncUrl: outOfSyncUrl() });
+
+        const block = entryBlock(page, entry.id);
+        await expect(block.locator(MARKER)).toHaveCount(1);
+        await block.click({ button: 'right' });
+        const menu = page.getByRole('menu');
+        await expect(menu).toBeVisible();
+
+        // "Review Outlook change" is the first item, above the core Edit
+        const review = menu.locator('[data-testid="outlook-entry-menu-review"]');
+        await expect(review).toHaveText('Review Outlook change');
+        await expect(menu.getByRole('menuitem').first()).toHaveText('Review Outlook change');
+        const edit = menu.getByRole('menuitem', { name: 'Edit', exact: true });
+        await expect(edit).toBeVisible();
+        const reviewBox = await review.boundingBox();
+        const editBox = await edit.boundingBox();
+        expect(reviewBox).not.toBeNull();
+        expect(editBox).not.toBeNull();
+        expect(reviewBox!.y).toBeLessThan(editBox!.y);
+
+        await review.click();
+        await expect(page.getByRole('menu')).toHaveCount(0);
+        const panel = page.locator(FLAG_PANEL);
+        await expect(panel).toBeVisible();
+        await expect(panel).toHaveAttribute('data-anchor', 'entry');
+        await expect(panel).toHaveAttribute('data-kind', 'cancelled');
+        await expect(coreEditButton(page)).toHaveCount(0);
     });
 });
