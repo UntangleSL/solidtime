@@ -305,9 +305,32 @@ fork-owned paths.
 
 ### New files inside core directories
 
-None from 06-16. The browser proof `e2e/outlook-out-of-sync.spec.ts` (06-17) gets its row when 06-18
-reconciles this section; the new migration lives under the fork-owned
-`app/Microsoft365/database/migrations/`.
+| File | Content | Plan |
+| --- | --- | --- |
+| `e2e/outlook-out-of-sync.spec.ts` | Browser proofs of the out-of-sync review: a moved flag reviewed from its marker and adjusted to Outlook, Keep, the confirmed Delete with the counter, the week jump, the entry menu, D-03 Move my entry here and a second entry. | 06-17 |
+
+The new migration lives under the fork-owned `app/Microsoft365/database/migrations/`.
+
+`lang/en/microsoft365.php` and `lang/es/microsoft365.php` (fork files inside the core `lang/`
+directory) gained 47 calendar keys each (flag marker, review panel, counter, entry menu, moved
+meeting, reasons and confirmations); no existing key changed.
+
+### Fork-owned paths
+
+| Path | Content |
+| --- | --- |
+| `app/Microsoft365/OutOfSync/` | New: `OutOfSyncRules`, `OutOfSyncApplier`, `OutOfSyncFlags`, `OutOfSyncLookups`, `OutOfSyncScope`, `LinkedSightings`, `Observation`, `ObservationKind`, `LinkState`, `Decision`, `DecisionAction`, `ApplyResult`. |
+| `app/Microsoft365/Jobs/CheckOutOfSyncForUser.php`, `app/Microsoft365/Console/CheckOutOfSyncCommand.php` | New: the per-user check job and `m365:check-out-of-sync` (with `--dry-run`), scheduled daily at 05:30 Europe/Madrid from `Microsoft365ServiceProvider`, not from `app/Console/Kernel.php`. |
+| `app/Microsoft365/Http/Controllers/OutOfSyncController.php`, `app/Microsoft365/TimeEntries/CoreTimeEntryUpdater.php`, `app/Microsoft365/Graph/EventLookup.php`, `EventLookupStatus.php` | New: the review endpoints (keep, adjust, move, delete), the single seam that updates or deletes a core time entry through the core model, and the direct `GET /me/events/{id}` lookup result. |
+| `app/Microsoft365/database/migrations/2026_11_23_000001_add_sync_state_to_outlook_meeting_links.php` | Additive migration with `down()`: sync-state columns and snapshot backfill on `outlook_meeting_links`, the partial active-link unique index replacing the plain one, a lookup index. Already applied in production by the `sha-6d8a5cc` deploy. |
+| `app/Microsoft365/Graph/GraphCalendarClient.php`, `OutlookMeetingSyncService.php`, `SyncOutcome.php`, `app/Microsoft365/Http/Controllers/OutlookMeetingController.php`, `MeetingConversionController.php`, `app/Microsoft365/Http/Middleware/ShareMicrosoftInertiaData.php`, `app/Microsoft365/Http/Resources/OutlookMeetingResource.php`, `app/Microsoft365/Models/OutlookMeetingLink.php`, `app/Microsoft365/Suggestions/MeetingHints.php`, `app/Microsoft365/Microsoft365ServiceProvider.php`, `app/Microsoft365/routes/microsoft365.php` | Edited fork files: detection during the interactive sync, flags in the meetings read and the Inertia props, review routes (web group, `openapi.json` untouched), the daily schedule. |
+| `config/microsoft365.php` | Fork config file: new `out_of_sync` block (lookup budgets, stagger, daily time and timezone, lock and note lifetimes), plain values, no new environment variables (D-11). |
+| `resources/js/m365/calendar/` | New: `OutlookSyncFlagMarker`, `OutlookSyncFlagPanel`, `OutlookSyncFlagCounter`, `OutlookEntryMenuItems`, `OutlookMovedMeeting`, `syncFlagReason.ts`, `describeBlock.ts` (with tests); edited: entry badge, calendar controls, context items, ghost layer, ghost detail, hover card, `useOutlookMeetings`, `meetingsApi`, `conversionApi` and `resources/js/m365/types.ts`. |
+| `resources/js/branding/contrast.test.ts` | Fork test file (Phase 3.2): amber flag contrast rows (06-04). |
+| `tests/Feature/Microsoft365/` | New `CoreTimeEntryUpdaterTest`, `OutOfSyncApplierTest`, `OutlookMovedMeetingTest`, `OutlookOutOfSyncActionTest`, `OutlookOutOfSyncJobTest`, `OutlookOutOfSyncReadTest`, `OutlookOutOfSyncScheduleTest`, `OutlookOutOfSyncSyncTest`; extended `OutlookCalendarPropTest`, `OutlookMeetingEndpointTest`, `OutlookMeetingLinkLifecycleTest`, `OutlookMeetingPrivacyTest`, `OutlookMeetingSuggestionTest`. |
+| `tests/Unit/Microsoft365/` | New `CoreTimeEntryUpdaterContractTest`, `GraphEventLookupTest`, `OutOfSyncRulesTest`. |
+| `docs/deploy/dokploy-compose.fork.yml` | `SOLIDTIME_MICROSOFT_*` interpolation also on scheduler and queue (06-15, D-20); release pin by 06-18. |
+| `.claude/CLAUDE.md`, `.planning/PROJECT.md` | Project docs: the D-12 data-safety wording (06-05). Not application code. |
 
 ### Hot files deliberately not touched
 
@@ -320,4 +343,16 @@ No Phase 6 commit is meant to edit these:
 `routes/api.php` and `openapi.json`. The daily out-of-sync job is scheduled from the fork provider,
 not from the core console kernel.
 
-06-18 adds the reconciliation line against the real phase diff.
+### Reconciliation (06-18)
+
+Checked against the real phase diff before the release:
+`git diff --name-only e3c56fc1 HEAD -- . ':!resources/js/m365' ':!app/Microsoft365' ':!tests/Feature/Microsoft365' ':!tests/Unit/Microsoft365' ':!docs' ':!.planning' ':!lang/en/microsoft365.php' ':!lang/es/microsoft365.php'`
+(base `e3c56fc1`, the commit that added the Phase 6 plans) lists seven paths:
+`resources/js/packages/ui/src/FullCalendar/TimeEntryCalendar.vue` and `resources/js/Pages/Calendar.vue`
+(06-16, core files edited above), `e2e/outlook-out-of-sync.spec.ts` (06-17, new file above),
+`config/microsoft365.php` (06-02, plus the `docs(06)` comment fix `75896711`),
+`resources/js/branding/contrast.test.ts` (06-04) and `.claude/CLAUDE.md` (06-05), each with a row
+above, and `e2e/outlook-convert.spec.ts`, which no Phase 6 plan explains: one added wait in the
+create-project test (`6d8a5ccf`, "test(e2e)", an orchestrator CI-stability follow-up to the Phase 5
+browser proofs, shipped in `sha-6d8a5cc`; fork test file, no application behaviour). None of the hot
+files listed above appears in the diff (nor `TimeEntryStoreRequest.php` or `app/Models/TimeEntry.php`).
