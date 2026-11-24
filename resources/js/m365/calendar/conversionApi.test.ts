@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import {
+    adjustFlag,
     conversionErrorMessage,
     failedResults,
+    flagActionFailure,
     forgetSeries,
     ignoreSeries,
+    keepFlag,
+    moveEntry,
     postConversion,
     unignoreSeries,
 } from './conversionApi';
@@ -218,5 +222,103 @@ describe('conversionErrorMessage', () => {
         ['null', null],
     ])('falls back for %s', (_name, error) => {
         expect(conversionErrorMessage(error, fallback)).toBe(fallback);
+    });
+});
+
+describe('out-of-sync resolve calls and the D-03 move', () => {
+    const OUT_OF_SYNC_URL = '/m365/out-of-sync';
+    const ORG_MEETINGS_URL = '/m365/organizations/org-1/meetings';
+
+    it('keeps a flag with a POST on the entry keep url', async () => {
+        axiosPost.mockResolvedValue({ data: {} });
+        await keepFlag(OUT_OF_SYNC_URL, 'te-1');
+        expect(axiosPost).toHaveBeenCalledWith('/m365/out-of-sync/te-1/keep');
+    });
+
+    it('adjusts a flag with a POST on the entry adjust url', async () => {
+        axiosPost.mockResolvedValue({ data: {} });
+        await adjustFlag(OUT_OF_SYNC_URL, 'te-1');
+        expect(axiosPost).toHaveBeenCalledWith('/m365/out-of-sync/te-1/adjust');
+    });
+
+    it('moves the logged entry with a POST on the meeting move-entry url', async () => {
+        axiosPost.mockResolvedValue({ data: {} });
+        await moveEntry(ORG_MEETINGS_URL, 'm-1');
+        expect(axiosPost).toHaveBeenCalledWith('/m365/organizations/org-1/meetings/m-1/move-entry');
+    });
+
+    it('encodes the ids so each stays one path segment', async () => {
+        axiosPost.mockResolvedValue({ data: {} });
+        await keepFlag(OUT_OF_SYNC_URL, 'a b');
+        await adjustFlag(OUT_OF_SYNC_URL, 'a/b');
+        await moveEntry(ORG_MEETINGS_URL, 'AAMk/x==');
+        expect(axiosPost.mock.calls.map((call) => call[0])).toEqual([
+            '/m365/out-of-sync/a%20b/keep',
+            '/m365/out-of-sync/a%2Fb/adjust',
+            '/m365/organizations/org-1/meetings/AAMk%2Fx%3D%3D/move-entry',
+        ]);
+    });
+
+    it('rejects when the request fails', async () => {
+        axiosPost.mockRejectedValue(new Error('409'));
+        await expect(keepFlag(OUT_OF_SYNC_URL, 'te-1')).rejects.toThrow('409');
+        await expect(adjustFlag(OUT_OF_SYNC_URL, 'te-1')).rejects.toThrow('409');
+        await expect(moveEntry(ORG_MEETINGS_URL, 'm-1')).rejects.toThrow('409');
+    });
+});
+
+describe('flagActionFailure', () => {
+    const messages = {
+        forbidden: "You can't edit this time entry.",
+        retry: 'Something went wrong. Try again in a moment.',
+    };
+    const httpError = (status: number, data: unknown = {}) => ({ response: { status, data } });
+
+    it.each([404, 409])('maps a %s to stale', (status) => {
+        expect(flagActionFailure(httpError(status, { message: 'Gone' }), messages)).toEqual({
+            status: 'stale',
+        });
+    });
+
+    it('shows the server validation message of a 422', () => {
+        expect(
+            flagActionFailure(httpError(422, { message: 'Overlaps another entry' }), messages)
+        ).toEqual({ status: 'failed', message: 'Overlaps another entry' });
+    });
+
+    it.each([
+        ['an empty message', { message: '' }],
+        ['a blank message', { message: '  ' }],
+        ['no message', {}],
+    ])('falls back to the retry copy for a 422 with %s', (_name, data) => {
+        expect(flagActionFailure(httpError(422, data), messages)).toEqual({
+            status: 'failed',
+            message: messages.retry,
+        });
+    });
+
+    it('maps a 403 to the forbidden copy, never the server text', () => {
+        expect(
+            flagActionFailure(httpError(403, { message: 'This action is unauthorized.' }), messages)
+        ).toEqual({ status: 'failed', message: messages.forbidden });
+    });
+
+    it.each([
+        ['a 500', httpError(500, { message: 'Server Error' })],
+        ['a 401', httpError(401)],
+        ['a network error', new Error('Network Error')],
+        ['null', null],
+        ['undefined', undefined],
+    ])('maps %s to the retry copy', (_name, error) => {
+        expect(flagActionFailure(error, messages)).toEqual({
+            status: 'failed',
+            message: messages.retry,
+        });
+    });
+
+    it('never answers ok for a failure, whatever the status', () => {
+        for (const status of [200, 201, 204, 302, 400, 403, 404, 409, 422, 429, 500, 503]) {
+            expect(flagActionFailure(httpError(status), messages).status).not.toBe('ok');
+        }
     });
 });
