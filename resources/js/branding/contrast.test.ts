@@ -462,6 +462,61 @@ describe('Outlook meeting blocks (--m365-* formulas, Phase 3.1 style)', () => {
     it.each(rows(cases))('%s', (_title, c) => assertCase(c));
 });
 
+/**
+ * Phase 6 out-of-sync warning (06-UI-SPEC "Color"). The marker is a self-contained TriangleAlert:
+ * its stroke sits on its own fill, so it reads on any project colour. The toolbar counter icon
+ * sits on the outline button over the page. Hex values are the Tailwind 3.4 amber palette
+ * constants, listed only for this test (markup uses the class names).
+ */
+const AMBER = {
+    100: '#FEF3C7',
+    300: '#FCD34D',
+    400: '#FBBF24',
+    700: '#B45309',
+    950: '#451A03',
+} as const;
+const LIGHT_TOOLBAR = '#F9FCFD';
+const DARK_TOOLBAR = '#1C1C1C';
+
+describe('Phase 6 out-of-sync warning colours', () => {
+    const cases: Case[] = [
+        {
+            name: 'light: marker stroke amber-700 on marker fill amber-100',
+            fg: fromHex(AMBER[700]),
+            bg: fromHex(AMBER[100]),
+            min: NON_TEXT,
+        },
+        {
+            name: 'dark: marker stroke amber-300 on marker fill amber-950',
+            fg: fromHex(AMBER[300]),
+            bg: fromHex(AMBER[950]),
+            min: NON_TEXT,
+        },
+        {
+            name: `light: counter icon amber-700 on the toolbar (${LIGHT_TOOLBAR})`,
+            fg: fromHex(AMBER[700]),
+            bg: fromHex(LIGHT_TOOLBAR),
+            min: NON_TEXT,
+        },
+        {
+            name: `dark: counter icon amber-400 on the toolbar (${DARK_TOOLBAR})`,
+            fg: fromHex(AMBER[400]),
+            bg: fromHex(DARK_TOOLBAR),
+            min: NON_TEXT,
+        },
+    ];
+    it.each(rows(cases))('%s', (_title, c) => assertCase(c));
+
+    it('the toolbar backgrounds are the shipped page colours', () => {
+        expect(toHex(token(tokensFor('light', 'untangle'), '--color-bg-primary'))).toBe(
+            LIGHT_TOOLBAR.toLowerCase()
+        );
+        expect(toHex(token(tokensFor('dark', 'untangle'), '--color-bg-primary'))).toBe(
+            DARK_TOOLBAR.toLowerCase()
+        );
+    });
+});
+
 describe('3.1 / 3.2 formula drift guard (resources/js/m365/calendar)', () => {
     const MEETING_PROPERTY = /^--m365-(meeting|lane)(-|$)/;
     // Read only: 3.2 never edits the Phase 3.1 calendar files.
