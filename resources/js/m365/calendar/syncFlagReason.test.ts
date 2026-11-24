@@ -1,8 +1,31 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { OutlookCalendarLabels, OutlookOutOfSyncItem } from '@/m365/types';
-import { flagDescribed, flagReason, flagTitle, formatRange, rangePair } from './syncFlagReason';
+import type {
+    OutlookAutoAdjusted,
+    OutlookCalendarLabels,
+    OutlookOutOfSyncItem,
+} from '@/m365/types';
+import {
+    autoAdjustedAnnouncement,
+    autoAdjustedNote,
+    countAria,
+    countLabel,
+    firstFlag,
+    flagDescribed,
+    flagReason,
+    flagTitle,
+    formatRange,
+    rangePair,
+    shortDate,
+} from './syncFlagReason';
 
 const labels = {
+    osync_count_one: '1 out of sync',
+    osync_count_many: ':count out of sync',
+    osync_count_aria_one: '1 time entry out of sync with Outlook. Show it.',
+    osync_count_aria_many: ':count time entries out of sync with Outlook. Show the first one.',
+    auto_adjusted_note: 'Updated from Outlook: :from → :to',
+    auto_adjusted_one: '1 time entry updated from Outlook',
+    auto_adjusted_many: ':count time entries updated from Outlook',
     osync_reason_moved: 'Meeting moved in Outlook: :from → :to',
     osync_reason_cancelled: 'Meeting cancelled in Outlook',
     osync_reason_removed: 'Meeting removed from Outlook',
@@ -206,5 +229,90 @@ describe('flagDescribed', () => {
         expect(flagDescribed(item({ kind: 'cancelled' }), spanish, '24-hours')).toBe(
             'Desincronizado con Outlook. Reunión cancelada en Outlook.'
         );
+    });
+});
+
+describe('countLabel and countAria', () => {
+    it('uses the singular copy for one flag and fills the count otherwise', () => {
+        expect(countLabel(1, labels)).toBe('1 out of sync');
+        expect(countLabel(3, labels)).toBe('3 out of sync');
+        expect(countAria(1, labels)).toBe('1 time entry out of sync with Outlook. Show it.');
+        expect(countAria(2, labels)).toBe(
+            '2 time entries out of sync with Outlook. Show the first one.'
+        );
+    });
+});
+
+describe('autoAdjustedNote', () => {
+    const adjusted: OutlookAutoAdjusted = {
+        time_entry_id: 'te-1',
+        at: '2026-11-23T08:00:00Z',
+        from_start: '2026-11-24T10:00:00Z',
+        from_end: '2026-11-24T11:00:00Z',
+        to_start: '2026-11-25T12:00:00Z',
+        to_end: '2026-11-25T13:00:00Z',
+    };
+
+    it('names the old and the new range like the moved reason', () => {
+        expect(autoAdjustedNote(adjusted, labels, '24-hours')).toBe(
+            'Updated from Outlook: Tue 10:00 – 11:00 → Wed 12:00 – 13:00'
+        );
+    });
+
+    it('uses the full dates across weeks', () => {
+        expect(
+            autoAdjustedNote(
+                { ...adjusted, to_start: '2026-12-01T10:00:00Z', to_end: '2026-12-01T11:00:00Z' },
+                labels,
+                '24-hours'
+            )
+        ).toBe('Updated from Outlook: Tue, Nov 24 · 10:00 – 11:00 → Tue, Dec 1 · 10:00 – 11:00');
+    });
+});
+
+describe('autoAdjustedAnnouncement', () => {
+    it('uses the singular and plural copy', () => {
+        expect(autoAdjustedAnnouncement(1, labels)).toBe('1 time entry updated from Outlook');
+        expect(autoAdjustedAnnouncement(3, labels)).toBe('3 time entries updated from Outlook');
+    });
+});
+
+describe('shortDate', () => {
+    it('formats the day in the panel format and the user time zone', () => {
+        expect(shortDate('2026-11-24T10:00:00Z')).toBe('Tue, Nov 24');
+
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('America/New_York');
+        expect(shortDate('2026-11-24T02:00:00Z')).toBe('Mon, Nov 23');
+    });
+});
+
+describe('firstFlag', () => {
+    it('returns null without flags', () => {
+        expect(firstFlag([])).toBeNull();
+    });
+
+    it('picks the flag with the earliest entry start', () => {
+        const later = item({ time_entry_id: 'te-a', entry_start: '2026-11-26T09:00:00Z' });
+        const earlier = item({ time_entry_id: 'te-z', entry_start: '2026-11-20T09:00:00Z' });
+
+        expect(firstFlag([later, earlier])).toBe(earlier);
+    });
+
+    it('breaks a tie by time entry id', () => {
+        const b = item({ time_entry_id: 'te-b' });
+        const a = item({ time_entry_id: 'te-a' });
+
+        expect(firstFlag([b, a])).toBe(a);
+        expect(firstFlag([a, b])).toBe(a);
+    });
+
+    it('compares instants, not strings', () => {
+        const withOffset = item({
+            time_entry_id: 'te-b',
+            entry_start: '2026-11-24T11:00:00+02:00',
+        });
+        const utc = item({ time_entry_id: 'te-a', entry_start: '2026-11-24T10:00:00Z' });
+
+        expect(firstFlag([utc, withOffset])).toBe(withOffset);
     });
 });

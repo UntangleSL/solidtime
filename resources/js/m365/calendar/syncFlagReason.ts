@@ -1,5 +1,10 @@
 import dayjs from 'dayjs';
-import type { OutlookCalendarLabels, OutlookFlagKind, OutlookOutOfSyncItem } from '@/m365/types';
+import type {
+    OutlookAutoAdjusted,
+    OutlookCalendarLabels,
+    OutlookFlagKind,
+    OutlookOutOfSyncItem,
+} from '@/m365/types';
 import type { TimeFormat } from '@/packages/ui/src/utils/time';
 import { formatTime, getLocalizedDayJs } from '@/packages/ui/src/utils/time';
 import { getWeekStartDayNumber } from '@/packages/ui/src/utils/settings';
@@ -118,4 +123,62 @@ export function flagDescribed(
 ): string {
     const reason = flagReason(item, labels, timeFormat).replace(/\.+\s*$/, '');
     return fillLabel(labels.osync_described, { reason });
+}
+
+// Second line of the origin icon tooltip for 7 days after a silent adjust (D-04, UI-SPEC section 5):
+// "Updated from Outlook: Tue 10:00 – 11:00 → Wed 12:00 – 13:00".
+export function autoAdjustedNote(
+    item: OutlookAutoAdjusted,
+    labels: OutlookCalendarLabels,
+    timeFormat: TimeFormat
+): string {
+    const pair = rangePair(
+        { start: item.from_start, end: item.from_end },
+        { start: item.to_start, end: item.to_end },
+        timeFormat
+    );
+    return fillLabel(labels.auto_adjusted_note, pair);
+}
+
+// "Tue, Nov 24" in the user's time zone (the :date of the D-03 copy).
+export function shortDate(value: string): string {
+    return getLocalizedDayJs(value).format(FULL_DAY);
+}
+
+function plural(count: number, one: string, many: string): string {
+    return count === 1 ? one : fillLabel(many, { count: String(count) });
+}
+
+// Visible text of the toolbar counter: "1 out of sync" / "3 out of sync".
+export function countLabel(count: number, labels: OutlookCalendarLabels): string {
+    return plural(count, labels.osync_count_one, labels.osync_count_many);
+}
+
+// aria-label of the toolbar counter (says what a click does).
+export function countAria(count: number, labels: OutlookCalendarLabels): string {
+    return plural(count, labels.osync_count_aria_one, labels.osync_count_aria_many);
+}
+
+// Polite announcement after a sync the user triggered or watched adjusted entries in view.
+export function autoAdjustedAnnouncement(count: number, labels: OutlookCalendarLabels): string {
+    return plural(count, labels.auto_adjusted_one, labels.auto_adjusted_many);
+}
+
+// The flag the toolbar counter jumps to: the earliest current entry start, ties broken by the time
+// entry id so repeated reads pick the same one. Null without flags.
+export function firstFlag(items: readonly OutlookOutOfSyncItem[]): OutlookOutOfSyncItem | null {
+    let first: OutlookOutOfSyncItem | null = null;
+    let firstAt = 0;
+    for (const item of items) {
+        const at = Date.parse(item.entry_start);
+        if (
+            first === null ||
+            at < firstAt ||
+            (at === firstAt && item.time_entry_id < first.time_entry_id)
+        ) {
+            first = item;
+            firstAt = at;
+        }
+    }
+    return first;
 }
