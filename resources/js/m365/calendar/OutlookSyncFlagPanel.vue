@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, useId, watch, type ComputedRef } from 'vue';
-import { CalendarSync } from '@lucide/vue';
+import { CalendarSync, Trash2 } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
+import Button from '@/packages/ui/src/Buttons/Button.vue';
 import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
 import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
 import { Popover, PopoverAnchor, PopoverContent } from '@/packages/ui/src/popover';
 import { Separator } from '@/packages/ui/src/separator';
 import type { OutlookFlagPanelRequest, OutlookOutOfSyncItem } from '@/m365/types';
+import type { OutlookFlagActionResult } from './conversionApi';
 import { flagTitle, formatRange } from './syncFlagReason';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
@@ -93,6 +95,20 @@ const entry = computed(() =>
     item.value ? range(item.value.entry_start, item.value.entry_end) : ''
 );
 
+function sameInstant(a: string | null, b: string | null): boolean {
+    return a === null || b === null ? a === b : Date.parse(a) === Date.parse(b);
+}
+
+// A cancelled or removed meeting lists the entry only when its times differ from the meeting's.
+const entryDiffers = computed(() => {
+    const current = item.value;
+    if (!current) return false;
+    return (
+        !sameInstant(current.entry_start, current.meeting_start) ||
+        !sameInstant(current.entry_end, current.meeting_end)
+    );
+});
+
 // An all-day meeting cannot be applied to a timed entry (D-18): no Adjust then.
 const canAdjust = computed(
     () => item.value?.kind === 'moved' && !item.value.all_day && now.value !== null
@@ -113,6 +129,7 @@ function button(testid: string): HTMLElement | null {
     return contentEl.value?.querySelector<HTMLElement>(`[data-testid="${testid}"]`) ?? null;
 }
 
+// Focus on open: Adjust for a moved flag, never the destructive action otherwise (Keep as is).
 function focusDefault(): void {
     focusFirst(
         canAdjust.value ? button('outlook-sync-flag-adjust') : null,
@@ -130,12 +147,89 @@ function onCloseAutoFocus(event: Event): void {
     event.preventDefault();
 }
 
+// Esc closes the delete confirmation first, then the popover; closed by Esc, focus returns to the
+// entry block, or to the counter when the popover is anchored to it.
+let escapeClosing = false;
+
+function onEscapeKeyDown(event: KeyboardEvent): void {
+    if (confirmingDelete.value) {
+        event.preventDefault();
+        cancelDelete();
+        return;
+    }
+    escapeClosing = true;
+}
+
+function onOpenChange(value: boolean): void {
+    if (value) return;
+    const current = request.value;
+    const returnTo =
+        escapeClosing && current
+            ? current.anchor === 'counter'
+                ? findCounter()
+                : findBlock(current.timeEntryId)
+            : null;
+    escapeClosing = false;
+    context?.closeFlagPanel();
+    if (returnTo) void nextTick(() => focusFirst(returnTo));
+}
+
+// --- Delete: an inline two-step confirmation (no undo exists, D-05). Only the second click deletes.
+const confirmingDelete = ref(false);
+
+function askDelete(): void {
+    confirmingDelete.value = true;
+    void nextTick(() => focusFirst(button('outlook-sync-flag-delete-cancel')));
+}
+
+function cancelDelete(): void {
+    confirmingDelete.value = false;
+    void nextTick(() => focusFirst(button('outlook-sync-flag-delete')));
+}
+
+// --- Actions
+type Action = 'keep' | 'adjust' | 'delete';
+const acting = ref<Action | null>(null);
+
+async function run(action: Action): Promise<void> {
+    const current = request.value;
+    if (!context || !current || item.value === null || acting.value !== null) return;
+    const id = current.timeEntryId;
+    const origin = current.origin;
+
+    acting.value = action;
+    let result: OutlookFlagActionResult;
+    try {
+        if (action === 'adjust') result = await context.adjustFlag(id);
+        else if (action === 'delete') result = await context.deleteFlaggedEntry(id);
+        else result = await context.keepFlag(id);
+    } finally {
+        acting.value = null;
+    }
+    if (result.status !== 'ok') return;
+
+    if (request.value?.seq === current.seq) context.closeFlagPanel();
+    await nextTick();
+    await nextTick();
+    // The entry is gone: the counter while it is shown, else Sync.
+    if (action === 'delete') {
+        focusFirst(findCounter(), findSync());
+        return;
+    }
+    // Opened from the counter: back to the counter while it is shown; otherwise the entry block
+    // (at its new times after an adjust), else the counter, else Sync.
+    if (origin === 'counter') focusFirst(findCounter(), findBlock(id), findSync());
+    else focusFirst(findBlock(id), findCounter(), findSync());
+}
+
 // A new request (another entry, or the same one again) resets the popover and finds its anchor.
 watch(
     () => request.value?.seq ?? null,
     () => {
         const current = request.value;
         const wasOpen = visible.value;
+        confirmingDelete.value = false;
+        escapeClosing = false;
         if (!current || item.value === null) {
             anchorEl.value = null;
             return;
@@ -150,39 +244,6 @@ watch(
     },
     { immediate: true }
 );
-
-function onOpenChange(value: boolean): void {
-    if (value) return;
-    context?.closeFlagPanel();
-}
-
-// --- Actions
-type Action = 'keep' | 'adjust';
-const acting = ref<Action | null>(null);
-
-async function run(action: Action): Promise<void> {
-    const current = request.value;
-    if (!context || !current || item.value === null || acting.value !== null) return;
-    const id = current.timeEntryId;
-    const origin = current.origin;
-
-    acting.value = action;
-    let result;
-    try {
-        result = action === 'adjust' ? await context.adjustFlag(id) : await context.keepFlag(id);
-    } finally {
-        acting.value = null;
-    }
-    if (result.status !== 'ok') return;
-
-    if (request.value?.seq === current.seq) context.closeFlagPanel();
-    await nextTick();
-    await nextTick();
-    // Opened from the counter: back to the counter while it is shown; otherwise the entry block
-    // (at its new times after an adjust), else the counter, else Sync.
-    if (origin === 'counter') focusFirst(findCounter(), findBlock(id), findSync());
-    else focusFirst(findBlock(id), findCounter(), findSync());
-}
 </script>
 
 <template>
@@ -198,6 +259,7 @@ async function run(action: Action): Promise<void> {
             data-testid="outlook-sync-flag-panel"
             :data-kind="item.kind"
             :data-anchor="request?.anchor"
+            @escape-key-down="onEscapeKeyDown"
             @open-auto-focus="onOpenAutoFocus"
             @close-auto-focus="onCloseAutoFocus">
             <div ref="contentEl">
@@ -237,12 +299,53 @@ async function run(action: Action): Promise<void> {
                             {{ entry }}
                         </dd>
                     </template>
+                    <template v-else>
+                        <dt class="text-text-tertiary">{{ labels.osync_row_meeting }}</dt>
+                        <dd
+                            class="truncate text-text-secondary"
+                            data-testid="outlook-sync-flag-meeting">
+                            {{ before }}
+                        </dd>
+                        <template v-if="entryDiffers">
+                            <dt class="text-text-tertiary">{{ labels.osync_row_entry }}</dt>
+                            <dd
+                                class="truncate text-text-secondary"
+                                data-testid="outlook-sync-flag-entry">
+                                {{ entry }}
+                            </dd>
+                        </template>
+                    </template>
                 </dl>
                 <p class="mt-2 text-xs text-text-tertiary" data-testid="outlook-sync-flag-note">
-                    {{ labels.osync_note_moved }}
+                    {{ item.kind === 'moved' ? labels.osync_note_moved : labels.osync_note_gone }}
                 </p>
                 <Separator class="mt-4" />
-                <div class="mt-4 flex justify-end gap-2">
+                <div v-if="confirmingDelete" class="mt-4">
+                    <p
+                        class="text-xs text-text-secondary"
+                        data-testid="outlook-sync-flag-delete-question">
+                        {{ labels.osync_delete_question }}
+                    </p>
+                    <div class="mt-2 flex justify-end gap-2">
+                        <SecondaryButton
+                            type="button"
+                            :disabled="acting !== null"
+                            data-testid="outlook-sync-flag-delete-cancel"
+                            @click="cancelDelete">
+                            {{ labels.cancel }}
+                        </SecondaryButton>
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            :disabled="acting !== null"
+                            data-testid="outlook-sync-flag-delete-confirm"
+                            @click="run('delete')">
+                            <Trash2 aria-hidden="true" />
+                            <span>{{ labels.osync_delete_confirm }}</span>
+                        </Button>
+                    </div>
+                </div>
+                <div v-else class="mt-4 flex justify-end gap-2">
                     <SecondaryButton
                         type="button"
                         :loading="acting === 'keep'"
@@ -261,6 +364,18 @@ async function run(action: Action): Promise<void> {
                         @click="run('adjust')">
                         {{ labels.osync_adjust }}
                     </PrimaryButton>
+                    <Button
+                        v-if="item.kind !== 'moved'"
+                        type="button"
+                        variant="outline"
+                        size="default"
+                        class="text-destructive hover:text-destructive"
+                        :disabled="acting !== null"
+                        data-testid="outlook-sync-flag-delete"
+                        @click="askDelete">
+                        <Trash2 aria-hidden="true" />
+                        <span>{{ labels.osync_delete }}</span>
+                    </Button>
                 </div>
             </div>
         </PopoverContent>

@@ -46,6 +46,16 @@ function flag(overrides: Partial<OutlookOutOfSyncItem> = {}): OutlookOutOfSyncIt
     };
 }
 
+function cancelled(overrides: Partial<OutlookOutOfSyncItem> = {}): OutlookOutOfSyncItem {
+    return flag({
+        kind: 'cancelled',
+        new_start: null,
+        new_end: null,
+        entry_start: '2026-11-24T10:00:00Z',
+        ...overrides,
+    });
+}
+
 // Fake context: the actions behave like the composable's (pending while they run; ok and stale
 // drop the flag / close the popover of that entry; failed leaves everything as it was).
 const flags = ref<OutlookOutOfSyncItem[]>([]);
@@ -182,6 +192,12 @@ function el(testid: string): HTMLElement {
 
 function text(testid: string): string {
     return el(testid).textContent?.trim() ?? '';
+}
+
+function pressEscape(target: EventTarget = document.activeElement ?? document.body) {
+    target.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    );
 }
 
 async function openPanel(
@@ -349,5 +365,185 @@ describe('OutlookSyncFlagPanel: moved flag', () => {
         open('te-1');
         await settle();
         expect(query('outlook-sync-flag-panel')).toBeNull();
+    });
+});
+
+describe('OutlookSyncFlagPanel: cancelled and removed flags', () => {
+    it('shows a cancelled meeting with Keep as is and Delete entry, focus on Keep', async () => {
+        flags.value = [cancelled()];
+        mountPanel();
+        await openPanel();
+
+        const panel = el('outlook-sync-flag-panel');
+        expect(panel.dataset.kind).toBe('cancelled');
+        expect(text('outlook-sync-flag-title')).toBe('Meeting cancelled in Outlook');
+        expect(text('outlook-sync-flag-description')).toBe('Weekly sync');
+        expect(panel.textContent).toContain('Meeting');
+        expect(text('outlook-sync-flag-meeting')).toBe('Tue, Nov 24 · 10:00 – 11:00');
+        // Same times as the meeting: no "Your entry" row
+        expect(query('outlook-sync-flag-entry')).toBeNull();
+        expect(query('outlook-sync-flag-before')).toBeNull();
+        expect(query('outlook-sync-flag-now')).toBeNull();
+        expect(text('outlook-sync-flag-note')).toBe('Nothing is deleted unless you choose to.');
+
+        expect(query('outlook-sync-flag-adjust')).toBeNull();
+        expect(text('outlook-sync-flag-keep')).toBe('Keep as is');
+        const remove = el('outlook-sync-flag-delete');
+        expect(remove.textContent?.trim()).toBe('Delete entry');
+        expect(remove.className).toContain('text-destructive');
+        expect(remove.className).toContain('border');
+        expect(remove.querySelector('svg')).not.toBeNull();
+        expect(document.activeElement).toBe(el('outlook-sync-flag-keep'));
+    });
+
+    it('lists the entry when its times differ from the meeting', async () => {
+        flags.value = [cancelled({ entry_start: '2026-11-24T10:15:00Z' })];
+        mountPanel();
+        await openPanel();
+
+        expect(text('outlook-sync-flag-meeting')).toBe('Tue, Nov 24 · 10:00 – 11:00');
+        expect(text('outlook-sync-flag-entry')).toBe('Tue, Nov 24 · 10:15 – 11:00');
+    });
+
+    it('shows a removed meeting with its own title', async () => {
+        flags.value = [cancelled({ kind: 'removed' })];
+        mountPanel();
+        await openPanel();
+
+        expect(el('outlook-sync-flag-panel').dataset.kind).toBe('removed');
+        expect(text('outlook-sync-flag-title')).toBe('Meeting removed from Outlook');
+        expect(text('outlook-sync-flag-note')).toBe('Nothing is deleted unless you choose to.');
+        expect(query('outlook-sync-flag-delete')).not.toBeNull();
+    });
+
+    it('keeps the entry as is, closes and focuses the entry block', async () => {
+        flags.value = [cancelled()];
+        mountPanel();
+        await openPanel();
+
+        el('outlook-sync-flag-keep').click();
+        await settle();
+
+        expect(keepFlag).toHaveBeenCalledTimes(1);
+        expect(keepFlag).toHaveBeenCalledWith('te-1');
+        expect(deleteFlaggedEntry).not.toHaveBeenCalled();
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(document.activeElement).toBe(blockOf('te-1'));
+    });
+
+    it('after Keep opened from the counter, focuses the counter, else the entry block', async () => {
+        mountPanel();
+        await openPanel('te-1', 'entry', 'counter');
+        el('outlook-sync-flag-keep').click();
+        await settle();
+        expect(document.activeElement).toBe(el('outlook-out-of-sync'));
+
+        flags.value = [flag()];
+        await openPanel('te-1', 'entry', 'counter');
+        el('outlook-sync-flag-keep').addEventListener('click', removeCounter);
+        el('outlook-sync-flag-keep').click();
+        await settle();
+        expect(document.activeElement).toBe(blockOf('te-1'));
+    });
+
+    it('a single click on Delete entry never deletes: it asks first, focused on Cancel', async () => {
+        flags.value = [cancelled()];
+        mountPanel();
+        await openPanel();
+
+        el('outlook-sync-flag-delete').click();
+        await settle();
+
+        expect(deleteFlaggedEntry).not.toHaveBeenCalled();
+        expect(query('outlook-sync-flag-panel')).not.toBeNull();
+        expect(query('outlook-sync-flag-keep')).toBeNull();
+        expect(query('outlook-sync-flag-delete')).toBeNull();
+        expect(text('outlook-sync-flag-delete-question')).toBe(
+            "Delete this time entry? This can't be undone."
+        );
+        expect(text('outlook-sync-flag-delete-cancel')).toBe('Cancel');
+        const confirm = el('outlook-sync-flag-delete-confirm');
+        expect(confirm.textContent?.trim()).toBe('Delete entry');
+        expect(confirm.className).toContain('bg-destructive');
+        expect(confirm.querySelector('svg')).not.toBeNull();
+        expect(document.activeElement).toBe(el('outlook-sync-flag-delete-cancel'));
+    });
+
+    it('Cancel returns to the normal footer with focus on Delete entry', async () => {
+        flags.value = [cancelled()];
+        mountPanel();
+        await openPanel();
+        el('outlook-sync-flag-delete').click();
+        await settle();
+
+        el('outlook-sync-flag-delete-cancel').click();
+        await settle();
+
+        expect(deleteFlaggedEntry).not.toHaveBeenCalled();
+        expect(query('outlook-sync-flag-delete-confirm')).toBeNull();
+        expect(query('outlook-sync-flag-keep')).not.toBeNull();
+        expect(document.activeElement).toBe(el('outlook-sync-flag-delete'));
+    });
+
+    it('Esc closes the confirmation first, then the popover, returning focus to the block', async () => {
+        flags.value = [cancelled()];
+        mountPanel();
+        await openPanel();
+        el('outlook-sync-flag-delete').click();
+        await settle();
+
+        pressEscape();
+        await settle();
+        expect(query('outlook-sync-flag-panel')).not.toBeNull();
+        expect(query('outlook-sync-flag-delete-confirm')).toBeNull();
+        expect(document.activeElement).toBe(el('outlook-sync-flag-delete'));
+
+        pressEscape();
+        await settle();
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(closeFlagPanel).toHaveBeenCalled();
+        expect(flagPanel.value).toBeNull();
+        expect(deleteFlaggedEntry).not.toHaveBeenCalled();
+        expect(document.activeElement).toBe(blockOf('te-1'));
+    });
+
+    it('Delete deletes exactly once, closes and focuses the counter, else Sync', async () => {
+        flags.value = [cancelled()];
+        mountPanel();
+        await openPanel();
+        el('outlook-sync-flag-delete').click();
+        await settle();
+
+        el('outlook-sync-flag-delete-confirm').click();
+        await settle();
+
+        expect(deleteFlaggedEntry).toHaveBeenCalledTimes(1);
+        expect(deleteFlaggedEntry).toHaveBeenCalledWith('te-1');
+        expect(keepFlag).not.toHaveBeenCalled();
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(document.activeElement).toBe(el('outlook-out-of-sync'));
+
+        flags.value = [cancelled({ kind: 'removed' })];
+        await openPanel();
+        el('outlook-sync-flag-delete').click();
+        await settle();
+        el('outlook-sync-flag-delete-confirm').addEventListener('click', removeCounter);
+        el('outlook-sync-flag-delete-confirm').click();
+        await settle();
+        expect(deleteFlaggedEntry).toHaveBeenCalledTimes(2);
+        expect(document.activeElement).toBe(el('outlook-sync-button'));
+    });
+
+    it('a new request resets the confirmation', async () => {
+        flags.value = [cancelled()];
+        mountPanel();
+        await openPanel();
+        el('outlook-sync-flag-delete').click();
+        await settle();
+        expect(query('outlook-sync-flag-delete-confirm')).not.toBeNull();
+
+        await openPanel();
+        expect(query('outlook-sync-flag-delete-confirm')).toBeNull();
+        expect(document.activeElement).toBe(el('outlook-sync-flag-keep'));
     });
 });
