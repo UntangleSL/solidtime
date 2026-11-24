@@ -11,7 +11,9 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
 /**
- * Read-only Microsoft Graph calendarView client. Plain class without instance state (Octane safe).
+ * Read-only Microsoft Graph calendar client: calendarView reads and single-occurrence lookups
+ * (GET /me/events/{id}). Same scope as before (Calendars.Read), nothing is written to Graph.
+ * Plain class without instance state (Octane safe). Nothing it sees (ids, times, bodies, tokens) is logged.
  *
  * The first URL is one literal string: Graph needs the unencoded "$select" / "$orderby" / "$top" names,
  * so a query array would encode them. Every page, including every @odata.nextLink, carries the combined
@@ -123,6 +125,104 @@ final class GraphCalendarClient
         }
 
         return $this->result($events, true);
+    }
+
+    /**
+     * Looks up one occurrence by its immutable id. The only safe way to tell a removed or declined meeting
+     * (404 ErrorItemNotFound) from one moved out of a window (200 at a new time): both are simply absent
+     * from a calendarView (DECISIONS-graph.md). Anything that is not a clear answer is Unknown (D-07).
+     *
+     * @param  Closure(?string): string  $token
+     */
+    public function event(Closure $token, string $graphId): EventLookup
+    {
+        // One literal string for the same reason as calendarView: "$select" must stay unencoded
+        $url = 'https://graph.microsoft.com/v1.0/me/events/'.rawurlencode($graphId).'?$select=id,start,end,isCancelled,isAllDay,type,seriesMasterId';
+
+        $connectTimeout = $this->intConfig('microsoft365.graph.connect_timeout', 3);
+        $timeout = $this->intConfig('microsoft365.graph.timeout', 8);
+
+        try {
+            $accessToken = $token(null);
+        } catch (GraphException $exception) {
+            return $this->lookupTokenFailure($exception);
+        }
+
+        try {
+            $response = $this->get($url, $accessToken, $connectTimeout, $timeout);
+
+            if ($response->status() === 401 || $response->status() === 403) {
+                // One forced refresh and one retry, as in calendarView; a second rejection means reconnect
+                try {
+                    $accessToken = $token($accessToken);
+                } catch (GraphException $exception) {
+                    return $this->lookupTokenFailure($exception);
+                }
+                $response = $this->get($url, $accessToken, $connectTimeout, $timeout);
+                if ($response->status() === 401 || $response->status() === 403) {
+                    return EventLookup::reconnect($response->status());
+                }
+            }
+        } catch (ConnectionException) {
+            // Timeout, refused or reset connection: nothing can be concluded about the occurrence
+            return EventLookup::unknown();
+        }
+
+        if ($response->successful()) {
+            return $this->lookupFromBody($response);
+        }
+
+        $status = $response->status();
+
+        // No in-request retry: the caller persists the back-off (Phase 3 D-12)
+        if ($status === 429 || (($status === 503 || $status === 504) && $response->hasHeader('Retry-After'))) {
+            return EventLookup::throttled(RetryAfter::seconds($response->header('Retry-After')), $status);
+        }
+
+        // Allow-list only: a 404 without ErrorItemNotFound (no mailbox, unknown code) proves nothing
+        if ($status === 404 && $response->json('error.code') === 'ErrorItemNotFound') {
+            return EventLookup::removed();
+        }
+
+        return EventLookup::unknown($status);
+    }
+
+    /**
+     * Maps a GraphException of the token closure. Only throttling and reconnect are actionable; any other
+     * token failure (an outage of the token endpoint) is Unknown.
+     */
+    private function lookupTokenFailure(GraphException $exception): EventLookup
+    {
+        return match ($exception->status) {
+            // The token endpoint only ever throttles with a 429
+            SyncStatus::Throttled => EventLookup::throttled($exception->retryAfter ?? RetryAfter::DEFAULT_SECONDS, 429),
+            SyncStatus::Reconnect => EventLookup::reconnect(),
+            default => EventLookup::unknown(),
+        };
+    }
+
+    private function lookupFromBody(Response $response): EventLookup
+    {
+        $status = $response->status();
+        $body = $response->json();
+        if (! is_array($body)) {
+            return EventLookup::unknown($status);
+        }
+
+        $start = is_array($body['start'] ?? null) ? OutlookMeetingSyncService::parseGraphUtc($body['start']) : null;
+        $end = is_array($body['end'] ?? null) ? OutlookMeetingSyncService::parseGraphUtc($body['end']) : null;
+        $allDay = ($body['isAllDay'] ?? null) === true;
+
+        if (($body['isCancelled'] ?? null) === true) {
+            return EventLookup::cancelled($start, $end, $allDay, $status);
+        }
+
+        // The request asks for UTC: a missing, non-UTC or inverted time is a contract violation
+        if ($start === null || $end === null || $end < $start) {
+            return EventLookup::unknown($status);
+        }
+
+        return EventLookup::present($start, $end, $allDay, $status);
     }
 
     /**

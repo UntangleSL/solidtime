@@ -50,4 +50,21 @@ return [
         // Total time one traversal may take before it stops as a partial result
         'deadline_seconds' => 15,
     ],
+
+    // Out-of-sync detection (Phase 6). Plain values on purpose: no new environment variables (D-11).
+    'out_of_sync' => [
+        // Direct lookups (GET /me/events/{id}) one interactive sync may spend on linked entries
+        'lookups_per_sync' => 5,
+        // Direct lookups the daily job may spend across all users
+        'lookups_per_job' => 300,
+        // Seconds between the per-user checks the daily job dispatches
+        'dispatch_stagger_seconds' => 10,
+        // Time of day and timezone of the daily check
+        'daily_at' => '05:30',
+        'daily_timezone' => 'Europe/Madrid',
+        // Lifetime of the lock around applying a user's choice; a crashed request frees it after this long
+        'lock_seconds' => 30,
+        // Days an "adjusted automatically" note stays visible on an entry
+        'auto_adjusted_days' => 7,
+    ],
 ];
