@@ -53,8 +53,10 @@ use App\Models\Project;
 use App\Models\TimeEntry;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Testing\TestResponse;
@@ -118,6 +120,8 @@ class OutlookOutOfSyncSyncTest extends TestCaseWithDatabase
     private const string GRAPH_URL = 'https://graph.microsoft.com/v1.0/me/calendarView*';
 
     private const string NEXT_LINK = 'https://graph.microsoft.com/v1.0/me/calendarView?$skiptoken=next';
+
+    private const string MIGRATION = 'app/Microsoft365/database/migrations/2026_11_23_000001_add_sync_state_to_outlook_meeting_links.php';
 
     /**
      * An employee of a fresh organization, signed in on the web guard with a connected account. The clock
@@ -379,5 +383,115 @@ class OutlookOutOfSyncSyncTest extends TestCaseWithDatabase
         $this->assertNotNull($link->released_at);
         $this->assertNull($link->flag_reason);
         $this->assertNull($link->auto_adjusted_at);
+    }
+
+    public function test_cancelled_observation_never_deletes_the_entry(): void
+    {
+        // Arrange: a not-started linked meeting comes back cancelled at the same slot
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-c', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->fakeWindow([$this->graphEvent('evt-c', '2026-12-03T10:00:00', '2026-12-03T11:00:00', ['isCancelled' => true])], complete: true);
+
+        // Act
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok');
+
+        // Assert: the entry stays with its times; the link waits for the user's choice (D-05)
+        $this->assertTrue(TimeEntry::query()->whereKey($entry->getKey())->exists());
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($entry->end));
+        $link = $this->linkOf($data->user, 'evt-c');
+        $this->assertSame(Decision::REASON_CANCELLED, $link->flag_reason);
+        $this->assertNotNull($link->flagged_at);
+        $this->assertNull($link->outlook_starts_at);
+        $this->assertNull($link->outlook_ends_at);
+        // The cancelled meeting itself is not cached (eligibility filter, Phase 3)
+        $this->assertSame(0, OutlookMeeting::query()->where('graph_id', '=', 'evt-c')->whereNull('gone_at')->count());
+    }
+
+    public function test_link_unique_only_among_active_links(): void
+    {
+        // Arrange: a released link of an occurrence (D-03)
+        $data = $this->employee();
+        $first = $this->linkedEntry($data->user, 'evt-u', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        OutlookMeetingLink::query()->where('time_entry_id', '=', $first->getKey())->update(['released_at' => '2026-12-01 08:00:00']);
+
+        // Act: a second, active link of the same occurrence for another entry
+        $second = $this->linkedEntry($data->user, 'evt-u', '2026-12-03 14:00:00', '2026-12-03 15:00:00');
+
+        // Assert: accepted next to the released one
+        $this->assertSame(2, OutlookMeetingLink::query()->where('graph_id', '=', 'evt-u')->count());
+
+        // Act: a third link while the second one is still active
+        $member = Member::query()->where('user_id', '=', $data->user->getKey())->firstOrFail();
+        $third = TimeEntry::factory()->forMember($member)->create();
+        $thrown = null;
+        try {
+            // A savepoint, so the test's own transaction stays usable after the violation
+            DB::transaction(fn () => OutlookMeetingLink::query()->create([
+                'user_id' => $data->user->getKey(),
+                'graph_id' => 'evt-u',
+                'time_entry_id' => $third->getKey(),
+                'meeting_starts_at' => '2026-12-03 14:00:00',
+                'meeting_ends_at' => '2026-12-03 15:00:00',
+            ]));
+        } catch (UniqueConstraintViolationException $exception) {
+            $thrown = $exception;
+        }
+
+        // Assert: two active links of one occurrence are refused
+        $this->assertInstanceOf(UniqueConstraintViolationException::class, $thrown);
+        $this->assertSame(2, OutlookMeetingLink::query()->where('graph_id', '=', 'evt-u')->count());
+        $this->assertSame($second->getKey(), OutlookMeetingLink::query()
+            ->where('graph_id', '=', 'evt-u')
+            ->whereNull('released_at')
+            ->sole()
+            ->time_entry_id);
+    }
+
+    public function test_backfill_fills_only_null_snapshots(): void
+    {
+        // Arrange: three links of the user
+        $data = $this->employee();
+        // 1. no snapshot, the meeting is cached (its time differs from the entry's)
+        $this->linkedEntry($data->user, 'bf-cached', '2026-12-03 09:00:00', '2026-12-03 10:00:00', '2026-12-03 09:15:00', '2026-12-03 10:15:00');
+        // 2. no snapshot, no cached meeting
+        $this->linkedEntry($data->user, 'bf-entry', '2026-12-04 14:00:00', '2026-12-04 15:00:00');
+        // 3. a snapshot, while the cached meeting already shows another time
+        $this->linkedEntry($data->user, 'bf-kept', '2026-12-05 10:00:00', '2026-12-05 11:00:00');
+        OutlookMeetingLink::query()->whereIn('graph_id', ['bf-cached', 'bf-entry'])->update([
+            'meeting_starts_at' => null,
+            'meeting_ends_at' => null,
+        ]);
+        foreach (['bf-cached' => ['2026-12-03 09:00:00', '2026-12-03 10:00:00'], 'bf-kept' => ['2026-12-05 12:00:00', '2026-12-05 13:00:00']] as $graphId => [$start, $end]) {
+            OutlookMeeting::query()->create([
+                'user_id' => $data->user->getKey(),
+                'graph_id' => $graphId,
+                'event_type' => 'singleInstance',
+                'subject' => 'Subject '.$graphId,
+                'starts_at' => $start,
+                'ends_at' => $end,
+                'is_organizer' => false,
+                'is_online_meeting' => false,
+                'last_seen_at' => '2026-11-30 08:00:00',
+            ]);
+        }
+
+        // Act
+        $migration = require base_path(self::MIGRATION);
+        $this->assertIsObject($migration);
+        $this->assertTrue(method_exists($migration, 'backfill'));
+        $migration->backfill();
+
+        // Assert
+        $cached = $this->linkOf($data->user, 'bf-cached');
+        $this->assertSame('2026-12-03 09:00:00', $this->utc($cached->meeting_starts_at));
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($cached->meeting_ends_at));
+        $fromEntry = $this->linkOf($data->user, 'bf-entry');
+        $this->assertSame('2026-12-04 14:00:00', $this->utc($fromEntry->meeting_starts_at));
+        $this->assertSame('2026-12-04 15:00:00', $this->utc($fromEntry->meeting_ends_at));
+        $kept = $this->linkOf($data->user, 'bf-kept');
+        $this->assertSame('2026-12-05 10:00:00', $this->utc($kept->meeting_starts_at));
+        $this->assertSame('2026-12-05 11:00:00', $this->utc($kept->meeting_ends_at));
     }
 }
