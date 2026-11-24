@@ -379,6 +379,11 @@ function isPending(id: string): boolean {
     return context?.isConfirmPending?.(id) === true || confirmingIds.value.includes(id);
 }
 
+// Phase 6 (D-03): a move of this meeting's logged entry runs ("Move my entry here").
+function isMoving(id: string): boolean {
+    return context?.isMovePending?.(id) === true;
+}
+
 function confirmErrorOf(id: string): string | null {
     return confirmError.value?.id === id ? confirmError.value.message : null;
 }
@@ -411,6 +416,50 @@ async function onConfirm(meeting: OutlookMeeting): Promise<void> {
     if (openId.value === id) {
         confirmError.value = { id, message: result.error?.message || props.labels.confirm_failed };
     }
+}
+
+function panelElement(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('[data-testid="outlook-ghost-detail"]');
+}
+
+// "Move my entry here" from the panel (D-03, UI-SPEC section 4). The context runs the move and owns
+// the toasts and the announcement; the panel stays open, undismissable, until it settles. Ok: the
+// meeting has left the lane, focus goes to the moved entry block when rendered, else the Phase 4
+// removal rule. Failed: the reason goes to the panel's alert line and focus back to the button.
+// Stale: the context refreshed the calendar, the panel closes and focus stays on the meeting while
+// it is still in the lane (as a plain suggestion), else follows the removal rule.
+async function onMoveEntry(meeting: OutlookMeeting): Promise<void> {
+    const id = meeting.id;
+    if (!canAct.value || !context || openId.value !== id || isMoving(id)) return;
+    if (confirmingIds.value.includes(id)) return;
+    const entryId = meeting.moved_from?.time_entry_id ?? null;
+    const neighbour = neighbourOf(id);
+    confirmError.value = null;
+
+    const result = await context.moveEntry(id);
+
+    if (result.status === 'ok') {
+        if (openId.value === id) openId.value = null;
+        await nextTick();
+        const entry = entryId
+            ? document.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(entryId)}"]`)
+            : null;
+        if (entry) entry.focus();
+        else await focusAfterRemoval(neighbour);
+        return;
+    }
+    if (result.status === 'failed') {
+        if (openId.value !== id) return;
+        confirmError.value = { id, message: result.message || props.labels.move_entry_failed };
+        await nextTick();
+        panelElement()
+            ?.querySelector<HTMLElement>('[data-testid="outlook-detail-move-entry"]')
+            ?.focus();
+        return;
+    }
+    if (openId.value === id) openId.value = null;
+    if (ghostElement(id)) await keepFocusOn(id);
+    else await focusAfterRemoval(neighbour);
 }
 
 async function onCancelForm(meeting: OutlookMeeting): Promise<void> {
@@ -619,6 +668,7 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                 :mode="modeOf(box.meeting.id)"
                 :confirming="confirmingIds.includes(box.meeting.id)"
                 :confirm-error="confirmErrorOf(box.meeting.id)"
+                :moving="isMoving(box.meeting.id)"
                 @update:open="(value: boolean) => setOpen(box.meeting.id, value)"
                 @dismiss="onDismiss(box.meeting)"
                 @restore="onRestore(box.meeting)"
@@ -628,7 +678,8 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                 @unignore-series="onUnignoreSeries(box.meeting)"
                 @forget-series="onForgetSeries(box.meeting)"
                 @converted="onConverted(box.meeting)"
-                @cancel-form="onCancelForm(box.meeting)">
+                @cancel-form="onCancelForm(box.meeting)"
+                @move-entry="onMoveEntry(box.meeting)">
                 <HoverCardTrigger as-child>
                     <div
                         class="m365-ghost m365-meeting absolute pointer-events-auto select-none rounded-sm overflow-hidden hover:z-[1] focus:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 data-[panel-open]:ring-2 data-[panel-open]:ring-accent-700 dark:data-[panel-open]:ring-accent-200"

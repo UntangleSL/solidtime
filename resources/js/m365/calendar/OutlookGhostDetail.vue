@@ -27,6 +27,7 @@ import { Separator } from '@/packages/ui/src/separator';
 import type { OutlookCalendarLabels, OutlookConversionResult, OutlookMeeting } from '@/m365/types';
 import OutlookConvertForm from './OutlookConvertForm.vue';
 import OutlookMeetingSummary from './OutlookMeetingSummary.vue';
+import OutlookMovedMeeting from './OutlookMovedMeeting.vue';
 import OutlookPreassignment from './OutlookPreassignment.vue';
 import { safeHttpsUrl } from './safeUrl';
 import { isPreassigned, isRecurring } from './suggestions';
@@ -45,6 +46,11 @@ import { isPreassigned, isRecurring } from './suggestions';
 // `confirmError` (inline role=alert line). A recurring meeting without assignment gets
 // [More actions] … [Dismiss] [Create time entry]; a single meeting keeps the Phase 4 footer. The
 // More actions menu carries Dismiss / Restore (pre-assigned) and the series actions, all emitted.
+// Phase 6 (D-03, 06-UI-SPEC section 4): a meeting Outlook moved after it started (`moved_from`)
+// adds the OutlookMovedMeeting block above the separator; its "Move my entry here" is emitted
+// (`move-entry`) and the caller passes `moving` while it runs: the button spins, Create / Edit /
+// Confirm and More actions are disabled and the panel cannot be dismissed. A failure reuses the
+// `confirmError` alert line. The footer and its default are unchanged.
 const props = withDefaults(
     defineProps<{
         meeting: OutlookMeeting;
@@ -53,8 +59,9 @@ const props = withDefaults(
         mode?: 'detail' | 'form';
         confirming?: boolean;
         confirmError?: string | null;
+        moving?: boolean;
     }>(),
-    { mode: 'detail', confirming: false, confirmError: null }
+    { mode: 'detail', confirming: false, confirmError: null, moving: false }
 );
 
 const emit = defineEmits<{
@@ -67,6 +74,7 @@ const emit = defineEmits<{
     'forget-series': [];
     converted: [results: OutlookConversionResult[]];
     'cancel-form': [];
+    'move-entry': [];
 }>();
 
 const open = defineModel<boolean>('open', { default: false });
@@ -90,6 +98,12 @@ const preassignment = computed(() =>
     props.canAct && isPreassigned(props.meeting) ? (props.meeting.assignment ?? null) : null
 );
 
+// The D-03 moved block, only while the caller may act (D-14).
+const moved = computed(() => props.canAct && Boolean(props.meeting.moved_from));
+
+// An action of this panel runs: the panel cannot be dismissed and its other actions wait.
+const locked = computed(() => props.confirming || props.moving);
+
 const seriesIgnored = computed(() => props.meeting.series_ignored === true);
 
 // Dismiss / Restore always live in the "More actions" menu, in the same order as the meeting's
@@ -98,7 +112,15 @@ const showMore = computed(() => props.canAct);
 const recurring = computed(() => isRecurring(props.meeting));
 
 function onConfirm(): void {
-    if (!props.confirming) emit('confirm');
+    if (!locked.value) emit('confirm');
+}
+
+function onCreate(): void {
+    if (!props.moving) emit('create');
+}
+
+function onMoveEntry(): void {
+    if (!locked.value) emit('move-entry');
 }
 
 // A menu action hands focus to the caller (the panel closes and the layer moves focus), so the
@@ -139,7 +161,7 @@ function eventTarget(event: Event): Element | null {
 }
 
 function onInteractOutside(event: Event): void {
-    if (busy.value || props.confirming) {
+    if (busy.value || locked.value) {
         event.preventDefault();
         return;
     }
@@ -149,13 +171,16 @@ function onInteractOutside(event: Event): void {
 }
 
 function onEscapeKeyDown(event: KeyboardEvent): void {
-    if (busy.value || props.confirming) event.preventDefault();
+    if (busy.value || locked.value) event.preventDefault();
 }
 
 const confirmButton = ref<InstanceType<typeof PrimaryButton> | null>(null);
+const createButton = ref<InstanceType<typeof PrimaryButton> | null>(null);
 
 // Opened straight in form mode, the form moves focus itself (Create entry or the project picker).
-// A pre-assigned meeting lands on Confirm (Enter on the block, Enter again confirms).
+// A pre-assigned meeting lands on Confirm (Enter on the block, Enter again confirms). A D-03 moved
+// meeting lands on Create time entry: the move button comes first in the body, but a new entry for
+// this session stays the default.
 function onOpenAutoFocus(event: Event): void {
     if (showForm.value) {
         event.preventDefault();
@@ -165,6 +190,12 @@ function onOpenAutoFocus(event: Event): void {
     if (preassignment.value && confirm) {
         event.preventDefault();
         confirm.focus();
+        return;
+    }
+    const create = createButton.value?.$el as HTMLElement | undefined;
+    if (moved.value && create) {
+        event.preventDefault();
+        create.focus();
     }
 }
 </script>
@@ -220,6 +251,14 @@ function onOpenAutoFocus(event: Event): void {
                     :assignment="preassignment"
                     :labels="labels"
                     variant="full" />
+                <OutlookMovedMeeting
+                    v-if="moved"
+                    :meeting="meeting"
+                    :labels="labels"
+                    variant="block"
+                    :pending="moving"
+                    :disabled="confirming"
+                    @move="onMoveEntry" />
                 <Separator class="mt-3" />
                 <div class="mt-4 flex items-center gap-2">
                     <DropdownMenu v-if="showMore" :modal="false">
@@ -228,6 +267,7 @@ function onOpenAutoFocus(event: Event): void {
                                 type="button"
                                 variant="ghost"
                                 size="icon"
+                                :disabled="moving"
                                 :aria-label="labels.more_actions"
                                 data-testid="outlook-detail-more">
                                 <Ellipsis aria-hidden="true" />
@@ -282,8 +322,9 @@ function onOpenAutoFocus(event: Event): void {
                         <template v-if="preassignment">
                             <SecondaryButton
                                 :icon="Pencil"
+                                :disabled="moving"
                                 data-testid="outlook-detail-edit"
-                                @click="emit('create')">
+                                @click="onCreate">
                                 {{ labels.edit }}
                             </SecondaryButton>
                             <PrimaryButton
@@ -291,6 +332,7 @@ function onOpenAutoFocus(event: Event): void {
                                 type="button"
                                 :icon="Check"
                                 :loading="confirming"
+                                :disabled="confirming || moving"
                                 data-testid="outlook-detail-confirm"
                                 @click="onConfirm">
                                 {{ labels.confirm }}
@@ -298,10 +340,12 @@ function onOpenAutoFocus(event: Event): void {
                         </template>
                         <template v-else-if="canAct">
                             <PrimaryButton
+                                ref="createButton"
                                 type="button"
                                 :icon="ClockPlus"
+                                :disabled="moving"
                                 data-testid="outlook-detail-create"
-                                @click="emit('create')">
+                                @click="onCreate">
                                 {{ labels.create_entry }}
                             </PrimaryButton>
                         </template>
