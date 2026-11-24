@@ -10,6 +10,7 @@ use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Microsoft365\OutOfSync\LinkedSightings;
 use App\Microsoft365\OutOfSync\Observation;
 use App\Microsoft365\OutOfSync\OutOfSyncApplier;
+use App\Microsoft365\OutOfSync\OutOfSyncLookups;
 use App\Microsoft365\OutOfSync\OutOfSyncScope;
 use App\Models\User;
 use Carbon\CarbonImmutable;
@@ -44,6 +45,7 @@ final class OutlookMeetingSyncService
         private readonly OutOfSyncScope $scope,
         private readonly LinkedSightings $sightings,
         private readonly OutOfSyncApplier $applier,
+        private readonly OutOfSyncLookups $lookups,
     ) {}
 
     /**
@@ -191,6 +193,20 @@ final class OutlookMeetingSyncService
             // Only a complete traversal proves that an unseen meeting is gone (never after a partial one)
             $this->markUnseenGone($user, $start, $end, $syncStartedAt);
 
+            // A linked meeting the window did not return is only confirmed by a direct lookup: absence
+            // alone never flags (D-07). Bounded by the per-sync budget and the traversal deadline
+            $absent = $this->absentLinkedIds($user, $start, $end, $sightings, $syncStartedAt);
+            if ($absent !== []) {
+                $looked = $this->lookups->lookUp(
+                    $account,
+                    $absent,
+                    $this->lookupBudget(),
+                    $syncStartedAt->addSeconds($this->intConfig('deadline_seconds', 15)),
+                );
+                // Disjoint keys: a looked-up id is by definition not among the sightings
+                $sightings += $looked['observations'];
+            }
+
             // Sightings act only after a complete, failure-free traversal (D-07), still inside the sync
             // lock, so a concurrent sync of this user can not apply them twice
             $this->applier->apply($user, $sightings, $syncStartedAt);
@@ -200,6 +216,50 @@ final class OutlookMeetingSyncService
         $this->recordWindow($user, $start, $end, $syncStartedAt);
 
         return new SyncOutcome(SyncStatus::Ok, null, $syncStartedAt, ! $result['complete']);
+    }
+
+    /**
+     * Graph ids of the user's active links (OutOfSyncScope) whose recorded slot overlaps the window, with
+     * the predicate of markUnseenGone(), and that the window did not return. Meetings that have not
+     * started come first (soonest first), because only they can still be flagged or moved; started ones
+     * follow (a move releases them, D-03).
+     *
+     * @param  array<string, Observation>  $sightings
+     * @return list<string>
+     */
+    private function absentLinkedIds(User $user, CarbonImmutable $start, CarbonImmutable $end, array $sightings, CarbonImmutable $now): array
+    {
+        $nowUtc = $now->utc()->format('Y-m-d H:i:s');
+        $rows = $this->scope->activeLinks($user, $now)
+            ->where('meeting_starts_at', '<', $end->utc()->format('Y-m-d H:i:s'))
+            ->where('meeting_ends_at', '>', $start->utc()->format('Y-m-d H:i:s'))
+            ->orderBy('meeting_starts_at')
+            ->orderBy('graph_id')
+            ->get(['graph_id', 'meeting_starts_at']);
+
+        $notStarted = [];
+        $started = [];
+        foreach ($rows as $link) {
+            $graphId = (string) $link->graph_id;
+            if (isset($sightings[$graphId])) {
+                continue;
+            }
+            $startsAt = $link->meeting_starts_at?->utc()->format('Y-m-d H:i:s');
+            if ($startsAt !== null && $startsAt > $nowUtc) {
+                $notStarted[] = $graphId;
+            } else {
+                $started[] = $graphId;
+            }
+        }
+
+        return array_values(array_unique([...$notStarted, ...$started]));
+    }
+
+    private function lookupBudget(): int
+    {
+        $value = config('microsoft365.out_of_sync.lookups_per_sync', 5);
+
+        return is_int($value) && $value >= 0 ? $value : 5;
     }
 
     private function failureOutcome(User $user, SyncStatus $failure, ?int $retryAfter, ?int $httpStatus): SyncOutcome

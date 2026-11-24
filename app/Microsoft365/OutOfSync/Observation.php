@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Microsoft365\OutOfSync;
 
+use App\Microsoft365\Graph\EventLookup;
+use App\Microsoft365\Graph\EventLookupStatus;
 use Carbon\CarbonImmutable;
 
 /**
@@ -41,5 +43,30 @@ final readonly class Observation
     public static function unknown(CarbonImmutable $at): self
     {
         return new self(ObservationKind::Unknown, null, null, false, $at);
+    }
+
+    /**
+     * The observation a direct lookup proves (GraphCalendarClient::event()):
+     * - Present with both times -> present at those UTC times, all-day as Graph says (D-18);
+     * - Cancelled -> cancelled, whatever the times say;
+     * - Removed (404 ErrorItemNotFound only) -> removed;
+     * - anything else (Unknown, Throttled, Reconnect, a Present without usable times) -> unknown, which
+     *   never acts (D-07).
+     */
+    public static function fromLookup(EventLookup $lookup, CarbonImmutable $observedAt): self
+    {
+        return match ($lookup->status) {
+            EventLookupStatus::Present => $lookup->start !== null && $lookup->end !== null
+                ? self::present(
+                    $lookup->start->utc()->format('Y-m-d H:i:s'),
+                    $lookup->end->utc()->format('Y-m-d H:i:s'),
+                    $lookup->allDay,
+                    $observedAt,
+                )
+                : self::unknown($observedAt),
+            EventLookupStatus::Cancelled => self::cancelled($observedAt),
+            EventLookupStatus::Removed => self::removed($observedAt),
+            default => self::unknown($observedAt),
+        };
     }
 }
