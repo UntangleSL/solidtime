@@ -298,7 +298,7 @@ class OutlookOutOfSyncReadTest extends TestCaseWithDatabase
             '2026-11-26 10:00:00',
             '2026-11-26 11:00:00',
             $this->movedFlag('2026-11-27 00:00:00', '2026-11-28 00:00:00') + ['outlook_all_day' => true],
-            ['description' => null],
+            ['description' => ''],
         );
 
         // Act
