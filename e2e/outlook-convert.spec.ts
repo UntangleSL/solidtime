@@ -720,6 +720,8 @@ test.describe('Outlook meeting conversion', () => {
         await expect.poll(() => conversions.bodies.length).toBe(1);
         expect(conversions.bodies[0]!.meeting_ids).toEqual(['m-newproj']);
         expect(conversions.bodies[0]!.project_id).toBeTruthy();
+        // Let the intercepted conversion finish before the test ends
+        await expect(ghost(page, 'm-newproj')).toHaveCount(0);
     });
 
     test('without actions the panel stays read-only', async ({ page }) => {
