@@ -73,4 +73,10 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
             ->whereUuid('entry')
             ->middleware('throttle:60,1,m365-osync:')
             ->name('microsoft.meetings.out-of-sync.keep');
+        // Same lookup; moves the entry to the Outlook slot stored on a timed moved flag, through core's own
+        // update path only. The body is never read: the target comes from the flag.
+        Route::post('/out-of-sync/{entry}/adjust', [OutOfSyncController::class, 'adjust'])
+            ->whereUuid('entry')
+            ->middleware('throttle:60,1,m365-osync:')
+            ->name('microsoft.meetings.out-of-sync.adjust');
     });

@@ -74,7 +74,7 @@ class ShareMicrosoftInertiaData
     }
 
     /**
-     * @return array{state: string, urls: array{meetings: string, sync: string, convert: string|null}, connect_url: string, notice: array{level: string, message: string}|null, labels: array<string, string>}
+     * @return array{state: string, urls: array{meetings: string, sync: string, convert: string|null, out_of_sync: string, organization_meetings: string|null}, connect_url: string, notice: array{level: string, message: string}|null, labels: array<string, string>}
      */
     private function calendar(Request $request, User $user): array
     {
@@ -89,6 +89,13 @@ class ShareMicrosoftInertiaData
                 'convert' => $user->current_team_id === null
                     ? null
                     : route('microsoft.meetings.convert', ['organization' => $user->current_team_id]),
+                // Base of "Keep as is" / "Adjust to Outlook": the client appends /{entry}/keep|adjust (Phase 6)
+                'out_of_sync' => url('m365/out-of-sync'),
+                // Base of "Move my entry here" in the current organization: the client appends
+                // /{meeting}/move-entry (Phase 6 D-03); none without a current organization
+                'organization_meetings' => $user->current_team_id === null
+                    ? null
+                    : url('m365/organizations/'.$user->current_team_id.'/meetings'),
             ],
             // Connect and Reconnect start the Phase 2 connect flow and come back to the calendar; the
             // only return value the server accepts is the word `calendar`.

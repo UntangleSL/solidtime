@@ -8,13 +8,18 @@ use App\Microsoft365\Http\Middleware\ShareMicrosoftInertiaData;
 use App\Microsoft365\MicrosoftConfig;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Models\User;
+use Closure;
+use Illuminate\Http\Request;
+use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\Fluent\AssertableJson;
 use Inertia\Inertia;
 use Inertia\ResponseFactory;
 use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use Symfony\Component\HttpFoundation\Response;
 use Tests\Feature\Microsoft365\Support\InteractsWithGraphFixtures;
 use Tests\Feature\Microsoft365\Support\InteractsWithMicrosoft365;
 use Tests\TestCaseWithDatabase;
@@ -52,6 +57,8 @@ class OutlookCalendarPropTest extends TestCaseWithDatabase
             ->where('microsoft.calendar.urls.meetings', route('microsoft.meetings.index'))
             ->where('microsoft.calendar.urls.sync', route('microsoft.meetings.sync'))
             ->where('microsoft.calendar.urls.convert', route('microsoft.meetings.convert', ['organization' => $user->current_team_id]))
+            ->where('microsoft.calendar.urls.out_of_sync', url('m365/out-of-sync'))
+            ->where('microsoft.calendar.urls.organization_meetings', url('m365/organizations/'.$user->current_team_id.'/meetings'))
             ->has('microsoft.calendar.labels', 177)
             ->where('microsoft.calendar.labels.no_subject', '(No subject)')
             ->where('microsoft.calendar.labels.last_synced', 'Last synced :time')
@@ -59,9 +66,61 @@ class OutlookCalendarPropTest extends TestCaseWithDatabase
             ->has('microsoft', fn (AssertableJson $microsoft) => $microsoft
                 ->has('calendar', fn (AssertableJson $calendar) => $calendar
                     ->hasAll(['state', 'urls', 'connect_url', 'notice', 'labels'])
-                    ->has('urls', fn (AssertableJson $urls) => $urls->hasAll(['meetings', 'sync', 'convert'])))
+                    ->has('urls', fn (AssertableJson $urls) => $urls->hasAll(['meetings', 'sync', 'convert', 'out_of_sync', 'organization_meetings'])))
                 ->etc())
             ->etc());
+    }
+
+    public function test_out_of_sync_urls_match_the_routes_the_client_builds(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $this->connectedAccount($user);
+        $this->actingAs($user);
+        $entryId = '00000000-0000-4000-8000-000000000e01';
+        $meetingId = '00000000-0000-4000-8000-000000000e02';
+
+        // Act
+        $response = $this->get(route('calendar', [], false));
+
+        // Assert: base + /{entry}/keep|adjust and base + /{meeting}/move-entry are the named routes
+        $response->assertStatus(200);
+        $response->assertInertia(function (AssertableInertia $page) use ($entryId, $meetingId, $user): void {
+            $urls = $page->toArray()['props']['microsoft']['calendar']['urls'];
+            $this->assertSame(route('microsoft.meetings.out-of-sync.keep', ['entry' => $entryId]), $urls['out_of_sync'].'/'.$entryId.'/keep');
+            $this->assertSame(route('microsoft.meetings.out-of-sync.adjust', ['entry' => $entryId]), $urls['out_of_sync'].'/'.$entryId.'/adjust');
+            $this->assertSame(
+                route('microsoft.meetings.move-entry', ['organization' => $user->current_team_id, 'meeting' => $meetingId]),
+                $urls['organization_meetings'].'/'.$meetingId.'/move-entry',
+            );
+        });
+    }
+
+    public function test_organization_urls_are_null_without_a_current_organization(): void
+    {
+        // Arrange: the shared closure, evaluated for the calendar route, for a user without a current team
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $user->current_team_id = null;
+        $this->actingAs($user);
+        $request = Request::create('/calendar', 'GET');
+        $request->setLaravelSession(app('session.store'));
+        $request->setRouteResolver(fn (): ?RoutingRoute => Route::getRoutes()->getByName('calendar'));
+
+        // Act
+        app(ShareMicrosoftInertiaData::class)->handle($request, fn (): Response => new Response);
+        $shared = Inertia::getShared('microsoft');
+        $this->assertInstanceOf(Closure::class, $shared);
+        $microsoft = $shared();
+
+        // Assert
+        $this->assertIsArray($microsoft);
+        $urls = $microsoft['calendar']['urls'];
+        $this->assertNull($urls['convert']);
+        $this->assertNull($urls['organization_meetings']);
+        $this->assertSame(url('m365/out-of-sync'), $urls['out_of_sync']);
+        $this->assertSame(route('microsoft.meetings.index'), $urls['meetings']);
     }
 
     public function test_calendar_carries_the_connect_url_with_the_calendar_return_target_and_no_notice(): void

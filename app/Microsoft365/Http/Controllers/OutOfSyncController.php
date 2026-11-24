@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace App\Microsoft365\Http\Controllers;
 
 use App\Microsoft365\Graph\GraphAccessGuard;
+use App\Microsoft365\Http\Requests\MeetingConversionRequest;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeetingLink;
+use App\Microsoft365\TimeEntries\CoreTimeEntryUpdater;
+use App\Models\TimeEntry;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -69,6 +72,71 @@ class OutOfSyncController extends Controller
         });
 
         return response()->json(['time_entry_id' => $entry, 'status' => 'kept']);
+    }
+
+    /**
+     * "Adjust to Outlook": the entry moves to the Outlook slot stored on the flag, through core's own
+     * update path (CoreTimeEntryUpdater), so permissions, the organization's overlap rule, validation and
+     * the spent-time recalculation all apply as for a manual edit (D-04, D-12). Only the start and end
+     * change. The target always comes from the server-side flag, never from the request (T-06-27).
+     *
+     * Only a timed moved flag can be adjusted: cancelled, removed and all-day flags are a 404 (D-18).
+     * When core refuses (422 validation, 403 permission, its ApiException such as an overlap or a blocked
+     * organization) its own answer goes back unchanged and the transaction rolls back, so the flag stays.
+     * On success the new slot becomes the reference and the flag is cleared.
+     */
+    public function adjust(Request $request, string $entry, CoreTimeEntryUpdater $updater): JsonResponse
+    {
+        $user = $this->sessionUser($request);
+        $this->ensureAccess($user, $entry);
+
+        /** @var array{start: string, end: string} $slot */
+        $slot = DB::transaction(function () use ($user, $entry, $updater): array {
+            $link = $this->ownFlaggedLink($user, $entry);
+            if (! $this->isTimedMove($link) || $link->outlook_starts_at === null || $link->outlook_ends_at === null) {
+                throw (new ModelNotFoundException)->setModel(OutlookMeetingLink::class, [$entry]);
+            }
+            $timeEntry = $this->ownEntry($user, $link->time_entry_id);
+            $start = $link->outlook_starts_at->copy()->utc();
+            $end = $link->outlook_ends_at->copy()->utc();
+
+            $updater->updateTimes(
+                $user,
+                $timeEntry,
+                $start->format(MeetingConversionRequest::FORMAT),
+                $end->format(MeetingConversionRequest::FORMAT),
+            );
+
+            $link->meeting_starts_at = $start;
+            $link->meeting_ends_at = $end;
+            $this->clearFlag($link);
+            $link->last_checked_at = Carbon::now();
+            $link->save();
+
+            return [
+                'start' => $start->format(MeetingConversionRequest::FORMAT),
+                'end' => $end->format(MeetingConversionRequest::FORMAT),
+            ];
+        });
+
+        return response()->json([
+            'time_entry_id' => $entry,
+            'status' => 'adjusted',
+            'start' => $slot['start'],
+            'end' => $slot['end'],
+        ]);
+    }
+
+    /**
+     * The time entry with this id, locked, while it still belongs to the user; else a 404.
+     */
+    private function ownEntry(User $user, string $id): TimeEntry
+    {
+        return TimeEntry::query()
+            ->whereKey($id)
+            ->where('user_id', '=', $user->getKey())
+            ->lockForUpdate()
+            ->firstOrFail();
     }
 
     /**

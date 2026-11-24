@@ -745,12 +745,13 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
         );
 
         // Assert
-        // index, sync, dismiss, restore, (Phase 4) convert and (Phase 5) series.ignore, series.unignore and
-        // series.forget: the convert route names the organization the entry goes to, the others name one of
-        // the user's own meetings; never a user or a member
-        $this->assertCount(8, $routes);
+        // index, sync, dismiss, restore, (Phase 4) convert, (Phase 5) series.ignore, series.unignore and
+        // series.forget, and (Phase 6) out-of-sync.keep, out-of-sync.adjust and move-entry: the convert and
+        // move-entry routes name the organization, the out-of-sync routes one of the user's own time entries,
+        // the others one of the user's own meetings; never a user or a member
+        $this->assertCount(11, $routes);
         foreach ($routes as $route) {
-            $this->assertEmpty(array_diff($route->parameterNames(), ['meeting', 'organization']), (string) $route->getName());
+            $this->assertEmpty(array_diff($route->parameterNames(), ['meeting', 'organization', 'entry']), (string) $route->getName());
             $this->assertStringNotContainsString('user', $route->uri());
             $this->assertStringNotContainsString('member', $route->uri());
         }
