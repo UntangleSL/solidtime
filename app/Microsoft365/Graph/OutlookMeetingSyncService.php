@@ -189,6 +189,7 @@ final class OutlookMeetingSyncService
             return $this->failureOutcome($user, $result['failure'], $result['retry_after'], $result['http_status']);
         }
 
+        $adjusted = 0;
         if ($result['complete']) {
             // Only a complete traversal proves that an unseen meeting is gone (never after a partial one)
             $this->markUnseenGone($user, $start, $end, $syncStartedAt);
@@ -209,13 +210,13 @@ final class OutlookMeetingSyncService
 
             // Sightings act only after a complete, failure-free traversal (D-07), still inside the sync
             // lock, so a concurrent sync of this user can not apply them twice
-            $this->applier->apply($user, $sightings, $syncStartedAt);
+            $adjusted = $this->applier->apply($user, $sightings, $syncStartedAt)->adjusted;
         }
 
         // A traversal with a failure records no sync window
         $this->recordWindow($user, $start, $end, $syncStartedAt);
 
-        return new SyncOutcome(SyncStatus::Ok, null, $syncStartedAt, ! $result['complete']);
+        return new SyncOutcome(SyncStatus::Ok, null, $syncStartedAt, ! $result['complete'], $adjusted);
     }
 
     /**

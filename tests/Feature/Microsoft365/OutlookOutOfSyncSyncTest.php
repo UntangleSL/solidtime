@@ -62,6 +62,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\ResponseSequence;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -1002,5 +1003,47 @@ class OutlookOutOfSyncSyncTest extends TestCaseWithDatabase
             $this->assertNull($link->last_checked_at, $graphId);
         }
         $this->assertSame('2026-12-03 10:00:00', $this->utc($this->linkOf($data->user, 'evt-1')->meeting_starts_at));
+    }
+
+    public function test_sync_answer_counts_auto_adjusted_entries(): void
+    {
+        // Arrange: two not-started, unedited linked meetings that Outlook moved to the afternoon
+        $data = $this->employee();
+        $first = $this->linkedEntry($data->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $second = $this->linkedEntry($data->user, 'evt-2', '2026-12-04 10:00:00', '2026-12-04 11:00:00');
+        $this->fakeWindow([
+            $this->graphEvent('evt-1', '2026-12-03T14:00:00', '2026-12-03T15:00:00'),
+            $this->graphEvent('evt-2', '2026-12-04T15:00:00', '2026-12-04T16:00:00'),
+        ], complete: true);
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act + Assert: the sync that moved them says so
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok')->assertJsonPath('auto_adjusted', 2);
+        $this->assertSame('2026-12-03 14:00:00', $this->utc($first->refresh()->start));
+        $this->assertSame('2026-12-04 15:00:00', $this->utc($second->refresh()->start));
+
+        // Act + Assert: the next sync finds nothing to change
+        $this->travel(11)->seconds();
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok')->assertJsonPath('auto_adjusted', 0);
+
+        // Act + Assert: a reused window answers without Graph, and without a count
+        $this->syncWeek(force: false)->assertOk()->assertJsonPath('status', 'reused')->assertJsonPath('auto_adjusted', 0);
+
+        // Act + Assert: a sync that coalesces with a running one carries no count either
+        $this->travel(11)->seconds();
+        $lock = Cache::lock('m365:meetings-sync:'.$data->user->getKey(), 20);
+        $this->assertTrue($lock->get());
+        try {
+            $this->syncWeek()->assertOk()->assertJsonPath('status', 'coalesced')->assertJsonPath('auto_adjusted', 0);
+        } finally {
+            $lock->release();
+        }
+
+        // Act + Assert: nor does a throttled answer
+        MicrosoftAccount::query()->where('user_id', '=', $data->user->getKey())->update(['graph_backoff_until' => '2026-12-01 09:00:00']);
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'throttled')->assertJsonPath('auto_adjusted', 0);
+
+        // No lookup was ever needed: both meetings were in the window
+        $this->assertSame([], $this->lookupRequests());
     }
 }
