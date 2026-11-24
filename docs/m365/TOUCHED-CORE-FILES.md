@@ -288,3 +288,36 @@ After the plans merged, five follow-up fixes landed: `7bee5345` (distinct Micros
 `e535b485` (Confirm-all popover anchored to its toolbar button through `:reference`, working around a
 reka-ui nested-trigger issue, fork file `OutlookConfirmAll.vue`) and `2bb51e9c` (More actions menu
 test hook rendered inside the menu, fork file `OutlookGhostDetail.vue`). Only `b0412651` touches a core file.
+
+## Phase 6 (Out-of-sync detection)
+
+Phase 6 makes two additive core edits, both in plan 06-16 and both marked in the code with a
+"Fork seam (m365, Phase 6)" comment; no other core file changes (D-13). Everything else (the
+out-of-sync detection, the daily job, the review endpoints and the calendar components) lives in
+fork-owned paths.
+
+### Core files edited
+
+| File | Change | Plan | Re-apply after an upstream merge |
+| --- | --- | --- | --- |
+| `resources/js/packages/ui/src/FullCalendar/TimeEntryCalendar.vue` | New optional slot `context-menu-entry-extra` (`{ timeEntry }`) rendered as the first child of the completed-entry context menu branch (`contextMenuTimeEntry.end !== null`), only when the slot is filled, so without it the menu is exactly as before. `currentDate` is now destructured from `useCalendarNavigation`, and a new `goToDate(date)` sets it to that local day (`getLocalizedDayJsFromMinutes(date, 0)`) and calls `emitDatesChange()`, keeping the view mode; exposed through `defineExpose({ goToDate })`. No markup, style or behaviour change otherwise. | 06-16 | Re-add the slot right before upstream's Edit item in the completed-entry branch and re-add `goToDate` with `defineExpose`. If upstream gains its own navigation API (an exposed method or a prop that moves the current date), prefer it and point `Calendar.vue`'s navigator at it. |
+| `resources/js/Pages/Calendar.vue` | Three imports (`OutlookSyncFlagMarker`, `OutlookEntryMenuItems`, `OutlookSyncFlagPanel`) and `onUnmounted`; a typed `calendarRef` on `TimeEntryCalendar` with `outlook.setCalendarNavigator((date) => calendarRef.value?.goToDate(date))` on mount and `outlook.setCalendarNavigator(null)` on unmount; `OutlookSyncFlagMarker` after `OutlookEntryBadge` in the existing `#event-extra` fill; a new `#context-menu-entry-extra` fill with `OutlookEntryMenuItems`; `OutlookSyncFlagPanel` right after `OutlookSelectionBar`. Every new fill is gated by `outlook.labels.value` like the existing ones; core props and handlers are unchanged. | 06-16 | Take upstream's file, then re-apply the fork fills and imports of every phase in this ledger, including these. |
+
+### New files inside core directories
+
+None from 06-16. The browser proof `e2e/outlook-out-of-sync.spec.ts` (06-17) gets its row when 06-18
+reconciles this section; the new migration lives under the fork-owned
+`app/Microsoft365/database/migrations/`.
+
+### Hot files deliberately not touched
+
+No Phase 6 commit is meant to edit these:
+`resources/js/packages/ui/src/FullCalendar/CalendarDayColumn.vue`,
+`resources/js/packages/ui/src/FullCalendar/FullCalendarEventContent.vue`,
+`resources/js/packages/ui/src/FullCalendar/useCalendarNavigation.ts` (only read: `goToDate` lives in
+`TimeEntryCalendar.vue`), `app/Http/Controllers/Api/V1/TimeEntryController.php`,
+`app/Http/Requests/V1/TimeEntry/TimeEntryUpdateRequest.php`, `app/Console/Kernel.php`,
+`routes/api.php` and `openapi.json`. The daily out-of-sync job is scheduled from the fork provider,
+not from the core console kernel.
+
+06-18 adds the reconciliation line against the real phase diff.
