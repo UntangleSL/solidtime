@@ -11,17 +11,24 @@ import type {
     OutlookConnectionState,
     OutlookMeeting,
     OutlookMeetingsResponse,
+    OutlookOutOfSyncItem,
     OutlookSyncResponse,
 } from '@/m365/types';
 import { OUTLOOK_MEETINGS_KEY, useOutlookMeetings, weekBucket } from './useOutlookMeetings';
 import { ghostLaneWidth } from './ghostLayout';
 
-const { pageProps, addNotification } = vi.hoisted(() => ({
+const { pageProps, addNotification, deleteTimeEntry, organization } = vi.hoisted(() => ({
     pageProps: {} as Record<string, unknown>,
     addNotification: vi.fn(),
+    deleteTimeEntry: vi.fn(),
+    organization: { id: 'org-1' as string | undefined },
 }));
 
 vi.mock('@/utils/notification', () => ({ useNotificationsStore: () => ({ addNotification }) }));
+
+// Core delete (Phase 6): the generated client and the current organization.
+vi.mock('@/packages/api/src', () => ({ api: { deleteTimeEntry } }));
+vi.mock('@/utils/useUser', () => ({ getCurrentOrganizationId: () => organization.id }));
 
 vi.mock('@inertiajs/vue3', () => ({
     usePage: () => ({ props: pageProps }),
@@ -38,6 +45,8 @@ const axiosDelete = vi.mocked(axios.delete);
 const MEETINGS_URL = 'https://app.example.test/m365/meetings';
 const SYNC_URL = 'https://app.example.test/m365/meetings/sync';
 const CONVERT_URL = 'https://app.example.test/m365/organizations/org-1/meetings/time-entries';
+const OSYNC_URL = 'https://app.example.test/m365/out-of-sync';
+const ORG_MEETINGS_URL = 'https://app.example.test/m365/organizations/org-1/meetings';
 
 // Mondays (the test setup uses week start monday and timezone UTC)
 const WEEK_A = '2026-11-02T00:00:00Z';
@@ -61,7 +70,13 @@ function meeting(id: string, start: string, end: string): OutlookMeeting {
 function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
     return {
         state,
-        urls: { meetings: MEETINGS_URL, sync: SYNC_URL, convert: CONVERT_URL },
+        urls: {
+            meetings: MEETINGS_URL,
+            sync: SYNC_URL,
+            convert: CONVERT_URL,
+            out_of_sync: OSYNC_URL,
+            organization_meetings: ORG_MEETINGS_URL,
+        },
         connect_url:
             'https://app.example.test/auth/microsoft/redirect?intent=connect&return=calendar',
         notice: null,
@@ -85,6 +100,21 @@ function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
             series_forgotten_help:
                 'Its meetings are no longer pre-assigned. Your time entries are unchanged.',
             series_action_failed: 'Could not update this series',
+            osync_kept: 'Kept as is',
+            osync_keep_failed: 'Could not save your choice',
+            osync_adjusted: 'Time entry adjusted to Outlook',
+            osync_adjust_failed: 'Could not adjust the time entry',
+            osync_deleted_announcement: 'Time entry deleted',
+            osync_delete_failed: 'Could not delete the time entry',
+            osync_stale: 'This entry changed in the meantime',
+            osync_stale_body: 'The calendar was refreshed.',
+            osync_error_forbidden: "You can't edit this time entry.",
+            move_entry_success: 'Time entry moved here',
+            move_entry_from: 'From :when',
+            move_entry_announcement: 'Time entry moved',
+            move_entry_failed: 'Could not move the time entry',
+            auto_adjusted_one: '1 time entry updated from Outlook',
+            auto_adjusted_many: ':count time entries updated from Outlook',
         } as never,
     };
 }
@@ -186,6 +216,9 @@ beforeEach(() => {
     axiosPost.mockReset();
     axiosDelete.mockReset();
     addNotification.mockReset();
+    deleteTimeEntry.mockReset();
+    deleteTimeEntry.mockResolvedValue(undefined);
+    organization.id = 'org-1';
     localStorage.clear();
     axiosGet.mockResolvedValue(readResponse());
     axiosPost.mockResolvedValue(syncResponse());
@@ -2185,5 +2218,878 @@ describe('useOutlookMeetings series actions', () => {
             expect(mounted.api.meetings.value).toEqual([occurrenceA, oneOff, occurrenceB]);
             mounted.wrapper.unmount();
         });
+    });
+});
+
+// --- Phase 6: out-of-sync flags (06-07)
+
+function flagItem(
+    id: string,
+    kind: OutlookOutOfSyncItem['kind'],
+    entryStart: string,
+    overrides: Partial<OutlookOutOfSyncItem> = {}
+): OutlookOutOfSyncItem {
+    const entryEnd = new Date(Date.parse(entryStart) + 3_600_000).toISOString().replace('.000', '');
+    return {
+        time_entry_id: id,
+        kind,
+        meeting_start: entryStart,
+        meeting_end: entryEnd,
+        new_start: null,
+        new_end: null,
+        all_day: false,
+        entry_start: entryStart,
+        entry_end: entryEnd,
+        description: `Entry ${id}`,
+        ...overrides,
+    };
+}
+
+// A: moved, entry on Tuesday; B: cancelled, entry on Monday (the earliest, so the first flag).
+const FLAG_A = flagItem('te-a', 'moved', '2026-11-03T10:00:00Z', {
+    new_start: '2026-11-04T12:00:00Z',
+    new_end: '2026-11-04T13:00:00Z',
+});
+const FLAG_B = flagItem('te-b', 'cancelled', '2026-11-02T09:00:00Z');
+
+function flagsRead(
+    items: OutlookOutOfSyncItem[],
+    meetings: OutlookMeeting[] = []
+): { data: OutlookMeetingsResponse } {
+    return {
+        data: {
+            data: meetings,
+            sync: { last_synced_at: null, retry_after: null },
+            out_of_sync: { items },
+        },
+    };
+}
+
+function invalidatedKeysOf(spy: { mock: { calls: unknown[][] } }): unknown[] {
+    return spy.mock.calls.map((call) => (call[0] as { queryKey?: unknown } | undefined)?.queryKey);
+}
+
+async function mountWithFlags(
+    items: OutlookOutOfSyncItem[] = [FLAG_A, FLAG_B],
+    meetings: OutlookMeeting[] = []
+): Promise<Mounted> {
+    axiosGet.mockResolvedValue(flagsRead(items, meetings));
+    const mounted = mountComposable();
+    await advance(500);
+    axiosPost.mockReset();
+    axiosPost.mockResolvedValue({ data: {} });
+    addNotification.mockReset();
+    return mounted;
+}
+
+describe('useOutlookMeetings out-of-sync state and panel request', () => {
+    it('exposes the flags of the read, flagOf and the first flag (earliest entry start)', async () => {
+        const mounted = await mountWithFlags();
+
+        expect(mounted.api.outOfSync.value.map((item) => item.time_entry_id)).toEqual([
+            'te-a',
+            'te-b',
+        ]);
+        expect(mounted.api.flagOf('te-b')).toEqual(FLAG_B);
+        expect(mounted.api.flagOf('te-x')).toBeNull();
+        expect(mounted.api.firstOutOfSync.value?.time_entry_id).toBe('te-b');
+        mounted.wrapper.unmount();
+    });
+
+    it('is empty and inert while it cannot act (injected meetings without actions)', async () => {
+        const mounted = await mountWithFlags();
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (list: OutlookMeeting[]) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__([]);
+        await nextTick();
+
+        expect(mounted.api.canAct.value).toBe(false);
+        expect(mounted.api.outOfSync.value).toEqual([]);
+        expect(mounted.api.flagOf('te-a')).toBeNull();
+        expect(mounted.api.firstOutOfSync.value).toBeNull();
+        mounted.api.openFlagPanel('te-a');
+        expect(mounted.api.flagPanel.value).toBeNull();
+        const result = await mounted.api.keepFlag('te-a');
+        expect(result.status).toBe('failed');
+        expect(axiosPost).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('is empty without the calendar prop (impersonation, D-14)', async () => {
+        setPage(null);
+        axiosGet.mockResolvedValue(flagsRead([FLAG_A]));
+        const mounted = mountComposable();
+        await advance(500);
+
+        expect(mounted.api.outOfSync.value).toEqual([]);
+        expect(mounted.api.firstOutOfSync.value).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('hides the flags and closes the popover once a sync answers not_connected (D-19)', async () => {
+        const mounted = await mountWithFlags();
+        mounted.api.openFlagPanel('te-a');
+        expect(mounted.api.flagPanel.value).not.toBeNull();
+        axiosPost.mockResolvedValue(syncResponse({ status: 'not_connected' }));
+
+        mounted.api.requestSync(true);
+        await advance(0);
+
+        expect(mounted.api.connectionState.value).toBe('not_connected');
+        expect(mounted.api.outOfSync.value).toEqual([]);
+        expect(mounted.api.flagPanel.value).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('openFlagPanel requests the popover with a new seq each call and ignores unknown ids', async () => {
+        const mounted = await mountWithFlags();
+
+        mounted.api.openFlagPanel('te-a');
+        expect(mounted.api.flagPanel.value).toEqual({
+            timeEntryId: 'te-a',
+            anchor: 'entry',
+            origin: 'entry',
+            seq: 1,
+        });
+
+        mounted.api.openFlagPanel('te-a');
+        expect(mounted.api.flagPanel.value?.seq).toBe(2);
+
+        mounted.api.openFlagPanel('unknown');
+        expect(mounted.api.flagPanel.value?.timeEntryId).toBe('te-a');
+        expect(mounted.api.flagPanel.value?.seq).toBe(2);
+
+        mounted.api.openFlagPanel('te-b', { anchor: 'counter', origin: 'counter' });
+        expect(mounted.api.flagPanel.value).toEqual({
+            timeEntryId: 'te-b',
+            anchor: 'counter',
+            origin: 'counter',
+            seq: 3,
+        });
+
+        mounted.api.closeFlagPanel();
+        expect(mounted.api.flagPanel.value).toBeNull();
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings keepFlag', () => {
+    it('posts keep, is pending until it settles, then invalidates and announces without a toast', async () => {
+        const mounted = await mountWithFlags();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        const request = deferred<{ data: unknown }>();
+        axiosPost.mockReturnValue(request.promise);
+        // Keep the refetch from settling so the change made after the answer is observed
+        axiosGet.mockReturnValue(new Promise(() => undefined));
+        mounted.api.openFlagPanel('te-a');
+
+        const done = mounted.api.keepFlag('te-a');
+
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+        expect(axiosPost.mock.calls[0]![0]).toBe(`${OSYNC_URL}/te-a/keep`);
+        expect(mounted.api.isFlagPending('te-a')).toBe(true);
+        expect(mounted.api.isFlagPending('te-b')).toBe(false);
+        // Pessimistic: the flag is still listed while the request runs
+        expect(mounted.api.flagOf('te-a')).not.toBeNull();
+        const again = await mounted.api.keepFlag('te-a');
+        expect(again).toEqual({ status: 'failed', message: '' });
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+
+        request.resolve({ data: {} });
+        const result = await done;
+        await advance(0);
+
+        expect(result).toEqual({ status: 'ok' });
+        expect(mounted.api.isFlagPending('te-a')).toBe(false);
+        expect(mounted.api.flagOf('te-a')).toBeNull();
+        expect(mounted.api.outOfSync.value.map((item) => item.time_entry_id)).toEqual(['te-b']);
+        expect(mounted.api.flagPanel.value).toBeNull();
+        const keys = invalidatedKeysOf(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        expect(mounted.api.announcement.value).toBe('Kept as is');
+        expect(addNotification).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('a 404 answer is stale: the toast, a refresh and the popover closes', async () => {
+        const mounted = await mountWithFlags();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosPost.mockRejectedValue(httpError(404));
+        mounted.api.openFlagPanel('te-a');
+
+        const result = await mounted.api.keepFlag('te-a');
+
+        expect(result).toEqual({ status: 'stale' });
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'This entry changed in the meantime',
+            'The calendar was refreshed.'
+        );
+        const keys = invalidatedKeysOf(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        expect(mounted.api.flagPanel.value).toBeNull();
+        expect(mounted.api.isFlagPending('te-a')).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('a 409 answer is stale as well', async () => {
+        const mounted = await mountWithFlags();
+        axiosPost.mockRejectedValue(httpError(409));
+
+        expect(await mounted.api.keepFlag('te-a')).toEqual({ status: 'stale' });
+        mounted.wrapper.unmount();
+    });
+
+    it('a 500 answer fails with the retry copy and the osync_keep_failed toast, keeping the flag', async () => {
+        const mounted = await mountWithFlags();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosPost.mockRejectedValue(httpError(500));
+        mounted.api.openFlagPanel('te-a');
+
+        const result = await mounted.api.keepFlag('te-a');
+        await advance(0);
+
+        expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not save your choice',
+            'Try again in a moment.'
+        );
+        expect(mounted.api.flagOf('te-a')).not.toBeNull();
+        // The popover stays open for the inline alert
+        expect(mounted.api.flagPanel.value?.timeEntryId).toBe('te-a');
+        expect(mounted.api.announcement.value).toBe('');
+        expect(invalidatedKeysOf(invalidate)).not.toContainEqual(['timeEntries']);
+        mounted.wrapper.unmount();
+    });
+
+    it('sends nothing without an out_of_sync url', async () => {
+        const mounted = await mountWithFlags();
+        delete (pageProps.microsoft as { calendar: OutlookCalendarProps }).calendar.urls
+            .out_of_sync;
+
+        const result = await mounted.api.keepFlag('te-a');
+
+        expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
+        expect(axiosPost).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+});
+
+function validationError(message: string): Error {
+    return Object.assign(new Error('HTTP 422'), {
+        response: { status: 422, headers: {}, data: { message } },
+    });
+}
+
+describe('useOutlookMeetings adjustFlag', () => {
+    it('posts adjust and on success invalidates, toasts the new range and announces', async () => {
+        const mounted = await mountWithFlags();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosGet.mockReturnValue(new Promise(() => undefined));
+
+        const result = await mounted.api.adjustFlag('te-a');
+        await advance(0);
+
+        expect(result).toEqual({ status: 'ok' });
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+        expect(axiosPost.mock.calls[0]![0]).toBe(`${OSYNC_URL}/te-a/adjust`);
+        const keys = invalidatedKeysOf(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'success',
+            'Time entry adjusted to Outlook',
+            'Wed, Nov 4 · 12:00 – 13:00'
+        );
+        expect(mounted.api.announcement.value).toBe('Time entry adjusted to Outlook');
+        expect(mounted.api.flagOf('te-a')).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it("names the new range in the organization's 12-hour format", async () => {
+        const mounted = await mountWithFlags();
+        mounted.queryClient.setQueryData(['organization', 'org-1'], {
+            data: { time_format: '12-hours' },
+        });
+
+        await mounted.api.adjustFlag('te-a');
+
+        const message = addNotification.mock.calls[0]?.[2] as string;
+        expect(message.startsWith('Wed, Nov 4 · 12:00')).toBe(true);
+        expect(message).toContain('PM');
+        mounted.wrapper.unmount();
+    });
+
+    it("a 422 answer fails with the server's message (overlap) and the osync_adjust_failed toast", async () => {
+        const mounted = await mountWithFlags();
+        axiosPost.mockRejectedValue(validationError('Overlaps another entry'));
+
+        const result = await mounted.api.adjustFlag('te-a');
+
+        expect(result).toEqual({ status: 'failed', message: 'Overlaps another entry' });
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not adjust the time entry',
+            'Overlaps another entry'
+        );
+        expect(mounted.api.flagOf('te-a')).not.toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('a 403 answer fails with the forbidden copy', async () => {
+        const mounted = await mountWithFlags();
+        axiosPost.mockRejectedValue(httpError(403));
+
+        const result = await mounted.api.adjustFlag('te-a');
+
+        expect(result).toEqual({ status: 'failed', message: "You can't edit this time entry." });
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not adjust the time entry',
+            "You can't edit this time entry."
+        );
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings deleteFlaggedEntry', () => {
+    it('deletes through the core API of the current organization, invalidates and announces', async () => {
+        const mounted = await mountWithFlags();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosGet.mockReturnValue(new Promise(() => undefined));
+        const request = deferred<undefined>();
+        deleteTimeEntry.mockReturnValue(request.promise);
+
+        const done = mounted.api.deleteFlaggedEntry('te-b');
+        expect(mounted.api.isFlagPending('te-b')).toBe(true);
+        request.resolve(undefined);
+        const result = await done;
+        await advance(0);
+
+        expect(result).toEqual({ status: 'ok' });
+        expect(deleteTimeEntry).toHaveBeenCalledTimes(1);
+        expect(deleteTimeEntry).toHaveBeenCalledWith(undefined, {
+            params: { organization: 'org-1', timeEntry: 'te-b' },
+        });
+        expect(axiosPost).not.toHaveBeenCalled();
+        const keys = invalidatedKeysOf(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith('success', 'Time entry deleted successfully');
+        expect(mounted.api.announcement.value).toBe('Time entry deleted');
+        expect(mounted.api.flagOf('te-b')).toBeNull();
+        expect(mounted.api.isFlagPending('te-b')).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('a 404 answer is stale', async () => {
+        const mounted = await mountWithFlags();
+        deleteTimeEntry.mockRejectedValue(httpError(404));
+
+        const result = await mounted.api.deleteFlaggedEntry('te-b');
+
+        expect(result).toEqual({ status: 'stale' });
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'This entry changed in the meantime',
+            'The calendar was refreshed.'
+        );
+        mounted.wrapper.unmount();
+    });
+
+    it('another failure toasts osync_delete_failed and keeps the flag', async () => {
+        const mounted = await mountWithFlags();
+        deleteTimeEntry.mockRejectedValue(httpError(500));
+
+        const result = await mounted.api.deleteFlaggedEntry('te-b');
+
+        expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not delete the time entry',
+            'Try again in a moment.'
+        );
+        expect(mounted.api.flagOf('te-b')).not.toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('never deletes an entry that is not flagged (stale, no request)', async () => {
+        const mounted = await mountWithFlags();
+
+        const result = await mounted.api.deleteFlaggedEntry('te-unflagged');
+
+        expect(result).toEqual({ status: 'stale' });
+        expect(deleteTimeEntry).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('sends nothing without a current organization', async () => {
+        const mounted = await mountWithFlags();
+        organization.id = undefined;
+
+        const result = await mounted.api.deleteFlaggedEntry('te-b');
+
+        expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
+        expect(deleteTimeEntry).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings moveEntry (D-03) and auto-adjusts', () => {
+    const moved: OutlookMeeting = {
+        ...meeting('m-moved', '2026-11-04T12:00:00Z', '2026-11-04T13:00:00Z'),
+        moved_from: {
+            time_entry_id: 'te-old',
+            entry_start: '2026-11-02T10:00:00Z',
+            entry_end: '2026-11-02T11:00:00Z',
+        },
+    };
+    const other = meeting('m-other', '2026-11-05T09:00:00Z', '2026-11-05T10:00:00Z');
+    const adjusted = {
+        time_entry_id: 'te-adj',
+        at: '2026-11-05T08:00:00Z',
+        from_start: '2026-11-03T10:00:00Z',
+        from_end: '2026-11-03T11:00:00Z',
+        to_start: '2026-11-04T10:00:00Z',
+        to_end: '2026-11-04T11:00:00Z',
+    };
+
+    function moveCalls() {
+        return axiosPost.mock.calls.filter((call) => String(call[0]).endsWith('/move-entry'));
+    }
+
+    it('posts the move, is pending meanwhile and on success the meeting leaves the lane', async () => {
+        const mounted = await mountWithFlags([], [moved, other]);
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosGet.mockReturnValue(new Promise(() => undefined));
+        const request = deferred<{ data: unknown }>();
+        axiosPost.mockReturnValue(request.promise);
+
+        const done = mounted.api.moveEntry('m-moved');
+
+        expect(moveCalls()).toHaveLength(1);
+        expect(moveCalls()[0]![0]).toBe(`${ORG_MEETINGS_URL}/m-moved/move-entry`);
+        expect(mounted.api.isMovePending('m-moved')).toBe(true);
+        expect(mounted.api.isMovePending('m-other')).toBe(false);
+        expect(await mounted.api.moveEntry('m-moved')).toEqual({ status: 'failed', message: '' });
+        expect(moveCalls()).toHaveLength(1);
+        // Pessimistic: the meeting stays until the answer
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-moved', 'm-other']);
+
+        request.resolve({ data: {} });
+        const result = await done;
+        await advance(0);
+
+        expect(result).toEqual({ status: 'ok' });
+        expect(mounted.api.isMovePending('m-moved')).toBe(false);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-other']);
+        expect(mounted.api.linkedTimeEntryIds.value).toContain('te-old');
+        const keys = invalidatedKeysOf(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'success',
+            'Time entry moved here',
+            'From Mon, Nov 2 · 10:00 – 11:00'
+        );
+        expect(mounted.api.announcement.value).toBe('Time entry moved');
+        mounted.wrapper.unmount();
+    });
+
+    it('a failed move toasts move_entry_failed and keeps the meeting', async () => {
+        const mounted = await mountWithFlags([], [moved]);
+        axiosPost.mockRejectedValue(httpError(500));
+
+        const result = await mounted.api.moveEntry('m-moved');
+
+        expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not move the time entry',
+            'Try again in a moment.'
+        );
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-moved']);
+        expect(mounted.api.isMovePending('m-moved')).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('a stale move toasts osync_stale and refreshes', async () => {
+        const mounted = await mountWithFlags([], [moved]);
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosPost.mockRejectedValue(httpError(409));
+
+        const result = await mounted.api.moveEntry('m-moved');
+
+        expect(result).toEqual({ status: 'stale' });
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'This entry changed in the meantime',
+            'The calendar was refreshed.'
+        );
+        expect(invalidatedKeysOf(invalidate)).toContainEqual(['m365', 'meetings']);
+        mounted.wrapper.unmount();
+    });
+
+    it('autoAdjustedOf reads the silent adjusts of the read', async () => {
+        axiosGet.mockResolvedValue({
+            data: {
+                data: [],
+                sync: { last_synced_at: null, retry_after: null },
+                auto_adjusted: [adjusted],
+            },
+        });
+        const mounted = mountComposable();
+        await advance(500);
+
+        expect(mounted.api.autoAdjustedOf('te-adj')).toEqual(adjusted);
+        expect(mounted.api.autoAdjustedOf('te-x')).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('nothing is sent and every action fails while it cannot act', async () => {
+        const mounted = await mountWithFlags([FLAG_A, FLAG_B], [moved]);
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (list: OutlookMeeting[]) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__([moved]);
+        await nextTick();
+        expect(mounted.api.canAct.value).toBe(false);
+
+        expect((await mounted.api.keepFlag('te-a')).status).toBe('failed');
+        expect((await mounted.api.adjustFlag('te-a')).status).toBe('failed');
+        expect((await mounted.api.deleteFlaggedEntry('te-b')).status).toBe('failed');
+        expect((await mounted.api.moveEntry('m-moved')).status).toBe('failed');
+
+        expect(axiosPost).not.toHaveBeenCalled();
+        expect(deleteTimeEntry).not.toHaveBeenCalled();
+        expect(addNotification).not.toHaveBeenCalled();
+        expect(mounted.api.autoAdjustedOf('te-adj')).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    describe('in test-hook mode', () => {
+        type Phase6HookOptions = {
+            actions?: boolean;
+            outOfSync?: OutlookOutOfSyncItem[];
+            autoAdjusted?: (typeof adjusted)[];
+            outOfSyncUrl?: string;
+            moveEntryUrl?: string;
+        };
+
+        function hook(meetings: OutlookMeeting[], options: Phase6HookOptions): void {
+            (
+                window as unknown as {
+                    __TEST_SET_OUTLOOK_MEETINGS__: (
+                        meetings: OutlookMeeting[],
+                        labels: undefined,
+                        options: Phase6HookOptions
+                    ) => void;
+                }
+            ).__TEST_SET_OUTLOOK_MEETINGS__(meetings, undefined, options);
+        }
+
+        async function mountHook(options: Phase6HookOptions): Promise<Mounted> {
+            const mounted = mountComposable();
+            await advance(500);
+            hook([moved, other], options);
+            await nextTick();
+            axiosPost.mockReset();
+            axiosPost.mockResolvedValue({ data: {} });
+            return mounted;
+        }
+
+        it('injects the flags and the auto-adjusts, and acts through the hook urls', async () => {
+            const mounted = await mountHook({
+                actions: true,
+                outOfSync: [FLAG_A, FLAG_B],
+                autoAdjusted: [adjusted],
+                outOfSyncUrl: '/hook/osync',
+                moveEntryUrl: '/hook/org-meetings',
+            });
+            const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+
+            expect(mounted.api.outOfSync.value).toEqual([FLAG_A, FLAG_B]);
+            expect(mounted.api.autoAdjustedOf('te-adj')).toEqual(adjusted);
+
+            expect(await mounted.api.keepFlag('te-a')).toEqual({ status: 'ok' });
+            expect(axiosPost.mock.calls[0]![0]).toBe('/hook/osync/te-a/keep');
+            expect(mounted.api.outOfSync.value).toEqual([FLAG_B]);
+
+            expect(await mounted.api.deleteFlaggedEntry('te-b')).toEqual({ status: 'ok' });
+            expect(mounted.api.outOfSync.value).toEqual([]);
+
+            expect(await mounted.api.moveEntry('m-moved')).toEqual({ status: 'ok' });
+            expect(axiosPost.mock.calls[1]![0]).toBe('/hook/org-meetings/m-moved/move-entry');
+            expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-other']);
+            expect(mounted.api.linkedTimeEntryIds.value).toEqual(['te-old']);
+
+            // Injected meetings are not server rows: the real read is left alone
+            expect(invalidatedKeysOf(invalidate)).not.toContainEqual(['m365', 'meetings']);
+            expect(invalidatedKeysOf(invalidate)).toContainEqual(['timeEntries']);
+            mounted.wrapper.unmount();
+        });
+
+        it('adjust removes the injected flag as well', async () => {
+            const mounted = await mountHook({
+                actions: true,
+                outOfSync: [FLAG_A],
+                outOfSyncUrl: '/hook/osync',
+            });
+
+            expect(await mounted.api.adjustFlag('te-a')).toEqual({ status: 'ok' });
+            expect(axiosPost.mock.calls[0]![0]).toBe('/hook/osync/te-a/adjust');
+            expect(mounted.api.outOfSync.value).toEqual([]);
+            mounted.wrapper.unmount();
+        });
+
+        it('without the urls keep, adjust and move fail without a request', async () => {
+            const mounted = await mountHook({ actions: true, outOfSync: [FLAG_A] });
+
+            expect((await mounted.api.keepFlag('te-a')).status).toBe('failed');
+            expect((await mounted.api.adjustFlag('te-a')).status).toBe('failed');
+            expect((await mounted.api.moveEntry('m-moved')).status).toBe('failed');
+
+            expect(axiosPost).not.toHaveBeenCalled();
+            expect(mounted.api.outOfSync.value).toEqual([FLAG_A]);
+            expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-moved', 'm-other']);
+            mounted.wrapper.unmount();
+        });
+
+        it('works without the calendar prop (integration off in CI)', async () => {
+            setPage(null);
+            const mounted = mountComposable();
+            await advance(500);
+            (
+                window as unknown as {
+                    __TEST_SET_OUTLOOK_MEETINGS__: (
+                        meetings: OutlookMeeting[],
+                        labels: Record<string, string>,
+                        options: Phase6HookOptions
+                    ) => void;
+                }
+            ).__TEST_SET_OUTLOOK_MEETINGS__(
+                [moved],
+                { retry_body: 'Retry.', osync_kept: 'Kept.' },
+                { actions: true, outOfSync: [FLAG_A], outOfSyncUrl: '/hook/osync' }
+            );
+            await nextTick();
+            axiosPost.mockResolvedValue({ data: {} });
+
+            expect(mounted.api.outOfSync.value).toEqual([FLAG_A]);
+            expect(await mounted.api.keepFlag('te-a')).toEqual({ status: 'ok' });
+            await advance(0);
+            expect(mounted.api.announcement.value).toBe('Kept.');
+            mounted.wrapper.unmount();
+        });
+    });
+});
+
+describe('useOutlookMeetings jumpToFirst', () => {
+    // FLAG_B (te-b, Monday 2026-11-02) is the first flag.
+    const blocks: HTMLElement[] = [];
+
+    function insertBlock(timeEntryId: string) {
+        const block = document.createElement('div');
+        block.setAttribute('data-event-id', timeEntryId);
+        block.tabIndex = 0;
+        const scrollIntoView = vi.fn();
+        block.scrollIntoView = scrollIntoView;
+        const focus = vi.spyOn(block, 'focus');
+        document.body.appendChild(block);
+        blocks.push(block);
+        return { block, scrollIntoView, focus };
+    }
+
+    afterEach(() => {
+        blocks.splice(0).forEach((block) => block.remove());
+        vi.unstubAllGlobals();
+    });
+
+    it('opens in place when the block is rendered: no navigation, centred, focused', async () => {
+        const mounted = await mountWithFlags();
+        const navigator = vi.fn();
+        mounted.api.setCalendarNavigator(navigator);
+        const { scrollIntoView, focus } = insertBlock('te-b');
+
+        await mounted.api.jumpToFirst();
+
+        expect(navigator).not.toHaveBeenCalled();
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' });
+        expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+        expect(mounted.api.flagPanel.value).toEqual({
+            timeEntryId: 'te-b',
+            anchor: 'entry',
+            origin: 'counter',
+            seq: 1,
+        });
+        expect(mounted.api.jumpBusy.value).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('does not scroll smoothly with prefers-reduced-motion', async () => {
+        const mounted = await mountWithFlags();
+        vi.stubGlobal(
+            'matchMedia',
+            vi.fn((query: string) => ({ matches: query.includes('reduce'), media: query }))
+        );
+        const { scrollIntoView } = insertBlock('te-b');
+
+        await mounted.api.jumpToFirst();
+
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
+        mounted.wrapper.unmount();
+    });
+
+    it("navigates to the entry's local day and opens on the block once it appears", async () => {
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('America/New_York');
+        try {
+            // 03:00 UTC on Dec 1 is still Nov 30 in New York
+            const late = flagItem('te-late', 'removed', '2026-12-01T03:00:00Z');
+            const mounted = await mountWithFlags([late]);
+            const navigator = vi.fn();
+            mounted.api.setCalendarNavigator(navigator);
+
+            const done = mounted.api.jumpToFirst();
+            expect(mounted.api.jumpBusy.value).toBe(true);
+            await advance(0);
+            expect(navigator).toHaveBeenCalledTimes(1);
+            expect(navigator).toHaveBeenCalledWith('2026-11-30');
+            expect(mounted.api.flagPanel.value).toBeNull();
+
+            const { focus } = insertBlock('te-late');
+            await advance(100);
+            await done;
+
+            expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+            expect(mounted.api.flagPanel.value).toEqual({
+                timeEntryId: 'te-late',
+                anchor: 'entry',
+                origin: 'counter',
+                seq: 1,
+            });
+            expect(mounted.api.jumpBusy.value).toBe(false);
+            mounted.wrapper.unmount();
+        } finally {
+            vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+        }
+    });
+
+    it('falls back to the counter anchor 3 s after the data settled without the block', async () => {
+        const mounted = await mountWithFlags();
+        const navigator = vi.fn();
+        mounted.api.setCalendarNavigator(navigator);
+
+        const done = mounted.api.jumpToFirst();
+        await advance(0);
+        expect(navigator).toHaveBeenCalledWith('2026-11-02');
+
+        // Further clicks during the jump are ignored
+        await mounted.api.jumpToFirst();
+        expect(navigator).toHaveBeenCalledTimes(1);
+
+        await advance(2_800);
+        expect(mounted.api.flagPanel.value).toBeNull();
+        expect(mounted.api.jumpBusy.value).toBe(true);
+
+        await advance(300);
+        await done;
+
+        expect(mounted.api.flagPanel.value).toEqual({
+            timeEntryId: 'te-b',
+            anchor: 'counter',
+            origin: 'counter',
+            seq: 1,
+        });
+        expect(mounted.api.jumpBusy.value).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('without a navigator a jump to an unrendered block falls back after 3 s', async () => {
+        const mounted = await mountWithFlags();
+        mounted.api.setCalendarNavigator(vi.fn());
+        mounted.api.setCalendarNavigator(null);
+
+        const done = mounted.api.jumpToFirst();
+        await advance(3_100);
+        await done;
+
+        expect(mounted.api.flagPanel.value?.anchor).toBe('counter');
+        mounted.wrapper.unmount();
+    });
+
+    it('does nothing without flags or while it cannot act', async () => {
+        const empty = await mountWithFlags([]);
+        const navigator = vi.fn();
+        empty.api.setCalendarNavigator(navigator);
+
+        await empty.api.jumpToFirst();
+
+        expect(navigator).not.toHaveBeenCalled();
+        expect(empty.api.flagPanel.value).toBeNull();
+        expect(empty.api.jumpBusy.value).toBe(false);
+        empty.wrapper.unmount();
+
+        setPage(null);
+        const inert = mountComposable();
+        await advance(500);
+        inert.api.setCalendarNavigator(navigator);
+        await inert.api.jumpToFirst();
+        expect(navigator).not.toHaveBeenCalled();
+        inert.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings auto-adjust announcement', () => {
+    async function syncWith(autoAdjusted: number): Promise<{
+        mounted: Mounted;
+        keys: () => unknown[];
+    }> {
+        axiosPost.mockResolvedValue(syncResponse({ auto_adjusted: autoAdjusted }));
+        const mounted = mountComposable();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        await advance(500);
+        return { mounted, keys: () => invalidatedKeysOf(invalidate) };
+    }
+
+    it('refreshes the time entries and announces the plural text once', async () => {
+        const { mounted, keys } = await syncWith(2);
+
+        expect(keys()).toContainEqual(['timeEntries']);
+        expect(mounted.api.announcement.value).toBe('2 time entries updated from Outlook');
+        expect(addNotification).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('uses the singular text for one entry', async () => {
+        const { mounted } = await syncWith(1);
+
+        expect(mounted.api.announcement.value).toBe('1 time entry updated from Outlook');
+        mounted.wrapper.unmount();
+    });
+
+    it('says nothing and refreshes no time entries when the sync adjusted none', async () => {
+        const { mounted, keys } = await syncWith(0);
+
+        expect(keys()).not.toContainEqual(['timeEntries']);
+        expect(mounted.api.announcement.value).toBe('');
+        mounted.wrapper.unmount();
     });
 });
