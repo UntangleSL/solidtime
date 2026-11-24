@@ -4,15 +4,19 @@ declare(strict_types=1);
 
 namespace App\Microsoft365\OutOfSync;
 
+use App\Microsoft365\Models\OutlookMeeting;
 use App\Models\Organization;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\DB;
 
 /**
  * What the calendar read serves about out-of-sync entries (Phase 6), each part in one query whatever
  * the number of rows, so the read cost stays constant (T-06-22):
  *
  * - items(): the flagged entries of the whole check window, whatever week is open (D-09, D-10, D-11).
+ * - movedFrom(): for meetings shown again after their link was released (a started meeting Outlook
+ *   moved, D-03), the entry the meeting was logged on.
  *
  * Every row is the session user's own: the link and its entry belong to the user, and the entry lives
  * in the user's current organization (T-06-19). Only times, the user's own entry ids and the entry's
@@ -82,6 +86,62 @@ final class OutOfSyncFlags
         }
 
         return $items;
+    }
+
+    /**
+     * For each given meeting, the entry of the latest released link of its occurrence whose entry is
+     * still the user's, lives in the organization and has an end (D-03), keyed by meeting id. Meetings
+     * without one are left out. One query for all meetings.
+     *
+     * @param  iterable<OutlookMeeting>  $meetings
+     * @return array<string, array{time_entry_id: string, entry_start: string, entry_end: string}>
+     */
+    public function movedFrom(User $user, Organization $organization, iterable $meetings): array
+    {
+        $meetingIds = [];
+        foreach ($meetings as $meeting) {
+            $meetingIds[$meeting->graph_id] = $meeting->id;
+        }
+        if ($meetingIds === []) {
+            return [];
+        }
+
+        $rows = DB::table('outlook_meeting_links')
+            ->join('time_entries', 'time_entries.id', '=', 'outlook_meeting_links.time_entry_id')
+            // The latest released link per occurrence, among those that qualify
+            ->selectRaw('DISTINCT ON (outlook_meeting_links.graph_id) outlook_meeting_links.graph_id')
+            ->addSelect([
+                'outlook_meeting_links.time_entry_id',
+                'time_entries.start as entry_start',
+                'time_entries.end as entry_end',
+            ])
+            ->where('outlook_meeting_links.user_id', '=', $user->getKey())
+            ->whereNotNull('outlook_meeting_links.released_at')
+            ->whereIn('outlook_meeting_links.graph_id', array_map('strval', array_keys($meetingIds)))
+            ->where('time_entries.user_id', '=', $user->getKey())
+            ->where('time_entries.organization_id', '=', $organization->getKey())
+            ->whereNotNull('time_entries.end')
+            ->orderBy('outlook_meeting_links.graph_id')
+            ->orderByDesc('outlook_meeting_links.released_at')
+            ->orderByDesc('outlook_meeting_links.id')
+            ->get();
+
+        $movedFrom = [];
+        foreach ($rows as $row) {
+            $meetingId = $meetingIds[(string) $row->graph_id] ?? null;
+            $entryStart = self::utc($row->entry_start);
+            $entryEnd = self::utc($row->entry_end);
+            if ($meetingId === null || $entryStart === null || $entryEnd === null) {
+                continue;
+            }
+            $movedFrom[$meetingId] = [
+                'time_entry_id' => (string) $row->time_entry_id,
+                'entry_start' => $entryStart,
+                'entry_end' => $entryEnd,
+            ];
+        }
+
+        return $movedFrom;
     }
 
     /**

@@ -90,14 +90,16 @@ class OutlookMeetingController extends Controller
             }))
             // Converted meetings leave the suggestions while their entry exists and still belongs to the
             // user (Phase 4 D-04). An entry deleted anywhere drops its link (cascade); an entry moved to
-            // another user no longer hides the meeting.
+            // another user no longer hides the meeting. Only an active link hides it (Phase 6 D-03): a
+            // released link (a started meeting Outlook moved) lets the meeting show at its new slot.
             ->whereNotExists(function (QueryBuilder $query): void {
                 $query->selectRaw('1')
                     ->from('outlook_meeting_links')
                     ->join('time_entries', 'time_entries.id', '=', 'outlook_meeting_links.time_entry_id')
                     ->whereColumn('outlook_meeting_links.user_id', 'outlook_meetings.user_id')
                     ->whereColumn('outlook_meeting_links.graph_id', 'outlook_meetings.graph_id')
-                    ->whereColumn('time_entries.user_id', 'outlook_meeting_links.user_id');
+                    ->whereColumn('time_entries.user_id', 'outlook_meeting_links.user_id')
+                    ->whereNull('outlook_meeting_links.released_at');
             })
             ->orderBy('starts_at')
             ->orderBy('ends_at')
@@ -138,12 +140,23 @@ class OutlookMeetingController extends Controller
                 && ! ($meeting->series_master_id !== null && isset($ignoredSeries[$meeting->series_master_id]))),
         );
 
+        // D-03: a started meeting that Outlook moved shows again at its new slot; it names the user's own
+        // entry it was logged on, so the calendar can offer "Move my entry here". One query per read,
+        // only for meetings that can be acted on (not dismissed, not of an ignored series).
+        $movedFrom = $organization === null ? [] : $flags->movedFrom(
+            $user,
+            $organization,
+            $meetings->filter(fn (OutlookMeeting $meeting): bool => $meeting->dismissed_at === null
+                && ! ($meeting->series_master_id !== null && isset($ignoredSeries[$meeting->series_master_id]))),
+        );
+
         $resources = $meetings->map(fn (OutlookMeeting $meeting): OutlookMeetingResource => new OutlookMeetingResource(
             $meeting,
             new MeetingHints(
                 assignment: $assignments[$meeting->id] ?? null,
                 seriesIgnored: $meeting->series_master_id !== null && isset($ignoredSeries[$meeting->series_master_id]),
                 suggestions: $suggestions[$meeting->id] ?? [],
+                movedFrom: $movedFrom[$meeting->id] ?? null,
             ),
         ));
 

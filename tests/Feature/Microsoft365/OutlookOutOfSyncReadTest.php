@@ -205,6 +205,39 @@ class OutlookOutOfSyncReadTest extends TestCaseWithDatabase
         return array_map(fn (array $item): string => (string) $item['time_entry_id'], $this->items($response));
     }
 
+    /**
+     * Moves the cached meeting of the occurrence to a new slot, as the sync does when Outlook moves it.
+     */
+    private function movedMeeting(User $user, string $graphId, string $start, string $end): OutlookMeeting
+    {
+        $meeting = OutlookMeeting::query()
+            ->where('user_id', '=', $user->getKey())
+            ->where('graph_id', '=', $graphId)
+            ->firstOrFail();
+        $meeting->starts_at = Carbon::parse($start, 'UTC');
+        $meeting->ends_at = Carbon::parse($end, 'UTC');
+        $meeting->save();
+
+        return $meeting;
+    }
+
+    /**
+     * The serialized meeting with this id in a read.
+     *
+     * @return array<string, mixed>
+     */
+    private function item(TestResponse $response, OutlookMeeting $meeting): array
+    {
+        $data = $response->json('data');
+        $this->assertIsArray($data);
+        foreach ($data as $item) {
+            if (is_array($item) && ($item['id'] ?? null) === $meeting->id) {
+                return $item;
+            }
+        }
+        $this->fail('Meeting '.$meeting->graph_id.' is not in the read');
+    }
+
     private function startImpersonation(): void
     {
         // The session key of stechstudio/filament-impersonate: the id of the admin who impersonates
@@ -481,5 +514,140 @@ class OutlookOutOfSyncReadTest extends TestCaseWithDatabase
             ['time_entry_id', 'kind', 'meeting_start', 'meeting_end', 'new_start', 'new_end', 'all_day', 'entry_start', 'entry_end', 'description'],
             array_keys($this->items($response)[0]),
         );
+    }
+
+    public function test_released_meeting_shows_again_with_moved_from(): void
+    {
+        // Arrange: logged on Monday 10:00, started, then moved by Outlook to Thursday 15:00 (released)
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->member, 'started', '2026-11-23 10:00:00', '2026-11-23 11:00:00', ['released_at' => '2026-11-24 09:00:00']);
+        $meeting = $this->movedMeeting($data->user, 'started', '2026-11-26 15:00:00', '2026-11-26 16:00:00');
+
+        // Act
+        $response = $this->read();
+
+        // Assert
+        $response->assertOk();
+        $item = $this->item($response, $meeting);
+        $this->assertSame('2026-11-26T15:00:00Z', $item['start']);
+        $this->assertSame([
+            'time_entry_id' => $entry->getKey(),
+            'entry_start' => '2026-11-23T10:00:00Z',
+            'entry_end' => '2026-11-23T11:00:00Z',
+        ], $item['moved_from']);
+        // The logged entry keeps its Outlook icon
+        $this->assertSame([$entry->getKey()], $response->json('linked_time_entry_ids'));
+        $this->assertSame([], $this->items($response));
+    }
+
+    public function test_active_link_still_hides_the_meeting(): void
+    {
+        // Arrange: a flagged and an auto-adjusted link, both active, their meetings in the week
+        $data = $this->employee();
+        $flagged = $this->linkedEntry($data->member, 'flagged', '2026-11-26 09:00:00', '2026-11-26 10:00:00', $this->movedFlag('2026-11-27 09:00:00', '2026-11-27 10:00:00'));
+        $this->movedMeeting($data->user, 'flagged', '2026-11-27 09:00:00', '2026-11-27 10:00:00');
+        $adjusted = $this->linkedEntry($data->member, 'adjusted', '2026-11-26 12:00:00', '2026-11-26 13:00:00', [
+            'auto_adjusted_at' => '2026-11-23 09:00:00',
+            'auto_adjusted_from_starts_at' => '2026-11-25 12:00:00',
+            'auto_adjusted_from_ends_at' => '2026-11-25 13:00:00',
+        ]);
+
+        // Act
+        $response = $this->read();
+
+        // Assert
+        $response->assertOk();
+        $this->assertSame([], $response->json('data'));
+        $this->assertSame([$flagged->getKey(), $adjusted->getKey()], $response->json('linked_time_entry_ids'));
+    }
+
+    public function test_second_entry_hides_it_again(): void
+    {
+        // Arrange: the released meeting was logged again at its new slot (a second, active link)
+        $data = $this->employee();
+        $first = $this->linkedEntry($data->member, 'twice', '2026-11-23 10:00:00', '2026-11-23 11:00:00', ['released_at' => '2026-11-24 09:00:00']);
+        $this->movedMeeting($data->user, 'twice', '2026-11-26 15:00:00', '2026-11-26 16:00:00');
+        $second = $this->linkedEntry($data->member, 'twice', '2026-11-26 15:00:00', '2026-11-26 16:00:00', cache: false);
+
+        // Act
+        $response = $this->read();
+
+        // Assert
+        $response->assertOk();
+        $this->assertSame([], $response->json('data'));
+        $this->assertSame([$first->getKey(), $second->getKey()], $response->json('linked_time_entry_ids'));
+    }
+
+    public function test_moved_from_only_for_own_live_entries_in_the_current_organization(): void
+    {
+        // Arrange: three released meetings whose entry was deleted, reassigned or lives elsewhere
+        $data = $this->employee();
+        $released = ['released_at' => '2026-11-24 09:00:00'];
+        $deleted = $this->linkedEntry($data->member, 'deleted', '2026-11-23 09:00:00', '2026-11-23 10:00:00', $released);
+        $deletedMeeting = $this->movedMeeting($data->user, 'deleted', '2026-11-26 09:00:00', '2026-11-26 10:00:00');
+        $deleted->delete();
+        $neighbour = User::factory()->create();
+        $neighbourMember = Member::factory()->forUser($neighbour)->forOrganization($data->organization)->role(Role::Employee)->create();
+        $reassigned = $this->linkedEntry($data->member, 'reassigned', '2026-11-23 11:00:00', '2026-11-23 12:00:00', $released);
+        $reassignedMeeting = $this->movedMeeting($data->user, 'reassigned', '2026-11-26 11:00:00', '2026-11-26 12:00:00');
+        $reassigned->user_id = $neighbour->getKey();
+        $reassigned->member_id = $neighbourMember->getKey();
+        $reassigned->save();
+        $other = $this->createUserWithRole(Role::Employee);
+        $otherMember = Member::factory()->forUser($data->user)->forOrganization($other->organization)->role(Role::Employee)->create();
+        $this->linkedEntry($otherMember, 'elsewhere', '2026-11-23 13:00:00', '2026-11-23 14:00:00', $released);
+        $elsewhereMeeting = $this->movedMeeting($data->user, 'elsewhere', '2026-11-26 13:00:00', '2026-11-26 14:00:00');
+
+        // Act
+        $response = $this->read();
+
+        // Assert: each meeting is a plain suggestion again
+        $response->assertOk();
+        $this->assertCount(3, $response->json('data'));
+        foreach ([$deletedMeeting, $reassignedMeeting, $elsewhereMeeting] as $meeting) {
+            $item = $this->item($response, $meeting);
+            $this->assertNull($item['moved_from']);
+            $this->assertIsArray($item['suggestions']);
+        }
+        $this->assertSame(0, OutlookMeetingLink::query()->where('graph_id', '=', 'deleted')->count());
+    }
+
+    public function test_latest_released_link_wins(): void
+    {
+        // Arrange: the occurrence was logged twice and both links were released
+        $data = $this->employee();
+        $this->linkedEntry($data->member, 'moving', '2026-11-23 10:00:00', '2026-11-23 11:00:00', ['released_at' => '2026-11-23 12:00:00']);
+        $latest = $this->linkedEntry($data->member, 'moving', '2026-11-24 07:00:00', '2026-11-24 08:00:00', ['released_at' => '2026-11-24 09:00:00'], cache: false);
+        $meeting = $this->movedMeeting($data->user, 'moving', '2026-11-26 15:00:00', '2026-11-26 16:00:00');
+
+        // Act
+        $response = $this->read();
+
+        // Assert
+        $response->assertOk();
+        $this->assertSame([
+            'time_entry_id' => $latest->getKey(),
+            'entry_start' => '2026-11-24T07:00:00Z',
+            'entry_end' => '2026-11-24T08:00:00Z',
+        ], $this->item($response, $meeting)['moved_from']);
+    }
+
+    public function test_dismissed_meeting_has_no_moved_from(): void
+    {
+        // Arrange
+        $data = $this->employee();
+        $this->linkedEntry($data->member, 'dismissed', '2026-11-23 10:00:00', '2026-11-23 11:00:00', ['released_at' => '2026-11-24 09:00:00']);
+        $meeting = $this->movedMeeting($data->user, 'dismissed', '2026-11-26 15:00:00', '2026-11-26 16:00:00');
+        $meeting->dismissed_at = Carbon::now();
+        $meeting->save();
+
+        // Act
+        $response = $this->read(extra: ['include_dismissed' => 1]);
+
+        // Assert
+        $response->assertOk();
+        $item = $this->item($response, $meeting);
+        $this->assertTrue($item['dismissed']);
+        $this->assertNull($item['moved_from']);
     }
 }
