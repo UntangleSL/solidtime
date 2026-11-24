@@ -17,12 +17,18 @@ import type {
 import { OUTLOOK_MEETINGS_KEY, useOutlookMeetings, weekBucket } from './useOutlookMeetings';
 import { ghostLaneWidth } from './ghostLayout';
 
-const { pageProps, addNotification } = vi.hoisted(() => ({
+const { pageProps, addNotification, deleteTimeEntry, organization } = vi.hoisted(() => ({
     pageProps: {} as Record<string, unknown>,
     addNotification: vi.fn(),
+    deleteTimeEntry: vi.fn(),
+    organization: { id: 'org-1' as string | undefined },
 }));
 
 vi.mock('@/utils/notification', () => ({ useNotificationsStore: () => ({ addNotification }) }));
+
+// Core delete (Phase 6): the generated client and the current organization.
+vi.mock('@/packages/api/src', () => ({ api: { deleteTimeEntry } }));
+vi.mock('@/utils/useUser', () => ({ getCurrentOrganizationId: () => organization.id }));
 
 vi.mock('@inertiajs/vue3', () => ({
     usePage: () => ({ props: pageProps }),
@@ -210,6 +216,9 @@ beforeEach(() => {
     axiosPost.mockReset();
     axiosDelete.mockReset();
     addNotification.mockReset();
+    deleteTimeEntry.mockReset();
+    deleteTimeEntry.mockResolvedValue(undefined);
+    organization.id = 'org-1';
     localStorage.clear();
     axiosGet.mockResolvedValue(readResponse());
     axiosPost.mockResolvedValue(syncResponse());
@@ -2471,5 +2480,424 @@ describe('useOutlookMeetings keepFlag', () => {
         expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
         expect(axiosPost).not.toHaveBeenCalled();
         mounted.wrapper.unmount();
+    });
+});
+
+function validationError(message: string): Error {
+    return Object.assign(new Error('HTTP 422'), {
+        response: { status: 422, headers: {}, data: { message } },
+    });
+}
+
+describe('useOutlookMeetings adjustFlag', () => {
+    it('posts adjust and on success invalidates, toasts the new range and announces', async () => {
+        const mounted = await mountWithFlags();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosGet.mockReturnValue(new Promise(() => undefined));
+
+        const result = await mounted.api.adjustFlag('te-a');
+        await advance(0);
+
+        expect(result).toEqual({ status: 'ok' });
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+        expect(axiosPost.mock.calls[0]![0]).toBe(`${OSYNC_URL}/te-a/adjust`);
+        const keys = invalidatedKeysOf(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'success',
+            'Time entry adjusted to Outlook',
+            'Wed, Nov 4 · 12:00 – 13:00'
+        );
+        expect(mounted.api.announcement.value).toBe('Time entry adjusted to Outlook');
+        expect(mounted.api.flagOf('te-a')).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it("names the new range in the organization's 12-hour format", async () => {
+        const mounted = await mountWithFlags();
+        mounted.queryClient.setQueryData(['organization', 'org-1'], {
+            data: { time_format: '12-hours' },
+        });
+
+        await mounted.api.adjustFlag('te-a');
+
+        const message = addNotification.mock.calls[0]?.[2] as string;
+        expect(message.startsWith('Wed, Nov 4 · 12:00')).toBe(true);
+        expect(message).toContain('PM');
+        mounted.wrapper.unmount();
+    });
+
+    it("a 422 answer fails with the server's message (overlap) and the osync_adjust_failed toast", async () => {
+        const mounted = await mountWithFlags();
+        axiosPost.mockRejectedValue(validationError('Overlaps another entry'));
+
+        const result = await mounted.api.adjustFlag('te-a');
+
+        expect(result).toEqual({ status: 'failed', message: 'Overlaps another entry' });
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not adjust the time entry',
+            'Overlaps another entry'
+        );
+        expect(mounted.api.flagOf('te-a')).not.toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('a 403 answer fails with the forbidden copy', async () => {
+        const mounted = await mountWithFlags();
+        axiosPost.mockRejectedValue(httpError(403));
+
+        const result = await mounted.api.adjustFlag('te-a');
+
+        expect(result).toEqual({ status: 'failed', message: "You can't edit this time entry." });
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not adjust the time entry',
+            "You can't edit this time entry."
+        );
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings deleteFlaggedEntry', () => {
+    it('deletes through the core API of the current organization, invalidates and announces', async () => {
+        const mounted = await mountWithFlags();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosGet.mockReturnValue(new Promise(() => undefined));
+        const request = deferred<undefined>();
+        deleteTimeEntry.mockReturnValue(request.promise);
+
+        const done = mounted.api.deleteFlaggedEntry('te-b');
+        expect(mounted.api.isFlagPending('te-b')).toBe(true);
+        request.resolve(undefined);
+        const result = await done;
+        await advance(0);
+
+        expect(result).toEqual({ status: 'ok' });
+        expect(deleteTimeEntry).toHaveBeenCalledTimes(1);
+        expect(deleteTimeEntry).toHaveBeenCalledWith(undefined, {
+            params: { organization: 'org-1', timeEntry: 'te-b' },
+        });
+        expect(axiosPost).not.toHaveBeenCalled();
+        const keys = invalidatedKeysOf(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith('success', 'Time entry deleted successfully');
+        expect(mounted.api.announcement.value).toBe('Time entry deleted');
+        expect(mounted.api.flagOf('te-b')).toBeNull();
+        expect(mounted.api.isFlagPending('te-b')).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('a 404 answer is stale', async () => {
+        const mounted = await mountWithFlags();
+        deleteTimeEntry.mockRejectedValue(httpError(404));
+
+        const result = await mounted.api.deleteFlaggedEntry('te-b');
+
+        expect(result).toEqual({ status: 'stale' });
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'This entry changed in the meantime',
+            'The calendar was refreshed.'
+        );
+        mounted.wrapper.unmount();
+    });
+
+    it('another failure toasts osync_delete_failed and keeps the flag', async () => {
+        const mounted = await mountWithFlags();
+        deleteTimeEntry.mockRejectedValue(httpError(500));
+
+        const result = await mounted.api.deleteFlaggedEntry('te-b');
+
+        expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not delete the time entry',
+            'Try again in a moment.'
+        );
+        expect(mounted.api.flagOf('te-b')).not.toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('never deletes an entry that is not flagged (stale, no request)', async () => {
+        const mounted = await mountWithFlags();
+
+        const result = await mounted.api.deleteFlaggedEntry('te-unflagged');
+
+        expect(result).toEqual({ status: 'stale' });
+        expect(deleteTimeEntry).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('sends nothing without a current organization', async () => {
+        const mounted = await mountWithFlags();
+        organization.id = undefined;
+
+        const result = await mounted.api.deleteFlaggedEntry('te-b');
+
+        expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
+        expect(deleteTimeEntry).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings moveEntry (D-03) and auto-adjusts', () => {
+    const moved: OutlookMeeting = {
+        ...meeting('m-moved', '2026-11-04T12:00:00Z', '2026-11-04T13:00:00Z'),
+        moved_from: {
+            time_entry_id: 'te-old',
+            entry_start: '2026-11-02T10:00:00Z',
+            entry_end: '2026-11-02T11:00:00Z',
+        },
+    };
+    const other = meeting('m-other', '2026-11-05T09:00:00Z', '2026-11-05T10:00:00Z');
+    const adjusted = {
+        time_entry_id: 'te-adj',
+        at: '2026-11-05T08:00:00Z',
+        from_start: '2026-11-03T10:00:00Z',
+        from_end: '2026-11-03T11:00:00Z',
+        to_start: '2026-11-04T10:00:00Z',
+        to_end: '2026-11-04T11:00:00Z',
+    };
+
+    function moveCalls() {
+        return axiosPost.mock.calls.filter((call) => String(call[0]).endsWith('/move-entry'));
+    }
+
+    it('posts the move, is pending meanwhile and on success the meeting leaves the lane', async () => {
+        const mounted = await mountWithFlags([], [moved, other]);
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosGet.mockReturnValue(new Promise(() => undefined));
+        const request = deferred<{ data: unknown }>();
+        axiosPost.mockReturnValue(request.promise);
+
+        const done = mounted.api.moveEntry('m-moved');
+
+        expect(moveCalls()).toHaveLength(1);
+        expect(moveCalls()[0]![0]).toBe(`${ORG_MEETINGS_URL}/m-moved/move-entry`);
+        expect(mounted.api.isMovePending('m-moved')).toBe(true);
+        expect(mounted.api.isMovePending('m-other')).toBe(false);
+        expect(await mounted.api.moveEntry('m-moved')).toEqual({ status: 'failed', message: '' });
+        expect(moveCalls()).toHaveLength(1);
+        // Pessimistic: the meeting stays until the answer
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-moved', 'm-other']);
+
+        request.resolve({ data: {} });
+        const result = await done;
+        await advance(0);
+
+        expect(result).toEqual({ status: 'ok' });
+        expect(mounted.api.isMovePending('m-moved')).toBe(false);
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-other']);
+        expect(mounted.api.linkedTimeEntryIds.value).toContain('te-old');
+        const keys = invalidatedKeysOf(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'success',
+            'Time entry moved here',
+            'From Mon, Nov 2 · 10:00 – 11:00'
+        );
+        expect(mounted.api.announcement.value).toBe('Time entry moved');
+        mounted.wrapper.unmount();
+    });
+
+    it('a failed move toasts move_entry_failed and keeps the meeting', async () => {
+        const mounted = await mountWithFlags([], [moved]);
+        axiosPost.mockRejectedValue(httpError(500));
+
+        const result = await mounted.api.moveEntry('m-moved');
+
+        expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not move the time entry',
+            'Try again in a moment.'
+        );
+        expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-moved']);
+        expect(mounted.api.isMovePending('m-moved')).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('a stale move toasts osync_stale and refreshes', async () => {
+        const mounted = await mountWithFlags([], [moved]);
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosPost.mockRejectedValue(httpError(409));
+
+        const result = await mounted.api.moveEntry('m-moved');
+
+        expect(result).toEqual({ status: 'stale' });
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'This entry changed in the meantime',
+            'The calendar was refreshed.'
+        );
+        expect(invalidatedKeysOf(invalidate)).toContainEqual(['m365', 'meetings']);
+        mounted.wrapper.unmount();
+    });
+
+    it('autoAdjustedOf reads the silent adjusts of the read', async () => {
+        axiosGet.mockResolvedValue({
+            data: {
+                data: [],
+                sync: { last_synced_at: null, retry_after: null },
+                auto_adjusted: [adjusted],
+            },
+        });
+        const mounted = mountComposable();
+        await advance(500);
+
+        expect(mounted.api.autoAdjustedOf('te-adj')).toEqual(adjusted);
+        expect(mounted.api.autoAdjustedOf('te-x')).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('nothing is sent and every action fails while it cannot act', async () => {
+        const mounted = await mountWithFlags([FLAG_A, FLAG_B], [moved]);
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (list: OutlookMeeting[]) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__([moved]);
+        await nextTick();
+        expect(mounted.api.canAct.value).toBe(false);
+
+        expect((await mounted.api.keepFlag('te-a')).status).toBe('failed');
+        expect((await mounted.api.adjustFlag('te-a')).status).toBe('failed');
+        expect((await mounted.api.deleteFlaggedEntry('te-b')).status).toBe('failed');
+        expect((await mounted.api.moveEntry('m-moved')).status).toBe('failed');
+
+        expect(axiosPost).not.toHaveBeenCalled();
+        expect(deleteTimeEntry).not.toHaveBeenCalled();
+        expect(addNotification).not.toHaveBeenCalled();
+        expect(mounted.api.autoAdjustedOf('te-adj')).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    describe('in test-hook mode', () => {
+        type Phase6HookOptions = {
+            actions?: boolean;
+            outOfSync?: OutlookOutOfSyncItem[];
+            autoAdjusted?: (typeof adjusted)[];
+            outOfSyncUrl?: string;
+            moveEntryUrl?: string;
+        };
+
+        function hook(meetings: OutlookMeeting[], options: Phase6HookOptions): void {
+            (
+                window as unknown as {
+                    __TEST_SET_OUTLOOK_MEETINGS__: (
+                        meetings: OutlookMeeting[],
+                        labels: undefined,
+                        options: Phase6HookOptions
+                    ) => void;
+                }
+            ).__TEST_SET_OUTLOOK_MEETINGS__(meetings, undefined, options);
+        }
+
+        async function mountHook(options: Phase6HookOptions): Promise<Mounted> {
+            const mounted = mountComposable();
+            await advance(500);
+            hook([moved, other], options);
+            await nextTick();
+            axiosPost.mockReset();
+            axiosPost.mockResolvedValue({ data: {} });
+            return mounted;
+        }
+
+        it('injects the flags and the auto-adjusts, and acts through the hook urls', async () => {
+            const mounted = await mountHook({
+                actions: true,
+                outOfSync: [FLAG_A, FLAG_B],
+                autoAdjusted: [adjusted],
+                outOfSyncUrl: '/hook/osync',
+                moveEntryUrl: '/hook/org-meetings',
+            });
+            const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+
+            expect(mounted.api.outOfSync.value).toEqual([FLAG_A, FLAG_B]);
+            expect(mounted.api.autoAdjustedOf('te-adj')).toEqual(adjusted);
+
+            expect(await mounted.api.keepFlag('te-a')).toEqual({ status: 'ok' });
+            expect(axiosPost.mock.calls[0]![0]).toBe('/hook/osync/te-a/keep');
+            expect(mounted.api.outOfSync.value).toEqual([FLAG_B]);
+
+            expect(await mounted.api.deleteFlaggedEntry('te-b')).toEqual({ status: 'ok' });
+            expect(mounted.api.outOfSync.value).toEqual([]);
+
+            expect(await mounted.api.moveEntry('m-moved')).toEqual({ status: 'ok' });
+            expect(axiosPost.mock.calls[1]![0]).toBe('/hook/org-meetings/m-moved/move-entry');
+            expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-other']);
+            expect(mounted.api.linkedTimeEntryIds.value).toEqual(['te-old']);
+
+            // Injected meetings are not server rows: the real read is left alone
+            expect(invalidatedKeysOf(invalidate)).not.toContainEqual(['m365', 'meetings']);
+            expect(invalidatedKeysOf(invalidate)).toContainEqual(['timeEntries']);
+            mounted.wrapper.unmount();
+        });
+
+        it('adjust removes the injected flag as well', async () => {
+            const mounted = await mountHook({
+                actions: true,
+                outOfSync: [FLAG_A],
+                outOfSyncUrl: '/hook/osync',
+            });
+
+            expect(await mounted.api.adjustFlag('te-a')).toEqual({ status: 'ok' });
+            expect(axiosPost.mock.calls[0]![0]).toBe('/hook/osync/te-a/adjust');
+            expect(mounted.api.outOfSync.value).toEqual([]);
+            mounted.wrapper.unmount();
+        });
+
+        it('without the urls keep, adjust and move fail without a request', async () => {
+            const mounted = await mountHook({ actions: true, outOfSync: [FLAG_A] });
+
+            expect((await mounted.api.keepFlag('te-a')).status).toBe('failed');
+            expect((await mounted.api.adjustFlag('te-a')).status).toBe('failed');
+            expect((await mounted.api.moveEntry('m-moved')).status).toBe('failed');
+
+            expect(axiosPost).not.toHaveBeenCalled();
+            expect(mounted.api.outOfSync.value).toEqual([FLAG_A]);
+            expect(mounted.api.meetings.value.map((m) => m.id)).toEqual(['m-moved', 'm-other']);
+            mounted.wrapper.unmount();
+        });
+
+        it('works without the calendar prop (integration off in CI)', async () => {
+            setPage(null);
+            const mounted = mountComposable();
+            await advance(500);
+            (
+                window as unknown as {
+                    __TEST_SET_OUTLOOK_MEETINGS__: (
+                        meetings: OutlookMeeting[],
+                        labels: Record<string, string>,
+                        options: Phase6HookOptions
+                    ) => void;
+                }
+            ).__TEST_SET_OUTLOOK_MEETINGS__(
+                [moved],
+                { retry_body: 'Retry.', osync_kept: 'Kept.' },
+                { actions: true, outOfSync: [FLAG_A], outOfSyncUrl: '/hook/osync' }
+            );
+            await nextTick();
+            axiosPost.mockResolvedValue({ data: {} });
+
+            expect(mounted.api.outOfSync.value).toEqual([FLAG_A]);
+            expect(await mounted.api.keepFlag('te-a')).toEqual({ status: 'ok' });
+            await advance(0);
+            expect(mounted.api.announcement.value).toBe('Kept.');
+            mounted.wrapper.unmount();
+        });
     });
 });

@@ -17,11 +17,15 @@ import {
     getLocalizedDayJs,
     getLocalizedDayJsFromMinutes,
     localDateToUtc,
+    type TimeFormat,
 } from '@/packages/ui/src/utils/time';
 import { getWeekStartDayNumber } from '@/packages/ui/src/utils/settings';
+import { api } from '@/packages/api/src';
 import { useNotificationsStore } from '@/utils/notification';
+import { getCurrentOrganizationId } from '@/utils/useUser';
 import type {
     MicrosoftSharedProps,
+    OutlookAutoAdjusted,
     OutlookCalendarLabels,
     OutlookCalendarProps,
     OutlookConnectionState,
@@ -36,11 +40,13 @@ import type {
 import { dismissMeeting, fetchMeetings, postSync, restoreMeeting } from './meetingsApi';
 import {
     conversionErrorMessage,
+    adjustFlag as postAdjustFlag,
     failedResults,
     flagActionFailure,
     forgetSeries as deleteSeriesAssignment,
     ignoreSeries as postSeriesIgnore,
     keepFlag as postKeepFlag,
+    moveEntry as postMoveEntry,
     postConversion,
     unignoreSeries as deleteSeriesIgnore,
     type OutlookConversionBody,
@@ -49,7 +55,8 @@ import {
 import { useOutlookSelection, type OutlookSelection } from './useOutlookSelection';
 import { ghostLaneWidth } from './ghostLayout';
 import { isFaded, isPreassigned, isRecurring } from './suggestions';
-import { firstFlag } from './syncFlagReason';
+import { firstFlag, formatRange } from './syncFlagReason';
+import { fillLabel } from './labels';
 
 export interface WeekBucket {
     start: string;
@@ -181,6 +188,25 @@ export interface OutlookMeetingsContext {
     keepFlag: (timeEntryId: string) => Promise<OutlookFlagActionResult>;
     // True while a resolve action of entry `timeEntryId` runs (spinner, aria-busy on the block).
     isFlagPending: (timeEntryId: string) => boolean;
+    // "Adjust to Outlook" (moved flags). Same rules as keepFlag; ok adds the success toast "Time
+    // entry adjusted to Outlook" with the new range and the same announcement; failed toasts
+    // osync_adjust_failed with the server's message (overlap included), else forbidden / retry.
+    adjustFlag: (timeEntryId: string) => Promise<OutlookFlagActionResult>;
+    // "Delete entry", confirmed in the popover (D-05: the only way a flagged entry is deleted).
+    // Deletes through the core API, so the meeting link cascades; core's success toast and the
+    // "Time entry deleted" announcement. An entry no longer flagged is not deleted (stale).
+    deleteFlaggedEntry: (timeEntryId: string) => Promise<OutlookFlagActionResult>;
+    // The silent adjust of time entry `timeEntryId` in the last 7 days (D-04, D-12; the origin icon
+    // tooltip), null when none.
+    autoAdjustedOf: (timeEntryId: string) => OutlookAutoAdjusted | null;
+    // "Move my entry here" of a meeting with moved_from (D-03). Pessimistic like the resolve
+    // actions: ok removes the meeting from the lane (the moved entry shows at the new slot after
+    // the refresh), toasts "Time entry moved here" with the old range and announces "Time entry
+    // moved"; failed toasts move_entry_failed; stale toasts osync_stale and refreshes. A call for a
+    // meeting whose move runs sends nothing.
+    moveEntry: (meetingId: string) => Promise<OutlookFlagActionResult>;
+    // True while the move of meeting `meetingId` runs (the block's pending state).
+    isMovePending: (meetingId: string) => boolean;
 }
 
 export const OUTLOOK_MEETINGS_KEY: InjectionKey<OutlookMeetingsContext> =
@@ -209,11 +235,19 @@ interface SyncRequest {
 // converted meeting leaves the injected list and its entry id joins linkedTimeEntryIds. Series
 // actions (Phase 5) request `${seriesUrl}/{id}/series/...` and update the injected list; without
 // seriesUrl they send nothing.
+// Phase 6: outOfSync and autoAdjusted play the read's flags and silent adjusts. Keep and adjust
+// post to `${outOfSyncUrl}/{entryId}/keep|adjust`, the move to `${moveEntryUrl}/{id}/move-entry`
+// (each sends nothing without its url); delete uses the core API. A successful keep, adjust or
+// delete removes the flag from the injected list, a successful move removes the meeting.
 export interface OutlookTestHookOptions {
     actions?: boolean;
     convertUrl?: string;
     seriesUrl?: string;
     linkedTimeEntryIds?: string[];
+    outOfSync?: OutlookOutOfSyncItem[];
+    autoAdjusted?: OutlookAutoAdjusted[];
+    outOfSyncUrl?: string;
+    moveEntryUrl?: string;
 }
 
 type TestHook = (
@@ -270,6 +304,8 @@ export function useOutlookMeetings(
     // Phase 6 hook state: the injected flags (null outside test-hook mode) and the action urls.
     const testOutOfSync = ref<OutlookOutOfSyncItem[] | null>(null);
     const testOutOfSyncUrl = ref<string | null>(null);
+    const testAutoAdjusted = ref<OutlookAutoAdjusted[]>([]);
+    const testMoveEntryUrl = ref<string | null>(null);
 
     const lastSync = ref<OutlookSyncResponse | null>(null);
     const isSyncing = ref(false);
@@ -1069,6 +1105,20 @@ export function useOutlookMeetings(
 
     const firstOutOfSync = computed<OutlookOutOfSyncItem | null>(() => firstFlag(outOfSync.value));
 
+    // Silent adjusts of the last 7 days (D-04, D-12), owner-only like the flags.
+    const autoAdjustedById = computed(() => {
+        if (!flagsVisible.value) return new Map<string, OutlookAutoAdjusted>();
+        const list =
+            testMeetings.value !== null
+                ? testAutoAdjusted.value
+                : (meetingsQuery.data.value?.auto_adjusted ?? []);
+        return new Map(list.map((item) => [item.time_entry_id, item]));
+    });
+
+    function autoAdjustedOf(timeEntryId: string): OutlookAutoAdjusted | null {
+        return autoAdjustedById.value.get(timeEntryId) ?? null;
+    }
+
     // --- Resolve popover request: one popover for the whole calendar, opened by the marker, the
     // context menu or the counter jump.
     const flagPanel = ref<OutlookFlagPanelRequest | null>(null);
@@ -1101,7 +1151,7 @@ export function useOutlookMeetings(
     });
 
     // --- Resolve actions (keep, adjust, delete). Pessimistic: nothing changes before the answer.
-    type FlagAction = 'keep';
+    type FlagAction = 'keep' | 'adjust' | 'delete';
 
     // Entry ids whose resolve action runs (reactive: buttons and blocks show their pending state).
     const pendingFlagIds = ref<string[]>([]);
@@ -1167,6 +1217,41 @@ export function useOutlookMeetings(
         if (flagPanel.value?.timeEntryId === timeEntryId) flagPanel.value = null;
     }
 
+    // The organization's 12/24-hour format for the toast ranges, from the organization query the
+    // calendar page already runs (24 hours until it has loaded).
+    function currentTimeFormat(organizationId: string | null): TimeFormat {
+        if (!organizationId) return '24-hours';
+        const cached = queryClient.getQueryData<{ data?: { time_format?: TimeFormat } }>([
+            'organization',
+            organizationId,
+        ]);
+        return cached?.data?.time_format ?? '24-hours';
+    }
+
+    // The session user's current organization; null when the page carries no user (never thrown:
+    // the actions then fail like any other request).
+    function currentOrganizationId(): string | null {
+        try {
+            return getCurrentOrganizationId() ?? null;
+        } catch {
+            return null;
+        }
+    }
+
+    // Core delete through the generated client (the core mutation helper swallows failures after
+    // its own toast, and this flow needs the status to tell a stale entry from a failure).
+    async function deleteCoreEntry(organizationId: string, timeEntryId: string): Promise<void> {
+        await api.deleteTimeEntry(undefined, {
+            params: { organization: organizationId, timeEntry: timeEntryId },
+        });
+    }
+
+    const FAILED_TITLE = {
+        keep: 'osync_keep_failed',
+        adjust: 'osync_adjust_failed',
+        delete: 'osync_delete_failed',
+    } as const satisfies Record<FlagAction, keyof OutlookCalendarLabels>;
+
     async function runFlagAction(
         timeEntryId: string,
         action: FlagAction
@@ -1177,11 +1262,24 @@ export function useOutlookMeetings(
         // A second activation while the first runs sends nothing (an empty message: no alert).
         if (isFlagPending(timeEntryId)) return { status: 'failed', message: '' };
         const url = outOfSyncUrl();
-        if (!url) return { status: 'failed', message: retry };
+        const organizationId = currentOrganizationId();
+        if (action === 'delete' ? !organizationId : !url) {
+            return { status: 'failed', message: retry };
+        }
+        const item = flagOf(timeEntryId);
+        // The core delete knows nothing about flags: an entry whose flag is gone (resolved in
+        // another tab, cleared by Outlook) is never deleted from here (D-05).
+        if (action === 'delete' && item === null) {
+            closePanelOf(timeEntryId);
+            handleStale(current);
+            return { status: 'stale' };
+        }
 
         pendingFlagIds.value = [...pendingFlagIds.value, timeEntryId];
         try {
-            if (action === 'keep') await postKeepFlag(url, timeEntryId);
+            if (action === 'keep') await postKeepFlag(url as string, timeEntryId);
+            else if (action === 'adjust') await postAdjustFlag(url as string, timeEntryId);
+            else await deleteCoreEntry(organizationId as string, timeEntryId);
         } catch (error) {
             const failure = flagActionFailure(error, {
                 forbidden: current.osync_error_forbidden,
@@ -1193,7 +1291,7 @@ export function useOutlookMeetings(
             } else if (failure.status === 'failed') {
                 useNotificationsStore().addNotification(
                     'error',
-                    current.osync_keep_failed,
+                    current[FAILED_TITLE[action]],
                     failure.message
                 );
             }
@@ -1205,12 +1303,106 @@ export function useOutlookMeetings(
         dropFlag(timeEntryId);
         closePanelOf(timeEntryId);
         refreshAfterEntryWrite();
-        announce(current.osync_kept);
+        const notifications = useNotificationsStore();
+        if (action === 'keep') {
+            announce(current.osync_kept);
+        } else if (action === 'adjust') {
+            // The entry now has the meeting's new times: the toast names that range.
+            const range =
+                item?.new_start && item.new_end
+                    ? formatRange(item.new_start, item.new_end, {
+                          full: true,
+                          timeFormat: currentTimeFormat(organizationId),
+                          allDay: item.all_day,
+                      })
+                    : undefined;
+            notifications.addNotification('success', current.osync_adjusted, range);
+            announce(current.osync_adjusted);
+        } else {
+            // Core's own copy, as the core delete shows it.
+            notifications.addNotification('success', 'Time entry deleted successfully');
+            announce(current.osync_deleted_announcement);
+        }
         return { status: 'ok' };
     }
 
     const keepFlag = (timeEntryId: string): Promise<OutlookFlagActionResult> =>
         runFlagAction(timeEntryId, 'keep');
+    const adjustFlag = (timeEntryId: string): Promise<OutlookFlagActionResult> =>
+        runFlagAction(timeEntryId, 'adjust');
+    const deleteFlaggedEntry = (timeEntryId: string): Promise<OutlookFlagActionResult> =>
+        runFlagAction(timeEntryId, 'delete');
+
+    // --- D-03 move: the entry logged for a started meeting's earlier slot moves onto its new slot.
+    // Meeting ids whose move runs (the block's pending state, the panel button spinner).
+    const pendingMoveIds = ref<string[]>([]);
+
+    function isMovePending(meetingId: string): boolean {
+        return pendingMoveIds.value.includes(meetingId);
+    }
+
+    function moveEntryUrl(): string | null {
+        const url =
+            testMeetings.value !== null
+                ? testMoveEntryUrl.value
+                : calendar.value?.urls.organization_meetings;
+        return url ?? null;
+    }
+
+    async function moveEntry(meetingId: string): Promise<OutlookFlagActionResult> {
+        const current = labels.value;
+        const retry = current?.retry_body ?? '';
+        if (!canAct.value || !current) return { status: 'failed', message: retry };
+        if (isMovePending(meetingId)) return { status: 'failed', message: '' };
+        const url = moveEntryUrl();
+        if (!url) return { status: 'failed', message: retry };
+        const movedFrom = findMeeting(meetingId)?.moved_from ?? null;
+
+        pendingMoveIds.value = [...pendingMoveIds.value, meetingId];
+        try {
+            await postMoveEntry(url, meetingId);
+        } catch (error) {
+            const failure = flagActionFailure(error, {
+                forbidden: current.osync_error_forbidden,
+                retry,
+            });
+            if (failure.status === 'stale') {
+                handleStale(current);
+            } else if (failure.status === 'failed') {
+                useNotificationsStore().addNotification(
+                    'error',
+                    current.move_entry_failed,
+                    failure.message
+                );
+            }
+            return failure;
+        } finally {
+            pendingMoveIds.value = pendingMoveIds.value.filter((id) => id !== meetingId);
+        }
+
+        // The meeting is linked now: it leaves the lane at once, and the moved entry stays linked.
+        const entryIds = movedFrom ? [movedFrom.time_entry_id] : [];
+        if (testMeetings.value !== null) {
+            removeFromInjected([meetingId], entryIds);
+        } else {
+            void queryClient.cancelQueries({ queryKey: MEETINGS_QUERY_KEY });
+            removeFromCache([meetingId], entryIds);
+        }
+        baseSelection.remove([meetingId]);
+        refreshAfterEntryWrite();
+        // The toast names where the entry came from (its old range is no longer on screen).
+        const from = movedFrom
+            ? fillLabel(current.move_entry_from, {
+                  when: formatRange(movedFrom.entry_start, movedFrom.entry_end, {
+                      full: true,
+                      timeFormat: currentTimeFormat(currentOrganizationId()),
+                  }),
+              })
+            : undefined;
+        useNotificationsStore().addNotification('success', current.move_entry_success, from);
+        announce(current.move_entry_announcement);
+        return { status: 'ok' };
+    }
 
     // The outcome of a Connect / Reconnect that returned to the calendar (flashed by the server, so
     // it is in the props for exactly one page load) goes through the existing notification store.
@@ -1234,6 +1426,10 @@ export function useOutlookMeetings(
             testConvertUrl.value = options?.convertUrl ?? null;
             testSeriesUrl.value = options?.seriesUrl ?? null;
             testLinkedIds.value = [...(options?.linkedTimeEntryIds ?? [])];
+            testOutOfSync.value = [...(options?.outOfSync ?? [])];
+            testAutoAdjusted.value = [...(options?.autoAdjusted ?? [])];
+            testOutOfSyncUrl.value = options?.outOfSyncUrl ?? null;
+            testMoveEntryUrl.value = options?.moveEntryUrl ?? null;
         };
     });
 
@@ -1293,6 +1489,11 @@ export function useOutlookMeetings(
         closeFlagPanel,
         keepFlag,
         isFlagPending,
+        adjustFlag,
+        deleteFlaggedEntry,
+        autoAdjustedOf,
+        moveEntry,
+        isMovePending,
     };
 
     // The toolbar controls are rendered through core slots and inject this instead of taking props.
