@@ -8,6 +8,7 @@ use App\Microsoft365\Models\OutlookMeeting;
 use App\Models\Organization;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -15,6 +16,8 @@ use Illuminate\Support\Facades\DB;
  * the number of rows, so the read cost stays constant (T-06-22):
  *
  * - items(): the flagged entries of the whole check window, whatever week is open (D-09, D-10, D-11).
+ * - autoAdjusted(): the entries of the requested range moved silently with their meeting in the last
+ *   few days (out_of_sync.auto_adjusted_days, default 7), for the origin icon's note (UI-SPEC 5).
  * - movedFrom(): for meetings shown again after their link was released (a started meeting Outlook
  *   moved, D-03), the entry the meeting was logged on.
  *
@@ -86,6 +89,64 @@ final class OutOfSyncFlags
         }
 
         return $items;
+    }
+
+    /**
+     * The user's entries in the organization that overlap the half-open range [start, end) (an entry
+     * without an end counts from its start) and were adjusted automatically within the last
+     * out_of_sync.auto_adjusted_days days, ordered by entry start. "to" is the slot the entry was moved
+     * to, which the adjust recorded as the link's snapshot.
+     *
+     * @return list<array{time_entry_id: string, at: string|null, from_start: string|null, from_end: string|null, to_start: string|null, to_end: string|null}>
+     */
+    public function autoAdjusted(User $user, Organization $organization, CarbonImmutable $start, CarbonImmutable $end, CarbonImmutable $now): array
+    {
+        $days = config('microsoft365.out_of_sync.auto_adjusted_days', 7);
+        $since = $now->utc()->subDays(is_numeric($days) ? (int) $days : 7)->format('Y-m-d H:i:s');
+        $rangeStart = $start->utc()->format('Y-m-d H:i:s');
+
+        $rows = DB::table('outlook_meeting_links')
+            ->join('time_entries', 'time_entries.id', '=', 'outlook_meeting_links.time_entry_id')
+            ->where('outlook_meeting_links.user_id', '=', $user->getKey())
+            ->where('outlook_meeting_links.auto_adjusted_at', '>=', $since)
+            ->whereNotNull('outlook_meeting_links.auto_adjusted_from_starts_at')
+            ->whereNotNull('outlook_meeting_links.auto_adjusted_from_ends_at')
+            ->whereNotNull('outlook_meeting_links.meeting_starts_at')
+            ->whereNotNull('outlook_meeting_links.meeting_ends_at')
+            ->where('time_entries.user_id', '=', $user->getKey())
+            ->where('time_entries.organization_id', '=', $organization->getKey())
+            ->where('time_entries.start', '<', $end->utc()->format('Y-m-d H:i:s'))
+            ->where(function (QueryBuilder $query) use ($rangeStart): void {
+                $query->where('time_entries.end', '>', $rangeStart)
+                    ->orWhere(function (QueryBuilder $running) use ($rangeStart): void {
+                        $running->whereNull('time_entries.end')
+                            ->where('time_entries.start', '>=', $rangeStart);
+                    });
+            })
+            ->orderBy('time_entries.start')
+            ->orderBy('time_entries.id')
+            ->get([
+                'outlook_meeting_links.time_entry_id',
+                'outlook_meeting_links.auto_adjusted_at',
+                'outlook_meeting_links.auto_adjusted_from_starts_at',
+                'outlook_meeting_links.auto_adjusted_from_ends_at',
+                'outlook_meeting_links.meeting_starts_at',
+                'outlook_meeting_links.meeting_ends_at',
+            ]);
+
+        $adjusted = [];
+        foreach ($rows as $row) {
+            $adjusted[] = [
+                'time_entry_id' => (string) $row->time_entry_id,
+                'at' => self::utc($row->auto_adjusted_at),
+                'from_start' => self::utc($row->auto_adjusted_from_starts_at),
+                'from_end' => self::utc($row->auto_adjusted_from_ends_at),
+                'to_start' => self::utc($row->meeting_starts_at),
+                'to_end' => self::utc($row->meeting_ends_at),
+            ];
+        }
+
+        return $adjusted;
     }
 
     /**

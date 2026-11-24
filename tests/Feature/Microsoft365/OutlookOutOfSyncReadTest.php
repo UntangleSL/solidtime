@@ -650,4 +650,111 @@ class OutlookOutOfSyncReadTest extends TestCaseWithDatabase
         $this->assertTrue($item['dismissed']);
         $this->assertNull($item['moved_from']);
     }
+
+    public function test_recent_auto_adjust_is_listed_for_entries_in_range(): void
+    {
+        // Arrange: adjusted from Wednesday 12:00 to Thursday 12:00 two days ago
+        $data = $this->employee();
+        $recent = $this->linkedEntry($data->member, 'recent', '2026-11-26 12:00:00', '2026-11-26 13:00:00', $this->adjusted('2026-11-22 10:00:00', '2026-11-25 12:00:00', '2026-11-25 13:00:00'));
+        // Not listed: adjusted eight days ago, outside the range, another organization, another user
+        $this->linkedEntry($data->member, 'stale', '2026-11-27 12:00:00', '2026-11-27 13:00:00', $this->adjusted('2026-11-16 10:00:00', '2026-11-20 12:00:00', '2026-11-20 13:00:00'));
+        $this->linkedEntry($data->member, 'later', '2026-12-08 12:00:00', '2026-12-08 13:00:00', $this->adjusted('2026-11-22 10:00:00', '2026-12-07 12:00:00', '2026-12-07 13:00:00'));
+        $other = $this->createUserWithRole(Role::Employee);
+        $otherMember = Member::factory()->forUser($data->user)->forOrganization($other->organization)->role(Role::Employee)->create();
+        $this->linkedEntry($otherMember, 'other-org', '2026-11-26 15:00:00', '2026-11-26 16:00:00', $this->adjusted('2026-11-22 10:00:00', '2026-11-25 15:00:00', '2026-11-25 16:00:00'));
+        $neighbour = User::factory()->create();
+        $neighbourMember = Member::factory()->forUser($neighbour)->forOrganization($data->organization)->role(Role::Employee)->create();
+        $this->linkedEntry($neighbourMember, 'neighbour', '2026-11-26 17:00:00', '2026-11-26 18:00:00', $this->adjusted('2026-11-22 10:00:00', '2026-11-25 17:00:00', '2026-11-25 18:00:00'));
+
+        // Act
+        $response = $this->read();
+        $nextWeek = $this->read('2026-12-07T00:00:00Z', '2026-12-14T00:00:00Z');
+
+        // Assert
+        $response->assertOk();
+        $this->assertSame([[
+            'time_entry_id' => $recent->getKey(),
+            'at' => '2026-11-22T10:00:00Z',
+            'from_start' => '2026-11-25T12:00:00Z',
+            'from_end' => '2026-11-25T13:00:00Z',
+            'to_start' => '2026-11-26T12:00:00Z',
+            'to_end' => '2026-11-26T13:00:00Z',
+        ]], $response->json('auto_adjusted'));
+        $nextWeek->assertOk();
+        $this->assertSame(['later'], array_map(
+            fn (array $item): string => (string) OutlookMeetingLink::query()->where('time_entry_id', '=', $item['time_entry_id'])->value('graph_id'),
+            $nextWeek->json('auto_adjusted'),
+        ));
+    }
+
+    public function test_read_query_count_does_not_grow(): void
+    {
+        // Arrange: a small and a large user, each with flags, released meetings and an adjusted entry
+        $small = $this->employee($this->objectId(1));
+        $this->outOfSyncState($small->member, flagged: 2, released: 2);
+        $large = $this->employee($this->objectId(2));
+        $this->outOfSyncState($large->member, flagged: 40, released: 10);
+        $this->actingAs($small->user);
+        $this->read()->assertOk();
+        $this->actingAs($large->user);
+        $this->read()->assertOk();
+
+        // Act
+        $this->actingAs($small->user);
+        $this->enableQueryLog();
+        $smallRead = $this->read();
+        $smallQueries = count($this->getQueryLog());
+        DB::flushQueryLog();
+        $this->actingAs($large->user);
+        $largeRead = $this->read();
+        $largeQueries = count($this->getQueryLog());
+        DB::disableQueryLog();
+
+        // Assert: everything is served, at the same cost (T-06-22)
+        $smallRead->assertOk();
+        $largeRead->assertOk();
+        $this->assertCount(2, $this->items($smallRead));
+        $this->assertCount(40, $this->items($largeRead));
+        $this->assertCount(2, $smallRead->json('data'));
+        $this->assertCount(10, $largeRead->json('data'));
+        foreach ([$smallRead, $largeRead] as $read) {
+            foreach ($read->json('data') as $item) {
+                $this->assertNotNull($item['moved_from']);
+            }
+            $this->assertCount(1, $read->json('auto_adjusted'));
+        }
+        $this->assertSame($smallQueries, $largeQueries);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function adjusted(string $at, string $fromStart, string $fromEnd): array
+    {
+        return [
+            'auto_adjusted_at' => $at,
+            'auto_adjusted_from_starts_at' => $fromStart,
+            'auto_adjusted_from_ends_at' => $fromEnd,
+        ];
+    }
+
+    /**
+     * Flagged entries next month, started meetings released on Monday and shown again on Thursday,
+     * and one entry adjusted automatically this week.
+     */
+    private function outOfSyncState(Member $member, int $flagged, int $released): void
+    {
+        $user = User::query()->findOrFail($member->user_id);
+        $base = Carbon::parse('2026-12-01 00:00:00', 'UTC');
+        for ($index = 0; $index < $flagged; $index++) {
+            $start = $base->copy()->addHours($index);
+            $this->linkedEntry($member, 'flagged-'.$index, $start->format('Y-m-d H:i:s'), $start->copy()->addMinutes(30)->format('Y-m-d H:i:s'), $this->flag('cancelled'));
+        }
+        for ($index = 0; $index < $released; $index++) {
+            $graphId = 'released-'.$index;
+            $this->linkedEntry($member, $graphId, sprintf('2026-11-23 %02d:00:00', $index), sprintf('2026-11-23 %02d:30:00', $index), ['released_at' => '2026-11-24 09:00:00']);
+            $this->movedMeeting($user, $graphId, sprintf('2026-11-26 %02d:00:00', $index), sprintf('2026-11-26 %02d:30:00', $index));
+        }
+        $this->linkedEntry($member, 'adjusted', '2026-11-27 12:00:00', '2026-11-27 13:00:00', $this->adjusted('2026-11-23 10:00:00', '2026-11-25 12:00:00', '2026-11-25 13:00:00'));
+    }
 }

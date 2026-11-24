@@ -43,8 +43,10 @@ use Illuminate\Support\Facades\DB;
  * never pre-assigned (D-08).
  * Phase 6 adds the out-of-sync state of the user's entries: out_of_sync.items lists every flagged entry
  * of the whole check window whatever week is read (D-09, D-10, D-11), so the calendar can count and mark
- * them. Impersonation and a disconnected account see none (D-14, D-19); a reconnect-state account still
- * does, and links with their flags survive Disconnect.
+ * them, and auto_adjusted lists the entries of the range moved silently with their meeting lately
+ * (UI-SPEC section 5). Impersonation and a disconnected account see neither (D-14, D-19); a
+ * reconnect-state account still does, and links with their flags survive Disconnect. A started meeting
+ * that Outlook moved shows again at its new slot with moved_from, the entry it was logged on (D-03).
  */
 class OutlookMeetingController extends Controller
 {
@@ -150,6 +152,7 @@ class OutlookMeetingController extends Controller
                 && ! ($meeting->series_master_id !== null && isset($ignoredSeries[$meeting->series_master_id]))),
         );
 
+        $now = CarbonImmutable::now('UTC');
         $resources = $meetings->map(fn (OutlookMeeting $meeting): OutlookMeetingResource => new OutlookMeetingResource(
             $meeting,
             new MeetingHints(
@@ -169,8 +172,9 @@ class OutlookMeetingController extends Controller
             'linked_time_entry_ids' => $this->linkedTimeEntryIds($user, $start, $end),
             // The flagged entries of the whole window, not only of the requested range (D-09..D-11);
             // none without a current organization
-            'out_of_sync' => ['items' => $organization === null ? [] : $flags->items($user, $organization, CarbonImmutable::now('UTC'))],
-            'auto_adjusted' => [],
+            'out_of_sync' => ['items' => $organization === null ? [] : $flags->items($user, $organization, $now)],
+            // Entries of the range moved silently with their meeting lately (UI-SPEC section 5)
+            'auto_adjusted' => $organization === null ? [] : $flags->autoAdjusted($user, $organization, $start, $end, $now),
         ]);
     }
 
