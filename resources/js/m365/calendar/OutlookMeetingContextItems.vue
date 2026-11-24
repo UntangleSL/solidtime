@@ -8,6 +8,7 @@ import {
     Eye,
     EyeOff,
     ListChecks,
+    MoveRight,
     Pencil,
     Undo2,
     Unlink,
@@ -21,6 +22,7 @@ import {
 import type { OutlookMeeting } from '@/m365/types';
 import OutlookProjectDot from './OutlookProjectDot.vue';
 import { safeHttpsUrl } from './safeUrl';
+import { shortDate } from './syncFlagReason';
 import { isPreassigned, isRecurring } from './suggestions';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 
@@ -33,6 +35,9 @@ import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 // Phase 5 (UI-SPEC section 4): a pre-assigned meeting offers Confirm (with its project as a hint)
 // and Edit in place of "Create time entry"; recurring meetings get the series controls (always
 // ignore / stop ignoring / forget this series).
+// Phase 6 (06-UI-SPEC section 4, D-03): a started meeting that Outlook moved to this slot while its
+// entry stays at the old time offers "Move my entry here" with the old date as a hint; the default
+// stays creating a new entry.
 const props = defineProps<{
     element: HTMLElement;
 }>();
@@ -71,6 +76,16 @@ const confirmPending = computed(
 function menuOf(): Element | null {
     return rootEl.value?.closest('[role="menu"]') ?? null;
 }
+
+// D-03: the entry already logged for this meeting at its earlier slot (owner only, while the
+// context can act).
+const movedFrom = computed(() => (canAct.value ? (meeting.value?.moved_from ?? null) : null));
+const movedFromDate = computed(() =>
+    movedFrom.value ? shortDate(movedFrom.value.entry_start) : ''
+);
+const movePending = computed(
+    () => meeting.value !== null && context?.isMovePending?.(meeting.value.id) === true
+);
 
 // Select / Deselect: the keyboard and discoverable path to multi-select (D-07), always for the
 // right-clicked meeting only, even while other meetings are selected.
@@ -117,6 +132,27 @@ function syncButton(): HTMLElement | null {
     return document.querySelector<HTMLElement>('[data-testid="outlook-sync-button"]');
 }
 
+function entryBlock(timeEntryId: string): HTMLElement | null {
+    return document.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(timeEntryId)}"]`);
+}
+
+// The meeting of the day that takes focus when `current` (and every id in `leaving`) leaves the
+// lane: the next one that stays, else the previous one; null when none stays. Read before acting.
+function neighbourOf(current: OutlookMeeting, leaving: ReadonlySet<string>): string | null {
+    const group = props.element.closest('[role="group"]');
+    const blocks = group ? Array.from(group.querySelectorAll<HTMLElement>('[data-ghost-id]')) : [];
+    const index = blocks.findIndex((block) => block.dataset.ghostId === current.id);
+    const remains = (block: HTMLElement | undefined): boolean =>
+        block !== undefined && !leaving.has(block.dataset.ghostId ?? '');
+    const neighbour =
+        index === -1
+            ? null
+            : (blocks.slice(index + 1).find(remains) ??
+              blocks.slice(0, index).reverse().find(remains) ??
+              null);
+    return neighbour?.dataset.ghostId ?? null;
+}
+
 // Same rules as the detail panel (Phase 3 03-09 / 03-10, Phase 5 UI-SPEC section 5): after a
 // dismiss or "Always ignore this series" the next meeting of the day that stays in the lane gets
 // focus (the previous one for the last), the same block while dismissed meetings are shown (the
@@ -131,17 +167,7 @@ async function hideAndRefocus(
     const menu = menuOf();
     const group = props.element.closest('[role="group"]');
     const stays = context.includeDismissed.value === true;
-    const blocks = group ? Array.from(group.querySelectorAll<HTMLElement>('[data-ghost-id]')) : [];
-    const index = blocks.findIndex((block) => block.dataset.ghostId === current.id);
-    const remains = (block: HTMLElement | undefined): boolean =>
-        block !== undefined && !leaving.has(block.dataset.ghostId ?? '');
-    const neighbour =
-        index === -1
-            ? null
-            : (blocks.slice(index + 1).find(remains) ??
-              blocks.slice(0, index).reverse().find(remains) ??
-              null);
-    const targetId = stays ? current.id : (neighbour?.dataset.ghostId ?? null);
+    const targetId = stays ? current.id : neighbourOf(current, leaving);
 
     void action(current.id);
     await afterMenuClosed(menu);
@@ -204,6 +230,30 @@ async function onEdit(): Promise<void> {
     const menu = menuOf();
     await afterMenuClosed(menu);
     context.openForm(current.id);
+}
+
+// "Move my entry here" (D-03): the menu closes first, then the move runs with the block's pending
+// state; moveEntry says the outcome by toast and announcement. A second activation while the move
+// runs sends nothing. On success the meeting leaves the lane: focus goes to the moved entry block
+// when it is rendered, else the Phase 4 removal rule (next meeting of the day, else Sync). On a
+// failure the block returns to normal and focus stays where the menu left it.
+async function onMoveEntry(): Promise<void> {
+    const current = meeting.value;
+    const from = movedFrom.value;
+    if (!context || !current || !from || movePending.value) return;
+    const menu = menuOf();
+    const group = props.element.closest('[role="group"]');
+    const neighbourId = neighbourOf(current, new Set([current.id]));
+
+    await afterMenuClosed(menu);
+    if (context.isMovePending?.(current.id) === true) return;
+    const result = await context.moveEntry(current.id);
+    if (result.status !== 'ok') return;
+
+    await nextTick();
+    const root: ParentNode = group?.isConnected ? group : document;
+    const neighbour = neighbourId ? blockIn(root, neighbourId) : null;
+    (entryBlock(from.time_entry_id) ?? neighbour ?? syncButton())?.focus();
 }
 
 // Series controls (D-10, D-11): "Always ignore" on a recurring meeting that is not ignored, "Stop
@@ -274,6 +324,20 @@ async function onForgetSeries(): Promise<void> {
             @select="onCreate()">
             <ClockPlus class="w-4 h-4 text-icon-default" aria-hidden="true" />
             <span>{{ labels.create_entry }}</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+            v-if="movedFrom"
+            class="gap-3"
+            data-testid="outlook-menu-move-entry"
+            :disabled="movePending"
+            @select="onMoveEntry()">
+            <MoveRight class="w-4 h-4 shrink-0 text-icon-default" aria-hidden="true" />
+            <span>{{ labels.move_entry_here }}</span>
+            <span
+                class="ml-auto pl-2 text-xs text-text-tertiary tabular-nums"
+                data-testid="outlook-menu-move-entry-hint">
+                {{ movedFromDate }}
+            </span>
         </ContextMenuItem>
         <ContextMenuItem
             v-if="canAct && meeting"
