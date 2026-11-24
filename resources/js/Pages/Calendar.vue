@@ -2,7 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { useTimeEntriesCalendarQuery } from '@/utils/useTimeEntriesCalendarQuery';
 import { useTimeEntriesMutations } from '@/utils/useTimeEntriesMutations';
-import { computed, ref, onMounted } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 import type { Dayjs } from 'dayjs';
 import { useQueryClient } from '@tanstack/vue-query';
 import {
@@ -29,10 +29,13 @@ import { getCurrentOrganizationId } from '@/utils/useUser';
 import OutlookCalendarControls from '@/m365/calendar/OutlookCalendarControls.vue';
 import OutlookDismissedSetting from '@/m365/calendar/OutlookDismissedSetting.vue';
 import OutlookEntryBadge from '@/m365/calendar/OutlookEntryBadge.vue';
+import OutlookEntryMenuItems from '@/m365/calendar/OutlookEntryMenuItems.vue';
 import OutlookGhostLayer from '@/m365/calendar/OutlookGhostLayer.vue';
 import OutlookLaneCaption from '@/m365/calendar/OutlookLaneCaption.vue';
 import OutlookMeetingContextItems from '@/m365/calendar/OutlookMeetingContextItems.vue';
 import OutlookSelectionBar from '@/m365/calendar/OutlookSelectionBar.vue';
+import OutlookSyncFlagMarker from '@/m365/calendar/OutlookSyncFlagMarker.vue';
+import OutlookSyncFlagPanel from '@/m365/calendar/OutlookSyncFlagPanel.vue';
 import { useOutlookMeetings } from '@/m365/calendar/useOutlookMeetings';
 
 const { organization } = useOrganizationQuery(getCurrentOrganizationId()!);
@@ -70,6 +73,16 @@ const { data: timeEntryResponse, isLoading: timeEntriesLoading } = useTimeEntrie
 // Outlook meetings (fork): read after the time entries and drawn as ghosts in their own lane. They are
 // never merged into the time entries, and `loading` below stays bound to the time-entry query only.
 const outlook = useOutlookMeetings(calendarStart, calendarEnd);
+
+// Outlook out-of-sync review (fork, Phase 6): the toolbar counter jumps to a flagged entry in another
+// week through the calendar's exposed goToDate, without a page reload.
+const calendarRef = ref<InstanceType<typeof TimeEntryCalendar> | null>(null);
+onMounted(() => {
+    outlook.setCalendarNavigator((date) => calendarRef.value?.goToDate(date));
+});
+onUnmounted(() => {
+    outlook.setCalendarNavigator(null);
+});
 
 const currentTimeEntries = computed(() => {
     return timeEntryResponse?.value?.data || [];
@@ -134,6 +147,7 @@ function onRefresh() {
         data-testid="calendar_view"
         main-class="p-0 min-h-0 overflow-hidden">
         <TimeEntryCalendar
+            ref="calendarRef"
             :time-entries="currentTimeEntries"
             :projects="projects"
             :tasks="tasks"
@@ -170,6 +184,10 @@ function onRefresh() {
             </template>
             <template v-if="outlook.labels.value" #event-extra="{ timeEntry }">
                 <OutlookEntryBadge :time-entry-id="timeEntry.id" />
+                <OutlookSyncFlagMarker :time-entry-id="timeEntry.id" />
+            </template>
+            <template v-if="outlook.labels.value" #context-menu-entry-extra="{ timeEntry }">
+                <OutlookEntryMenuItems :time-entry-id="timeEntry.id" />
             </template>
             <template v-if="outlook.calendar.value || outlook.canAct.value" #toolbar-extra>
                 <OutlookCalendarControls />
@@ -181,5 +199,6 @@ function onRefresh() {
             </template>
         </TimeEntryCalendar>
         <OutlookSelectionBar v-if="outlook.labels.value" />
+        <OutlookSyncFlagPanel v-if="outlook.labels.value" />
     </AppLayout>
 </template>
