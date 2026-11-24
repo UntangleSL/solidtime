@@ -55,7 +55,7 @@ return [
     'out_of_sync' => [
         // Direct lookups (GET /me/events/{id}) one interactive sync may spend on linked entries
         'lookups_per_sync' => 5,
-        // Direct lookups the daily job may spend across all users
+        // Direct lookups one daily job (one user) may spend
         'lookups_per_job' => 300,
         // Seconds between the per-user checks the daily job dispatches
         'dispatch_stagger_seconds' => 10,
