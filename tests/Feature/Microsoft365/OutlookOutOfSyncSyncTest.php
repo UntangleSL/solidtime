@@ -11,11 +11,14 @@ use App\Http\Middleware\CheckOrganizationBlocked;
 use App\Http\Requests\V1\TimeEntry\TimeEntryStoreRequest;
 use App\Http\Requests\V1\TimeEntry\TimeEntryUpdateRequest;
 use App\Jobs\RecalculateSpentTimeForProject;
+use App\Microsoft365\Graph\EventLookup;
+use App\Microsoft365\Graph\EventLookupStatus;
 use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Microsoft365\Graph\GraphCalendarClient;
 use App\Microsoft365\Graph\MicrosoftTokenService;
 use App\Microsoft365\Graph\OutlookMeetingEligibility;
 use App\Microsoft365\Graph\OutlookMeetingSyncService;
+use App\Microsoft365\Graph\RetryAfter;
 use App\Microsoft365\Graph\SyncOutcome;
 use App\Microsoft365\Graph\SyncStatus;
 use App\Microsoft365\Http\Controllers\MeetingConversionController;
@@ -37,6 +40,7 @@ use App\Microsoft365\OutOfSync\LinkState;
 use App\Microsoft365\OutOfSync\Observation;
 use App\Microsoft365\OutOfSync\ObservationKind;
 use App\Microsoft365\OutOfSync\OutOfSyncApplier;
+use App\Microsoft365\OutOfSync\OutOfSyncLookups;
 use App\Microsoft365\OutOfSync\OutOfSyncRules;
 use App\Microsoft365\OutOfSync\OutOfSyncScope;
 use App\Microsoft365\Suggestions\Assignment;
@@ -53,8 +57,12 @@ use App\Models\Project;
 use App\Models\TimeEntry;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Http\Client\Request;
+use Illuminate\Http\Client\ResponseSequence;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -70,10 +78,15 @@ use Tests\TestCaseWithDatabase;
  * The out-of-sync check of the interactive sync, end to end (Phase 6 tracer): an Outlook change seen by
  * the next calendar sync reaches the linked entry through the rules, the applier and core's own update
  * path. Also proves the link migration of 06-01 (active-only uniqueness, null-only backfill) in Postgres.
+ *
+ * Plan 06-09 adds the direct lookups of linked meetings a complete window did not return (the only safe
+ * signal for "removed"), the sync matrix of the owner's rules on Graph-shaped answers, and the sync
+ * answer's auto_adjusted count.
  */
 #[CoversClass(OutOfSyncApplier::class)]
 #[CoversClass(CoreTimeEntryUpdater::class)]
 #[CoversClass(ApplyResult::class)]
+#[CoversClass(OutOfSyncLookups::class)]
 #[UsesClass(OutlookMeetingSyncService::class)]
 #[UsesClass(OutOfSyncRules::class)]
 #[UsesClass(OutOfSyncScope::class)]
@@ -88,6 +101,9 @@ use Tests\TestCaseWithDatabase;
 #[UsesClass(OutlookSyncWindow::class)]
 #[UsesClass(MicrosoftAccount::class)]
 #[UsesClass(GraphCalendarClient::class)]
+#[UsesClass(EventLookup::class)]
+#[UsesClass(EventLookupStatus::class)]
+#[UsesClass(RetryAfter::class)]
 #[UsesClass(OutlookMeetingEligibility::class)]
 #[UsesClass(MicrosoftTokenService::class)]
 #[UsesClass(GraphAccessGuard::class)]
@@ -121,6 +137,8 @@ class OutlookOutOfSyncSyncTest extends TestCaseWithDatabase
 
     private const string NEXT_LINK = 'https://graph.microsoft.com/v1.0/me/calendarView?$skiptoken=next';
 
+    private const string LOOKUP_URL = 'https://graph.microsoft.com/v1.0/me/events/*';
+
     private const string MIGRATION = 'app/Microsoft365/database/migrations/2026_11_23_000001_add_sync_state_to_outlook_meeting_links.php';
 
     /**
@@ -137,6 +155,8 @@ class OutlookOutOfSyncSyncTest extends TestCaseWithDatabase
         $data->user->save();
         $this->connectedAccount($data->user);
         $this->actingAs($data->user);
+        // Every Graph answer of these tests is scripted: an unscripted request fails the test
+        Http::preventStrayRequests();
 
         return $data;
     }
@@ -218,13 +238,80 @@ class OutlookOutOfSyncSyncTest extends TestCaseWithDatabase
         ]);
     }
 
-    private function syncWeek(): TestResponse
+    private function syncWeek(bool $force = true): TestResponse
     {
         return $this->postJson(route('microsoft.meetings.sync', [], false), [
             'start' => '2026-11-30T00:00:00Z',
             'end' => '2026-12-07T00:00:00Z',
-            'force' => true,
+            'force' => $force,
         ]);
+    }
+
+    /**
+     * Fakes the direct lookup endpoint (GET /me/events/{id}). A single response answers every lookup; a
+     * sequence answers them in order and fails the test when a lookup more than scripted is sent.
+     */
+    private function fakeLookups(PromiseInterface|ResponseSequence $answer): void
+    {
+        Http::fake([self::LOOKUP_URL => $answer]);
+    }
+
+    /**
+     * A recorded lookup answer of tests/Fixtures/M365/lookups (status plus body, or the error code).
+     */
+    private function lookupFixture(string $scenario): PromiseInterface
+    {
+        $json = file_get_contents(base_path('tests/Fixtures/M365/lookups/'.$scenario.'.roundB.json'));
+        $this->assertIsString($json);
+        $entries = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+        $this->assertIsArray($entries);
+        $entry = $entries[0];
+        $this->assertIsArray($entry);
+        $this->assertIsInt($entry['status']);
+
+        $body = $entry['body'] ?? null;
+        if ($body === null) {
+            $body = ['error' => ['code' => $entry['errorCode'], 'message' => 'The specified object was not found in the store.']];
+        }
+        $this->assertIsArray($body);
+
+        return Http::response($body, $entry['status']);
+    }
+
+    /**
+     * A lookup answer of an occurrence at the given UTC times ('Y-m-d\TH:i:s'), in the shape of the
+     * lookup fixtures.
+     *
+     * @param  array<string, mixed>  $overrides
+     */
+    private function lookupAt(string $id, string $start, string $end, array $overrides = []): PromiseInterface
+    {
+        return Http::response(array_merge([
+            'id' => $id,
+            'type' => 'singleInstance',
+            'seriesMasterId' => null,
+            'start' => ['dateTime' => $start.'.0000000', 'timeZone' => 'UTC'],
+            'end' => ['dateTime' => $end.'.0000000', 'timeZone' => 'UTC'],
+            'isCancelled' => false,
+            'isAllDay' => false,
+        ], $overrides));
+    }
+
+    /**
+     * The direct lookups that were sent, in order.
+     *
+     * @return list<Request>
+     */
+    private function lookupRequests(): array
+    {
+        return array_values(Http::recorded(fn (Request $request): bool => str_contains($request->url(), '/v1.0/me/events/'))
+            ->map(fn (array $pair): Request => $pair[0])
+            ->all());
+    }
+
+    private function account(User $user): MicrosoftAccount
+    {
+        return MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->sole();
     }
 
     private function linkOf(User $user, string $graphId): OutlookMeetingLink
@@ -493,5 +580,470 @@ class OutlookOutOfSyncSyncTest extends TestCaseWithDatabase
         $kept = $this->linkOf($data->user, 'bf-kept');
         $this->assertSame('2026-12-05 10:00:00', $this->utc($kept->meeting_starts_at));
         $this->assertSame('2026-12-05 11:00:00', $this->utc($kept->meeting_ends_at));
+    }
+
+    public function test_meeting_missing_from_a_complete_window_is_flagged_removed_after_a_lookup(): void
+    {
+        // Arrange: a not-started linked meeting on Thursday that the complete window no longer returns
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-9', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->fakeWindow([$this->graphEvent('evt-other', '2026-12-02T09:00:00', '2026-12-02T10:00:00')], complete: true);
+        // Graph confirms the occurrence is gone (S4: 404 ErrorItemNotFound)
+        $this->fakeLookups(Http::sequence()->pushResponse($this->lookupFixture('S4')));
+
+        // Act
+        $response = $this->syncWeek();
+
+        // Assert: exactly one lookup, of that occurrence, with the UTC / immutable-id Prefer header
+        $response->assertOk()->assertJsonPath('status', 'ok')->assertJsonPath('truncated', false);
+        $lookups = $this->lookupRequests();
+        $this->assertCount(1, $lookups);
+        $this->assertStringStartsWith('https://graph.microsoft.com/v1.0/me/events/evt-9?', $lookups[0]->url());
+        $this->assertTrue($lookups[0]->hasHeader('Prefer', GraphCalendarClient::PREFER));
+        // The link waits for the user's choice; the entry is never deleted (D-05)
+        $link = $this->linkOf($data->user, 'evt-9');
+        $this->assertSame(Decision::REASON_REMOVED, $link->flag_reason);
+        $this->assertNotNull($link->flagged_at);
+        $this->assertNull($link->outlook_starts_at);
+        $this->assertNull($link->outlook_ends_at);
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($link->meeting_starts_at));
+        $this->assertNotNull($link->last_checked_at);
+        $this->assertTrue(TimeEntry::query()->whereKey($entry->getKey())->exists());
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($entry->end));
+    }
+
+    public function test_absent_meeting_is_not_flagged_without_a_lookup_answer(): void
+    {
+        // Arrange: same absent meeting, but the lookup meets an outage (503 without Retry-After)
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-9', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->fakeWindow([], complete: true);
+        $this->fakeLookups(Http::sequence()->push(['error' => ['code' => 'ServiceUnavailable']], 503));
+
+        // Act
+        $response = $this->syncWeek();
+
+        // Assert: an error proves nothing, so nothing changes (D-07)
+        $response->assertOk()->assertJsonPath('status', 'ok');
+        $this->assertCount(1, $this->lookupRequests());
+        $link = $this->linkOf($data->user, 'evt-9');
+        $this->assertNull($link->flag_reason);
+        $this->assertNull($link->flagged_at);
+        $this->assertNull($link->released_at);
+        $this->assertNull($link->last_checked_at);
+        $this->assertNull($this->account($data->user)->graph_backoff_until);
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($entry->end));
+    }
+
+    public function test_partial_window_does_no_lookup(): void
+    {
+        // Arrange: the linked meeting is absent from page 1 of a traversal the page cap cuts short
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-9', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->fakeWindow([$this->graphEvent('evt-other', '2026-12-02T09:00:00', '2026-12-02T10:00:00')], complete: false);
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $response = $this->syncWeek();
+
+        // Assert: a partial window proves no absence, so no lookup and no change (D-07)
+        $response->assertOk()->assertJsonPath('status', 'ok')->assertJsonPath('truncated', true);
+        $this->assertSame([], $this->lookupRequests());
+        $link = $this->linkOf($data->user, 'evt-9');
+        $this->assertNull($link->flag_reason);
+        $this->assertNull($link->last_checked_at);
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($entry->start));
+    }
+
+    public function test_meeting_moved_out_of_the_window_follows_via_lookup(): void
+    {
+        // Arrange: a not-started, unedited meeting on Thursday that Outlook moved to the next week (S5b)
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-5b', '2026-12-03 11:00:00', '2026-12-03 11:30:00');
+        $this->fakeWindow([], complete: true);
+        $this->fakeLookups(Http::sequence()->pushResponse($this->lookupFixture('S5b')));
+
+        // Act
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok');
+
+        // Assert: a 200 at another time is a moved sighting: the unedited entry follows (D-04)
+        $this->assertCount(1, $this->lookupRequests());
+        $entry->refresh();
+        $this->assertSame('2026-12-09 11:00:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-09 11:30:00', $this->utc($entry->end));
+        $link = $this->linkOf($data->user, 'evt-5b');
+        $this->assertSame('2026-12-09 11:00:00', $this->utc($link->meeting_starts_at));
+        $this->assertSame('2026-12-09 11:30:00', $this->utc($link->meeting_ends_at));
+        $this->assertNotNull($link->auto_adjusted_at);
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($link->auto_adjusted_from_starts_at));
+        $this->assertNull($link->flag_reason);
+        $this->assertNull($link->released_at);
+    }
+
+    public function test_cancelled_lookup_answer_flags_the_entry_cancelled(): void
+    {
+        // Arrange: the window no longer returns the meeting, the lookup answers 200 cancelled (S3)
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-3', '2026-12-04 09:00:00', '2026-12-04 09:30:00');
+        $this->fakeWindow([], complete: true);
+        $this->fakeLookups(Http::sequence()->pushResponse($this->lookupFixture('S3')));
+
+        // Act
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok');
+
+        // Assert: flagged for the user's choice, the entry kept as it is (D-05)
+        $this->assertCount(1, $this->lookupRequests());
+        $link = $this->linkOf($data->user, 'evt-3');
+        $this->assertSame(Decision::REASON_CANCELLED, $link->flag_reason);
+        $this->assertNull($link->outlook_starts_at);
+        $this->assertSame('2026-12-04 09:00:00', $this->utc($link->meeting_starts_at));
+        $entry->refresh();
+        $this->assertSame('2026-12-04 09:00:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-04 09:30:00', $this->utc($entry->end));
+    }
+
+    public function test_cancelled_meeting_in_the_window_flags_its_entry(): void
+    {
+        // Arrange: a cached, linked meeting that comes back cancelled in the window
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-c', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        OutlookMeeting::query()->create([
+            'user_id' => $data->user->getKey(),
+            'graph_id' => 'evt-c',
+            'event_type' => 'singleInstance',
+            'subject' => 'Board review',
+            'starts_at' => '2026-12-03 10:00:00',
+            'ends_at' => '2026-12-03 11:00:00',
+            'organizer_name' => 'Org Name',
+            'organizer_address' => 'org@example.test',
+            'attendees' => [['address' => 'ada@example.test', 'name' => 'Ada', 'type' => 'required']],
+            'attendee_count' => 1,
+            'is_organizer' => false,
+            'is_online_meeting' => true,
+            'web_link' => 'https://outlook.example.test/evt-c',
+            'last_seen_at' => '2026-11-30 08:00:00',
+        ]);
+        $this->fakeWindow([$this->graphEvent('evt-c', '2026-12-03T10:00:00', '2026-12-03T11:00:00', ['isCancelled' => true])], complete: true);
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok');
+
+        // Assert: the sighting was enough, no lookup was needed
+        $this->assertSame([], $this->lookupRequests());
+        $link = $this->linkOf($data->user, 'evt-c');
+        $this->assertSame(Decision::REASON_CANCELLED, $link->flag_reason);
+        $this->assertTrue(TimeEntry::query()->whereKey($entry->getKey())->exists());
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($entry->end));
+        // The cached meeting is still hidden and scrubbed (T-03-13): the sighting kept ids and times only
+        $meeting = OutlookMeeting::query()->where('user_id', '=', $data->user->getKey())->where('graph_id', '=', 'evt-c')->sole();
+        $this->assertNotNull($meeting->gone_at);
+        $this->assertNull($meeting->subject);
+        $this->assertNull($meeting->organizer_name);
+        $this->assertNull($meeting->organizer_address);
+        $this->assertNull($meeting->attendees);
+        $this->assertNull($meeting->attendee_count);
+        $this->assertNull($meeting->web_link);
+    }
+
+    public function test_edited_entry_of_a_moved_meeting_is_flagged_not_moved(): void
+    {
+        // Arrange: the user started the entry at 10:15; Outlook moved the meeting from 10:00 to 14:00
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-e', '2026-12-03 10:00:00', '2026-12-03 11:00:00', '2026-12-03 10:15:00', '2026-12-03 11:00:00');
+        $this->fakeWindow([$this->graphEvent('evt-e', '2026-12-03T14:00:00', '2026-12-03T15:00:00')], complete: true);
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $this->syncWeek()->assertOk();
+
+        // Assert: flagged with the new slot, the edited entry left as the user made it (D-04)
+        $this->assertSame([], $this->lookupRequests());
+        $link = $this->linkOf($data->user, 'evt-e');
+        $this->assertSame(Decision::REASON_MOVED, $link->flag_reason);
+        $this->assertSame('2026-12-03 14:00:00', $this->utc($link->outlook_starts_at));
+        $this->assertSame('2026-12-03 15:00:00', $this->utc($link->outlook_ends_at));
+        $this->assertFalse($link->outlook_all_day);
+        $this->assertNull($link->auto_adjusted_at);
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:15:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($entry->end));
+    }
+
+    public function test_started_meeting_moved_is_released_not_changed(): void
+    {
+        // Arrange: the clock stands after the recorded start; the lookup finds the meeting next week
+        $data = $this->employee('2026-12-03 10:30:00');
+        $entry = $this->linkedEntry($data->user, 'evt-s', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->fakeWindow([], complete: true);
+        $this->fakeLookups(Http::sequence()->pushResponse($this->lookupAt('evt-s', '2026-12-09T10:00:00', '2026-12-09T11:00:00')));
+
+        // Act
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok');
+
+        // Assert: released, never changed (D-02, D-03)
+        $this->assertCount(1, $this->lookupRequests());
+        $link = $this->linkOf($data->user, 'evt-s');
+        $this->assertNotNull($link->released_at);
+        $this->assertNull($link->flag_reason);
+        $this->assertNull($link->auto_adjusted_at);
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($link->meeting_starts_at));
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($entry->end));
+    }
+
+    public function test_started_meeting_cancelled_or_removed_changes_nothing(): void
+    {
+        // Arrange: two started meetings; one comes back cancelled in the window, the other is absent and
+        // the lookup confirms it is gone
+        $data = $this->employee('2026-12-03 10:30:00');
+        $cancelled = $this->linkedEntry($data->user, 'evt-sc', '2026-12-02 09:00:00', '2026-12-02 10:00:00');
+        $removed = $this->linkedEntry($data->user, 'evt-sr', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->fakeWindow([$this->graphEvent('evt-sc', '2026-12-02T09:00:00', '2026-12-02T10:00:00', ['isCancelled' => true])], complete: true);
+        $this->fakeLookups(Http::sequence()->pushResponse($this->lookupFixture('S4')));
+
+        // Act
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok');
+
+        // Assert: one lookup, of the absent meeting only; no flag, no release, entries untouched (D-02)
+        $lookups = $this->lookupRequests();
+        $this->assertCount(1, $lookups);
+        $this->assertStringStartsWith('https://graph.microsoft.com/v1.0/me/events/evt-sr?', $lookups[0]->url());
+        foreach (['evt-sc' => $cancelled, 'evt-sr' => $removed] as $graphId => $entry) {
+            $link = $this->linkOf($data->user, $graphId);
+            $this->assertNull($link->flag_reason, $graphId);
+            $this->assertNull($link->flagged_at, $graphId);
+            $this->assertNull($link->released_at, $graphId);
+            $this->assertNull($link->detached_at, $graphId);
+            $this->assertTrue(TimeEntry::query()->whereKey($entry->getKey())->exists(), $graphId);
+            $before = [$this->utc($entry->start), $this->utc($entry->end)];
+            $entry->refresh();
+            $this->assertSame($before, [$this->utc($entry->start), $this->utc($entry->end)], $graphId);
+        }
+    }
+
+    public function test_subject_and_attendee_changes_change_nothing(): void
+    {
+        // Arrange: same slot in Outlook, but another subject, attendees, location and body
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->fakeWindow([$this->graphEvent('evt-1', '2026-12-03T10:00:00', '2026-12-03T11:00:00', [
+            'subject' => 'Renamed meeting',
+            'attendees' => [
+                ['type' => 'required', 'emailAddress' => ['name' => 'New Person', 'address' => 'new@example.test']],
+                ['type' => 'optional', 'emailAddress' => ['name' => 'Other', 'address' => 'other@example.test']],
+            ],
+            'location' => ['displayName' => 'Room 42'],
+            'bodyPreview' => 'New agenda',
+        ])], complete: true);
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok');
+
+        // Assert: only the time or a cancellation can reach a decision (D-06)
+        $this->assertSame([], $this->lookupRequests());
+        $link = $this->linkOf($data->user, 'evt-1');
+        $this->assertNull($link->flag_reason);
+        $this->assertNull($link->released_at);
+        $this->assertNull($link->auto_adjusted_at);
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($link->meeting_starts_at));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($link->meeting_ends_at));
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($entry->end));
+        $this->assertSame('Linked evt-1', $entry->description);
+    }
+
+    public function test_flag_clears_when_outlook_returns_to_the_recorded_time(): void
+    {
+        // Arrange: an edited entry whose meeting was flagged moved to 14:00; Outlook is back at 10:00
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00', '2026-12-03 10:15:00', '2026-12-03 11:00:00');
+        OutlookMeetingLink::query()->where('graph_id', '=', 'evt-1')->update([
+            'flag_reason' => Decision::REASON_MOVED,
+            'flagged_at' => '2026-11-30 12:00:00',
+            'outlook_starts_at' => '2026-12-03 14:00:00',
+            'outlook_ends_at' => '2026-12-03 15:00:00',
+            'outlook_all_day' => false,
+        ]);
+        $this->fakeWindow([$this->graphEvent('evt-1', '2026-12-03T10:00:00', '2026-12-03T11:00:00')], complete: true);
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok');
+
+        // Assert: the flag cleared by itself, the entry untouched (D-17)
+        $link = $this->linkOf($data->user, 'evt-1');
+        $this->assertNull($link->flag_reason);
+        $this->assertNull($link->flagged_at);
+        $this->assertNull($link->outlook_starts_at);
+        $this->assertNull($link->outlook_ends_at);
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($link->meeting_starts_at));
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:15:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($entry->end));
+    }
+
+    public function test_throttled_lookup_persists_backoff_and_stops(): void
+    {
+        // Arrange: two absent meetings; Graph throttles the first lookup
+        $data = $this->employee();
+        $this->linkedEntry($data->user, 'evt-a', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->linkedEntry($data->user, 'evt-b', '2026-12-04 10:00:00', '2026-12-04 11:00:00');
+        $this->fakeWindow([], complete: true);
+        $this->fakeLookups(Http::sequence()->push(['error' => ['code' => 'TooManyRequests']], 429, ['Retry-After' => '60']));
+
+        // Act
+        $response = $this->syncWeek();
+
+        // Assert: the window itself synced; the back-off is persisted and no further lookup is sent
+        $response->assertOk()->assertJsonPath('status', 'ok');
+        $this->assertCount(1, $this->lookupRequests());
+        $this->assertSame('2026-12-01 08:01:00', $this->utc($this->account($data->user)->graph_backoff_until));
+        foreach (['evt-a', 'evt-b'] as $graphId) {
+            $link = $this->linkOf($data->user, $graphId);
+            $this->assertNull($link->flag_reason, $graphId);
+            $this->assertNull($link->last_checked_at, $graphId);
+        }
+    }
+
+    public function test_lookup_rejected_twice_marks_the_account_for_reconnect(): void
+    {
+        // Arrange: two absent meetings; the lookup is rejected before and after a token refresh
+        $data = $this->employee();
+        $this->linkedEntry($data->user, 'evt-a', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->linkedEntry($data->user, 'evt-b', '2026-12-04 10:00:00', '2026-12-04 11:00:00');
+        $this->fakeWindow([], complete: true);
+        Http::fake(['https://login.microsoftonline.com/*/oauth2/v2.0/token' => Http::response([
+            'access_token' => 'at-new-5b2e',
+            'expires_in' => 3600,
+            'refresh_token' => 'rt-new-8c4a',
+        ])]);
+        $this->fakeLookups(Http::sequence()
+            ->push(['error' => ['code' => 'InvalidAuthenticationToken']], 401)
+            ->push(['error' => ['code' => 'InvalidAuthenticationToken']], 401));
+
+        // Act
+        $response = $this->syncWeek();
+
+        // Assert: Phase 3 rule, one refresh then reconnect; the second meeting is not looked up
+        $response->assertOk()->assertJsonPath('status', 'ok');
+        $lookups = $this->lookupRequests();
+        $this->assertCount(2, $lookups);
+        $this->assertSame($lookups[0]->url(), $lookups[1]->url());
+        $this->assertNotNull($this->account($data->user)->reconnect_required_at);
+        foreach (['evt-a', 'evt-b'] as $graphId) {
+            $this->assertNull($this->linkOf($data->user, $graphId)->flag_reason, $graphId);
+        }
+    }
+
+    public function test_lookup_budget_is_capped(): void
+    {
+        // Arrange: seven absent, not-started meetings across the week, each one gone in Outlook
+        $data = $this->employee();
+        for ($i = 0; $i < 7; $i++) {
+            $day = 2 + intdiv($i, 2);
+            $hour = $i % 2 === 0 ? 9 : 14;
+            $this->linkedEntry(
+                $data->user,
+                'evt-'.$i,
+                sprintf('2026-12-%02d %02d:00:00', $day, $hour),
+                sprintf('2026-12-%02d %02d:30:00', $day, $hour),
+            );
+        }
+        $this->fakeWindow([], complete: true);
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok');
+
+        // Assert: five lookups (microsoft365.out_of_sync.lookups_per_sync), soonest first
+        $this->assertCount(5, $this->lookupRequests());
+        for ($i = 0; $i < 7; $i++) {
+            $link = $this->linkOf($data->user, 'evt-'.$i);
+            $this->assertSame($i < 5 ? Decision::REASON_REMOVED : null, $link->flag_reason, 'evt-'.$i);
+        }
+    }
+
+    public function test_failed_traversal_applies_nothing(): void
+    {
+        // Arrange: page 1 shows the linked meeting moved, page 2 is throttled
+        $data = $this->employee();
+        $entry = $this->linkedEntry($data->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $this->linkedEntry($data->user, 'evt-absent', '2026-12-04 10:00:00', '2026-12-04 11:00:00');
+        Config::set('microsoft365.graph.max_pages', 30);
+        Http::fake([self::GRAPH_URL => Http::sequence()
+            ->push(['value' => [$this->graphEvent('evt-1', '2026-12-03T12:00:00', '2026-12-03T13:00:00')], '@odata.nextLink' => self::NEXT_LINK])
+            ->push(['error' => ['code' => 'TooManyRequests']], 429, ['Retry-After' => '5']),
+        ]);
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act
+        $response = $this->syncWeek();
+
+        // Assert: a failed traversal neither applies its sightings nor looks anything up (D-07)
+        $response->assertOk()->assertJsonPath('status', 'throttled');
+        $this->assertSame([], $this->lookupRequests());
+        $entry->refresh();
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($entry->start));
+        $this->assertSame('2026-12-03 11:00:00', $this->utc($entry->end));
+        foreach (['evt-1', 'evt-absent'] as $graphId) {
+            $link = $this->linkOf($data->user, $graphId);
+            $this->assertNull($link->flag_reason, $graphId);
+            $this->assertNull($link->auto_adjusted_at, $graphId);
+            $this->assertNull($link->last_checked_at, $graphId);
+        }
+        $this->assertSame('2026-12-03 10:00:00', $this->utc($this->linkOf($data->user, 'evt-1')->meeting_starts_at));
+    }
+
+    public function test_sync_answer_counts_auto_adjusted_entries(): void
+    {
+        // Arrange: two not-started, unedited linked meetings that Outlook moved to the afternoon
+        $data = $this->employee();
+        $first = $this->linkedEntry($data->user, 'evt-1', '2026-12-03 10:00:00', '2026-12-03 11:00:00');
+        $second = $this->linkedEntry($data->user, 'evt-2', '2026-12-04 10:00:00', '2026-12-04 11:00:00');
+        $this->fakeWindow([
+            $this->graphEvent('evt-1', '2026-12-03T14:00:00', '2026-12-03T15:00:00'),
+            $this->graphEvent('evt-2', '2026-12-04T15:00:00', '2026-12-04T16:00:00'),
+        ], complete: true);
+        $this->fakeLookups($this->lookupFixture('S4'));
+
+        // Act + Assert: the sync that moved them says so
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok')->assertJsonPath('auto_adjusted', 2);
+        $this->assertSame('2026-12-03 14:00:00', $this->utc($first->refresh()->start));
+        $this->assertSame('2026-12-04 15:00:00', $this->utc($second->refresh()->start));
+
+        // Act + Assert: the next sync finds nothing to change
+        $this->travel(11)->seconds();
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'ok')->assertJsonPath('auto_adjusted', 0);
+
+        // Act + Assert: a reused window answers without Graph, and without a count
+        $this->syncWeek(force: false)->assertOk()->assertJsonPath('status', 'reused')->assertJsonPath('auto_adjusted', 0);
+
+        // Act + Assert: a sync that coalesces with a running one carries no count either
+        $this->travel(11)->seconds();
+        $lock = Cache::lock('m365:meetings-sync:'.$data->user->getKey(), 20);
+        $this->assertTrue($lock->get());
+        try {
+            $this->syncWeek()->assertOk()->assertJsonPath('status', 'coalesced')->assertJsonPath('auto_adjusted', 0);
+        } finally {
+            $lock->release();
+        }
+
+        // Act + Assert: nor does a throttled answer
+        MicrosoftAccount::query()->where('user_id', '=', $data->user->getKey())->update(['graph_backoff_until' => '2026-12-01 09:00:00']);
+        $this->syncWeek()->assertOk()->assertJsonPath('status', 'throttled')->assertJsonPath('auto_adjusted', 0);
+
+        // No lookup was ever needed: both meetings were in the window
+        $this->assertSame([], $this->lookupRequests());
     }
 }
