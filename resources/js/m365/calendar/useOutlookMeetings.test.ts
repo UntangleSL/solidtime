@@ -2901,3 +2901,195 @@ describe('useOutlookMeetings moveEntry (D-03) and auto-adjusts', () => {
         });
     });
 });
+
+describe('useOutlookMeetings jumpToFirst', () => {
+    // FLAG_B (te-b, Monday 2026-11-02) is the first flag.
+    const blocks: HTMLElement[] = [];
+
+    function insertBlock(timeEntryId: string) {
+        const block = document.createElement('div');
+        block.setAttribute('data-event-id', timeEntryId);
+        block.tabIndex = 0;
+        const scrollIntoView = vi.fn();
+        block.scrollIntoView = scrollIntoView;
+        const focus = vi.spyOn(block, 'focus');
+        document.body.appendChild(block);
+        blocks.push(block);
+        return { block, scrollIntoView, focus };
+    }
+
+    afterEach(() => {
+        blocks.splice(0).forEach((block) => block.remove());
+        vi.unstubAllGlobals();
+    });
+
+    it('opens in place when the block is rendered: no navigation, centred, focused', async () => {
+        const mounted = await mountWithFlags();
+        const navigator = vi.fn();
+        mounted.api.setCalendarNavigator(navigator);
+        const { scrollIntoView, focus } = insertBlock('te-b');
+
+        await mounted.api.jumpToFirst();
+
+        expect(navigator).not.toHaveBeenCalled();
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' });
+        expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+        expect(mounted.api.flagPanel.value).toEqual({
+            timeEntryId: 'te-b',
+            anchor: 'entry',
+            origin: 'counter',
+            seq: 1,
+        });
+        expect(mounted.api.jumpBusy.value).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('does not scroll smoothly with prefers-reduced-motion', async () => {
+        const mounted = await mountWithFlags();
+        vi.stubGlobal(
+            'matchMedia',
+            vi.fn((query: string) => ({ matches: query.includes('reduce'), media: query }))
+        );
+        const { scrollIntoView } = insertBlock('te-b');
+
+        await mounted.api.jumpToFirst();
+
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
+        mounted.wrapper.unmount();
+    });
+
+    it("navigates to the entry's local day and opens on the block once it appears", async () => {
+        vi.mocked(window.getTimezoneSetting).mockReturnValue('America/New_York');
+        try {
+            // 03:00 UTC on Dec 1 is still Nov 30 in New York
+            const late = flagItem('te-late', 'removed', '2026-12-01T03:00:00Z');
+            const mounted = await mountWithFlags([late]);
+            const navigator = vi.fn();
+            mounted.api.setCalendarNavigator(navigator);
+
+            const done = mounted.api.jumpToFirst();
+            expect(mounted.api.jumpBusy.value).toBe(true);
+            await advance(0);
+            expect(navigator).toHaveBeenCalledTimes(1);
+            expect(navigator).toHaveBeenCalledWith('2026-11-30');
+            expect(mounted.api.flagPanel.value).toBeNull();
+
+            const { focus } = insertBlock('te-late');
+            await advance(100);
+            await done;
+
+            expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+            expect(mounted.api.flagPanel.value).toEqual({
+                timeEntryId: 'te-late',
+                anchor: 'entry',
+                origin: 'counter',
+                seq: 1,
+            });
+            expect(mounted.api.jumpBusy.value).toBe(false);
+            mounted.wrapper.unmount();
+        } finally {
+            vi.mocked(window.getTimezoneSetting).mockReturnValue('UTC');
+        }
+    });
+
+    it('falls back to the counter anchor 3 s after the data settled without the block', async () => {
+        const mounted = await mountWithFlags();
+        const navigator = vi.fn();
+        mounted.api.setCalendarNavigator(navigator);
+
+        const done = mounted.api.jumpToFirst();
+        await advance(0);
+        expect(navigator).toHaveBeenCalledWith('2026-11-02');
+
+        // Further clicks during the jump are ignored
+        await mounted.api.jumpToFirst();
+        expect(navigator).toHaveBeenCalledTimes(1);
+
+        await advance(2_800);
+        expect(mounted.api.flagPanel.value).toBeNull();
+        expect(mounted.api.jumpBusy.value).toBe(true);
+
+        await advance(300);
+        await done;
+
+        expect(mounted.api.flagPanel.value).toEqual({
+            timeEntryId: 'te-b',
+            anchor: 'counter',
+            origin: 'counter',
+            seq: 1,
+        });
+        expect(mounted.api.jumpBusy.value).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('without a navigator a jump to an unrendered block falls back after 3 s', async () => {
+        const mounted = await mountWithFlags();
+        mounted.api.setCalendarNavigator(vi.fn());
+        mounted.api.setCalendarNavigator(null);
+
+        const done = mounted.api.jumpToFirst();
+        await advance(3_100);
+        await done;
+
+        expect(mounted.api.flagPanel.value?.anchor).toBe('counter');
+        mounted.wrapper.unmount();
+    });
+
+    it('does nothing without flags or while it cannot act', async () => {
+        const empty = await mountWithFlags([]);
+        const navigator = vi.fn();
+        empty.api.setCalendarNavigator(navigator);
+
+        await empty.api.jumpToFirst();
+
+        expect(navigator).not.toHaveBeenCalled();
+        expect(empty.api.flagPanel.value).toBeNull();
+        expect(empty.api.jumpBusy.value).toBe(false);
+        empty.wrapper.unmount();
+
+        setPage(null);
+        const inert = mountComposable();
+        await advance(500);
+        inert.api.setCalendarNavigator(navigator);
+        await inert.api.jumpToFirst();
+        expect(navigator).not.toHaveBeenCalled();
+        inert.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings auto-adjust announcement', () => {
+    async function syncWith(autoAdjusted: number): Promise<{
+        mounted: Mounted;
+        keys: () => unknown[];
+    }> {
+        axiosPost.mockResolvedValue(syncResponse({ auto_adjusted: autoAdjusted }));
+        const mounted = mountComposable();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        await advance(500);
+        return { mounted, keys: () => invalidatedKeysOf(invalidate) };
+    }
+
+    it('refreshes the time entries and announces the plural text once', async () => {
+        const { mounted, keys } = await syncWith(2);
+
+        expect(keys()).toContainEqual(['timeEntries']);
+        expect(mounted.api.announcement.value).toBe('2 time entries updated from Outlook');
+        expect(addNotification).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('uses the singular text for one entry', async () => {
+        const { mounted } = await syncWith(1);
+
+        expect(mounted.api.announcement.value).toBe('1 time entry updated from Outlook');
+        mounted.wrapper.unmount();
+    });
+
+    it('says nothing and refreshes no time entries when the sync adjusted none', async () => {
+        const { mounted, keys } = await syncWith(0);
+
+        expect(keys()).not.toContainEqual(['timeEntries']);
+        expect(mounted.api.announcement.value).toBe('');
+        mounted.wrapper.unmount();
+    });
+});

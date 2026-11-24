@@ -55,7 +55,7 @@ import {
 import { useOutlookSelection, type OutlookSelection } from './useOutlookSelection';
 import { ghostLaneWidth } from './ghostLayout';
 import { isFaded, isPreassigned, isRecurring } from './suggestions';
-import { firstFlag, formatRange } from './syncFlagReason';
+import { autoAdjustedAnnouncement, firstFlag, formatRange } from './syncFlagReason';
 import { fillLabel } from './labels';
 
 export interface WeekBucket {
@@ -76,6 +76,12 @@ const SHOW_DISMISSED_STORAGE_KEY = 'solidtime:m365-show-dismissed';
 const SYNC_COOLDOWN_MS = 10_000;
 // Delay of the meetings refresh that follows time-entry refetches (bursts collapse into one read).
 const ENTRIES_REFRESH_DEBOUNCE_MS = 500;
+// Counter jump (UI-SPEC section 3): the popover falls back to the counter when the entry block is
+// not rendered this long after the time entries settled; the block is looked up at this interval,
+// and the whole wait never exceeds the cap (a time-entries load that never settles).
+const JUMP_FALLBACK_MS = 3_000;
+const JUMP_POLL_MS = 100;
+const JUMP_MAX_WAIT_MS = 15_000;
 // Meetings per confirm request: mirrors MeetingConversionRequest::MAX_MEETINGS on the server (a
 // longer list is sent as several requests, one after the other).
 export const MAX_CONFIRM_BATCH = 50;
@@ -207,6 +213,17 @@ export interface OutlookMeetingsContext {
     moveEntry: (meetingId: string) => Promise<OutlookFlagActionResult>;
     // True while the move of meeting `meetingId` runs (the block's pending state).
     isMovePending: (meetingId: string) => boolean;
+    // The toolbar counter's click (D-09, UI-SPEC section 3): reveals the first flagged entry and
+    // opens its popover. In place when its block is rendered; otherwise the calendar navigates to
+    // the entry's local day and the block is awaited; without the block 3 s after the time
+    // entries settled, the popover opens anchored to the counter. Calls while a jump runs, without
+    // flags or while the context cannot act do nothing.
+    jumpToFirst: () => Promise<void>;
+    // True from the counter click until the popover is requested (aria-busy on the counter).
+    jumpBusy: Readonly<Ref<boolean>>;
+    // Registered by the calendar page: moves the core calendar to a local 'YYYY-MM-DD' day,
+    // keeping the view mode (no page visit). null unregisters it.
+    setCalendarNavigator: (navigator: ((date: string) => void) | null) => void;
 }
 
 export const OUTLOOK_MEETINGS_KEY: InjectionKey<OutlookMeetingsContext> =
@@ -533,6 +550,16 @@ export function useOutlookMeetings(
             }
             if (answer.status === 'reconnect' || answer.status === 'not_connected') {
                 stickyState.value = answer.status;
+            }
+            // Entries this sync moved silently with their meeting (D-04): the calendar shows them
+            // at their new times and a watched sync says so once (UI-SPEC section 5). The daily
+            // job's adjusts never reach this answer.
+            const adjusted = answer.auto_adjusted ?? 0;
+            if (adjusted > 0) {
+                void queryClient.invalidateQueries({ queryKey: ['timeEntries'] });
+                void queryClient.invalidateQueries({ queryKey: ['goals'] });
+                const current = labels.value;
+                if (current) announce(autoAdjustedAnnouncement(adjusted, current));
             }
         } catch (error) {
             // Transport, app 5xx, session expiry (401/419) and the route-level 429 all mean "Outlook
@@ -1404,6 +1431,96 @@ export function useOutlookMeetings(
         return { status: 'ok' };
     }
 
+    // --- Counter jump (D-09, UI-SPEC section 3).
+    let calendarNavigator: ((date: string) => void) | null = null;
+    const jumpBusy = ref(false);
+
+    function setCalendarNavigator(navigator: ((date: string) => void) | null): void {
+        calendarNavigator = navigator;
+    }
+
+    // The core block of a time entry, inside the calendar root when there is one.
+    function findEntryBlock(timeEntryId: string): HTMLElement | null {
+        if (typeof document === 'undefined') return null;
+        const selector = `[data-event-id="${timeEntryId.replace(/["\\]/g, '\\$&')}"]`;
+        const root = document.querySelector('.fc') ?? document;
+        return root.querySelector<HTMLElement>(selector);
+    }
+
+    function wait(ms: number): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    // Polls for the block after a navigation. The fallback clock only runs while no time-entries
+    // query is fetching (the data of the new range has settled); the cap ends a wait on a load
+    // that never settles.
+    async function waitForEntryBlock(timeEntryId: string): Promise<HTMLElement | null> {
+        const startedAt = Date.now();
+        let settledAt: number | null = null;
+        for (;;) {
+            if (unmounted) return null;
+            const block = findEntryBlock(timeEntryId);
+            if (block) return block;
+            const now = Date.now();
+            if (queryClient.isFetching({ queryKey: ['timeEntries'] }) > 0) {
+                settledAt = null;
+            } else if (settledAt === null) {
+                settledAt = now;
+            }
+            if (
+                (settledAt !== null && now - settledAt >= JUMP_FALLBACK_MS) ||
+                now - startedAt >= JUMP_MAX_WAIT_MS
+            ) {
+                return null;
+            }
+            await wait(JUMP_POLL_MS);
+        }
+    }
+
+    // Centres and focuses the block; smooth scrolling only without prefers-reduced-motion.
+    function revealBlock(block: HTMLElement): void {
+        const reduceMotion =
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        block.scrollIntoView?.({ block: 'center', behavior: reduceMotion ? 'auto' : 'smooth' });
+        block.focus({ preventScroll: true });
+    }
+
+    async function jumpToFirst(): Promise<void> {
+        if (jumpBusy.value || !flagsVisible.value) return;
+        // The target is fixed at the click; a resolved flag leaves the list, so repeated clicks
+        // walk through the flags.
+        const target = firstOutOfSync.value;
+        if (!target) return;
+        const id = target.time_entry_id;
+
+        jumpBusy.value = true;
+        try {
+            let block = findEntryBlock(id);
+            if (!block) {
+                // The entry's local day; the navigator keeps the view mode (week or day).
+                const day = getLocalizedDayJs(target.entry_start).format('YYYY-MM-DD');
+                try {
+                    calendarNavigator?.(day);
+                } catch {
+                    // A failed navigation ends like a block that never shows: the counter fallback.
+                }
+                await nextTick();
+                block = await waitForEntryBlock(id);
+            }
+            // The flag may have been resolved (or the right to act lost) meanwhile.
+            if (unmounted || !flagsVisible.value || flagOf(id) === null) return;
+            if (block) {
+                revealBlock(block);
+                requestFlagPanel(id, 'entry', 'counter');
+            } else {
+                requestFlagPanel(id, 'counter', 'counter');
+            }
+        } finally {
+            jumpBusy.value = false;
+        }
+    }
+
     // The outcome of a Connect / Reconnect that returned to the calendar (flashed by the server, so
     // it is in the props for exactly one page load) goes through the existing notification store.
     // The store is only touched when there is something to say.
@@ -1443,6 +1560,7 @@ export function useOutlookMeetings(
         unsubscribeEntries();
         if (entriesRefreshTimer !== undefined) clearTimeout(entriesRefreshTimer);
         entriesRefreshTimer = undefined;
+        calendarNavigator = null;
         delete (window as unknown as TestWindow).__TEST_SET_OUTLOOK_MEETINGS__;
     });
 
@@ -1494,6 +1612,9 @@ export function useOutlookMeetings(
         autoAdjustedOf,
         moveEntry,
         isMovePending,
+        jumpToFirst,
+        jumpBusy,
+        setCalendarNavigator,
     };
 
     // The toolbar controls are rendered through core slots and inject this instead of taking props.
