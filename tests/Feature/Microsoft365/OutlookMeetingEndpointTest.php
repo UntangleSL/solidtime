@@ -253,7 +253,7 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
 
         // Assert
         $response->assertOk();
-        $response->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null]]);
+        $response->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null], 'out_of_sync' => ['items' => []], 'auto_adjusted' => []]);
         Http::assertNothingSent();
     }
 
@@ -377,12 +377,13 @@ class OutlookMeetingEndpointTest extends TestCaseWithDatabase
         $item = $response->json('data.0');
         $keys = array_keys($item);
         sort($keys);
-        $expected = ['assignment', 'dismissed', 'end', 'id', 'is_online_meeting', 'is_organizer', 'organizer_name', 'series_ignored', 'series_key', 'start', 'subject', 'suggestions', 'web_link'];
+        $expected = ['assignment', 'dismissed', 'end', 'id', 'is_online_meeting', 'is_organizer', 'moved_from', 'organizer_name', 'series_ignored', 'series_key', 'start', 'subject', 'suggestions', 'web_link'];
         $this->assertSame($expected, $keys);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $item['start']);
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $item['end']);
         $this->assertFalse($item['dismissed']);
-        $this->assertSame(['data', 'sync', 'linked_time_entry_ids'], array_keys($response->json()));
+        $this->assertNull($item['moved_from']);
+        $this->assertSame(['data', 'sync', 'linked_time_entry_ids', 'out_of_sync', 'auto_adjusted'], array_keys($response->json()));
     }
 
     public function test_meetings_routes_are_not_under_api_and_use_the_web_group(): void

@@ -444,7 +444,7 @@ class OutlookMeetingSuggestionTest extends TestCaseWithDatabase
 
         // Assert: the existing empty answer, nothing about meetings or suggestions (D-14)
         $read->assertOk();
-        $read->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null]]);
+        $read->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null], 'out_of_sync' => ['items' => []], 'auto_adjusted' => []]);
     }
 
     public function test_suggestions_carry_no_personal_data(): void

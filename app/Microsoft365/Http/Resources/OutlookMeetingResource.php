@@ -18,6 +18,9 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * hash, never the Graph series id), whether the series is ignored, the series pre-assignment and the
  * learned suggestions. Attendees, addresses, Graph ids and scores never appear.
  *
+ * Phase 6 adds moved_from (D-03): the user's own entry a started, since moved meeting was logged on
+ * (its id and times), or null.
+ *
  * @property OutlookMeeting $resource
  */
 class OutlookMeetingResource extends JsonResource
@@ -53,6 +56,7 @@ class OutlookMeetingResource extends JsonResource
             'series_ignored' => $this->hints->seriesIgnored,
             'assignment' => $this->hints->assignment?->toArray(),
             'suggestions' => $this->hints->suggestions,
+            'moved_from' => $this->hints->movedFrom,
         ];
     }
 }
