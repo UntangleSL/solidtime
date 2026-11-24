@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Microsoft365\OutOfSync;
 
 use App\Exceptions\Api\ApiException;
+use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookMeetingLink;
 use App\Microsoft365\TimeEntries\CoreTimeEntryUpdater;
 use App\Models\TimeEntry;
@@ -29,6 +30,12 @@ use LogicException;
  * - One transaction per link that re-reads the active link and its entry FOR UPDATE: a user edit that
  *   arrives meanwhile waits for the row lock and then wins with its own values. A link that left the
  *   scope (released, detached, too old) or whose entry is gone or now belongs to someone else is skipped.
+ * - Observations apply in the order they were made, not in the order they arrive: one observed before
+ *   the link's last_checked_at is skipped, so a slow daily-job lookup never moves an entry back to the
+ *   slot an earlier sync already left (Pitfall 1). Every applied observation stamps last_checked_at.
+ * - A release (started meeting moved, D-03) also moves the cached meeting row of the occurrence to the
+ *   observed slot, times only, when the row exists and is not gone: no ghost stays at the old slot
+ *   (Pitfall 5).
  * - Time entries change only through CoreTimeEntryUpdater (core's update path) and only for the
  *   AutoAdjust decision: the unedited entry of a meeting that has not started (D-04, D-12). Nothing here
  *   ever deletes an entry (D-05). When core refuses the adjust (overlap, blocked organization,
@@ -107,12 +114,15 @@ final class OutOfSyncApplier
         if ($entry === null || $entry->user_id !== $user->getKey()) {
             return 'skipped';
         }
+        if ($this->isStale($link, $seen)) {
+            return 'skipped';
+        }
 
         $decision = $this->rules->decide(LinkState::fromModels($link, $entry), $seen, $now);
         $outcome = match ($decision->action) {
             DecisionAction::Nothing => null,
             DecisionAction::ClearFlag => $this->clearFlag($link, 'cleared'),
-            DecisionAction::Release => $this->release($link, $now),
+            DecisionAction::Release => $this->release($user, $link, $seen, $now),
             DecisionAction::AutoAdjust => $this->autoAdjust($user, $link, $entry, $decision, $now),
             DecisionAction::Resync => $this->resync($link, $decision),
             DecisionAction::Flag => $this->flag($link, $decision, $now),
@@ -142,11 +152,41 @@ final class OutOfSyncApplier
     }
 
     /**
+     * An observation made before the link's last applied one (second precision, as stored) is older than
+     * what the link already reflects.
+     */
+    private function isStale(OutlookMeetingLink $link, Observation $seen): bool
+    {
+        if ($link->last_checked_at === null) {
+            return false;
+        }
+        $checked = CarbonImmutable::instance($link->last_checked_at)->utc()->format(self::FORMAT);
+        $observed = $seen->observedAt->utc()->format(self::FORMAT);
+
+        return $checked > $observed;
+    }
+
+    /**
+     * The link settles (D-03). The cached meeting row follows the observed slot, so the read shows the
+     * moved meeting there and not as a ghost at the old slot next to the kept entry (Pitfall 5). A row
+     * the sync marked gone stays as it is.
+     *
      * @return 'released'
      */
-    private function release(OutlookMeetingLink $link, CarbonImmutable $now): string
+    private function release(User $user, OutlookMeetingLink $link, Observation $seen, CarbonImmutable $now): string
     {
         $link->released_at = Carbon::instance($now);
+
+        if ($seen->kind === ObservationKind::Present && $seen->start !== null && $seen->end !== null) {
+            OutlookMeeting::query()
+                ->where('user_id', '=', $user->getKey())
+                ->where('graph_id', '=', $link->graph_id)
+                ->whereNull('gone_at')
+                ->update([
+                    'starts_at' => $this->at($seen->start),
+                    'ends_at' => $this->at($seen->end),
+                ]);
+        }
 
         return 'released';
     }
@@ -163,7 +203,13 @@ final class OutOfSyncApplier
 
     /**
      * The entry follows the new Outlook times through core. A refusal by core leaves the entry as it was
-     * (the nested transaction rolls back any partial write) and flags the link 'moved' instead.
+     * (the nested transaction rolls back any partial write) and flags the link 'moved' instead (D-04
+     * "when that is safe", Pitfall 6):
+     * - ValidationException: core's start/end rules;
+     * - AuthorizationException: the user lost time-entries:update:own;
+     * - ApiException: an overlap the organization forbids, or a blocked organization;
+     * - LogicException: the updater's own guards (another signed-in user, a missing core route).
+     * Anything else is a bug and rolls the whole link transaction back.
      *
      * @return 'adjusted'|'flagged'|'skipped'
      */
