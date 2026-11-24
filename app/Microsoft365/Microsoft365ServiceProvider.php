@@ -6,6 +6,7 @@ namespace App\Microsoft365;
 
 use App\Microsoft365\Auth\MicrosoftOAuthGateway;
 use App\Microsoft365\Auth\SocialiteMicrosoftGateway;
+use App\Microsoft365\Console\CheckOutOfSyncCommand;
 use App\Microsoft365\Console\MicrosoftCheckCommand;
 use App\Microsoft365\Http\Middleware\ShareMicrosoftInertiaData;
 use Illuminate\Routing\Router;
@@ -38,7 +39,7 @@ class Microsoft365ServiceProvider extends ServiceProvider
         $this->loadMigrationsFrom(__DIR__.'/database/migrations');
 
         if ($this->app->runningInConsole()) {
-            $this->commands([MicrosoftCheckCommand::class]);
+            $this->commands([MicrosoftCheckCommand::class, CheckOutOfSyncCommand::class]);
         }
     }
 }
