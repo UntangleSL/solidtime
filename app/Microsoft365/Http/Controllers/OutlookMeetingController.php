@@ -11,6 +11,7 @@ use App\Microsoft365\Http\Resources\OutlookMeetingResource;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookSyncWindow;
+use App\Microsoft365\OutOfSync\OutOfSyncFlags;
 use App\Microsoft365\Suggestions\MeetingHints;
 use App\Microsoft365\Suggestions\MeetingSuggester;
 use App\Microsoft365\Suggestions\SeriesAssignmentResolver;
@@ -40,6 +41,10 @@ use Illuminate\Support\Facades\DB;
  * come back only with include_dismissed (D-10). Every other visible meeting carries up to three learned
  * project suggestions ranked from the user's own past conversions (RULE-03); they are only offered,
  * never pre-assigned (D-08).
+ * Phase 6 adds the out-of-sync state of the user's entries: out_of_sync.items lists every flagged entry
+ * of the whole check window whatever week is read (D-09, D-10, D-11), so the calendar can count and mark
+ * them. Impersonation and a disconnected account see none (D-14, D-19); a reconnect-state account still
+ * does, and links with their flags survive Disconnect.
  */
 class OutlookMeetingController extends Controller
 {
@@ -49,7 +54,7 @@ class OutlookMeetingController extends Controller
      * Cache read: never calls Graph, so the calendar can always render what it has (SYNC-01).
      * The range is half-open [start, end): a meeting touching only a boundary is not part of it.
      */
-    public function index(MeetingRangeRequest $request, SeriesAssignmentResolver $resolver, MeetingSuggester $suggester): AnonymousResourceCollection
+    public function index(MeetingRangeRequest $request, SeriesAssignmentResolver $resolver, MeetingSuggester $suggester, OutOfSyncFlags $flags): AnonymousResourceCollection
     {
         $user = $this->sessionUser($request->user());
         $start = $request->rangeStart();
@@ -62,6 +67,8 @@ class OutlookMeetingController extends Controller
             return OutlookMeetingResource::collection(collect())->additional([
                 'sync' => ['last_synced_at' => null, 'retry_after' => null],
                 'linked_time_entry_ids' => [],
+                'out_of_sync' => ['items' => []],
+                'auto_adjusted' => [],
             ]);
         }
 
@@ -147,6 +154,10 @@ class OutlookMeetingController extends Controller
                 'retry_after' => $account->backoffRemainingSeconds(),
             ],
             'linked_time_entry_ids' => $this->linkedTimeEntryIds($user, $start, $end),
+            // The flagged entries of the whole window, not only of the requested range (D-09..D-11);
+            // none without a current organization
+            'out_of_sync' => ['items' => $organization === null ? [] : $flags->items($user, $organization, CarbonImmutable::now('UTC'))],
+            'auto_adjusted' => [],
         ]);
     }
 

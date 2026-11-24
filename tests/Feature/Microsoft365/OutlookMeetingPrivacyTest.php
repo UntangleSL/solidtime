@@ -234,7 +234,7 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
         $control->assertJsonCount(1, 'data');
         $this->assertNotNull($control->json('sync.last_synced_at'));
         $read->assertOk();
-        $read->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null]]);
+        $read->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null], 'out_of_sync' => ['items' => []], 'auto_adjusted' => []]);
         $sync->assertOk();
         $sync->assertJsonPath('status', 'not_connected');
         $dismissAttempt->assertNotFound();
@@ -434,9 +434,9 @@ class OutlookMeetingPrivacyTest extends TestCaseWithDatabase
 
         // Assert
         $noLinkRead->assertOk();
-        $noLinkRead->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null]]);
+        $noLinkRead->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null], 'out_of_sync' => ['items' => []], 'auto_adjusted' => []]);
         $disconnectedRead->assertOk();
-        $disconnectedRead->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null]]);
+        $disconnectedRead->assertExactJson(['data' => [], 'linked_time_entry_ids' => [], 'sync' => ['last_synced_at' => null, 'retry_after' => null], 'out_of_sync' => ['items' => []], 'auto_adjusted' => []]);
         $reconnectRead->assertOk();
         $this->assertSame(['Subject last-known'], $this->subjects($reconnectRead));
     }
