@@ -56,6 +56,14 @@ function cancelled(overrides: Partial<OutlookOutOfSyncItem> = {}): OutlookOutOfS
     });
 }
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+        resolve = res;
+    });
+    return { promise, resolve };
+}
+
 // Fake context: the actions behave like the composable's (pending while they run; ok and stale
 // drop the flag / close the popover of that entry; failed leaves everything as it was).
 const flags = ref<OutlookOutOfSyncItem[]>([]);
@@ -197,6 +205,17 @@ function text(testid: string): string {
 function pressEscape(target: EventTarget = document.activeElement ?? document.body) {
     target.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    );
+}
+
+// The element the popover is placed against (PopoverAnchor's reference).
+function anchorReference(): unknown {
+    return wrapper?.findComponent({ name: 'PopoverAnchor' }).props('reference');
+}
+
+function pointerDown(target: Element) {
+    target.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })
     );
 }
 
@@ -545,5 +564,288 @@ describe('OutlookSyncFlagPanel: cancelled and removed flags', () => {
         await openPanel();
         expect(query('outlook-sync-flag-delete-confirm')).toBeNull();
         expect(document.activeElement).toBe(el('outlook-sync-flag-keep'));
+    });
+});
+
+describe('OutlookSyncFlagPanel: loading, failure and stale', () => {
+    it('while Adjust runs: spinner, both buttons disabled, block aria-busy, not dismissable', async () => {
+        const request = deferred<void>();
+        gate = request.promise;
+        const outside = document.createElement('button');
+        document.body.appendChild(outside);
+        mountPanel();
+        await openPanel();
+
+        el('outlook-sync-flag-adjust').click();
+        await settle();
+
+        const adjust = el('outlook-sync-flag-adjust') as HTMLButtonElement;
+        const keep = el('outlook-sync-flag-keep') as HTMLButtonElement;
+        expect(adjust.disabled).toBe(true);
+        expect(adjust.querySelector('.animate-spin')).not.toBeNull();
+        expect(keep.disabled).toBe(true);
+        expect(keep.querySelector('.animate-spin')).toBeNull();
+        expect(blockOf('te-1').getAttribute('aria-busy')).toBe('true');
+
+        pressEscape();
+        pointerDown(outside);
+        pointerDown(blockOf('te-2'));
+        await settle();
+        expect(query('outlook-sync-flag-panel')).not.toBeNull();
+        expect(closeFlagPanel).not.toHaveBeenCalled();
+        // A second click while pending sends nothing
+        adjust.click();
+        expect(adjustFlag).toHaveBeenCalledTimes(1);
+
+        request.resolve();
+        await settle();
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(blockOf('te-1').hasAttribute('aria-busy')).toBe(false);
+    });
+
+    it('while Delete runs, the confirm button shows a 16px spinner instead of the icon', async () => {
+        const request = deferred<void>();
+        gate = request.promise;
+        flags.value = [cancelled()];
+        mountPanel();
+        await openPanel();
+        el('outlook-sync-flag-delete').click();
+        await settle();
+
+        el('outlook-sync-flag-delete-confirm').click();
+        await settle();
+
+        const confirm = el('outlook-sync-flag-delete-confirm') as HTMLButtonElement;
+        expect(confirm.disabled).toBe(true);
+        const spinner = el('outlook-sync-flag-delete-spinner');
+        expect(spinner.getAttribute('class')).toContain('h-4');
+        expect(spinner.getAttribute('class')).toContain('w-4');
+        expect(confirm.querySelectorAll('svg')).toHaveLength(1);
+        expect((el('outlook-sync-flag-delete-cancel') as HTMLButtonElement).disabled).toBe(true);
+        expect(blockOf('te-1').getAttribute('aria-busy')).toBe('true');
+
+        request.resolve();
+        await settle();
+        expect(blockOf('te-1').hasAttribute('aria-busy')).toBe(false);
+    });
+
+    it('a failed Adjust stays open with the values, shows the alert and refocuses Adjust', async () => {
+        answer = { status: 'failed', message: 'Overlaps another entry' };
+        mountPanel();
+        await openPanel();
+
+        el('outlook-sync-flag-adjust').click();
+        await settle();
+
+        expect(query('outlook-sync-flag-panel')).not.toBeNull();
+        expect(text('outlook-sync-flag-now')).toBe('Wed, Nov 25 · 12:00 – 13:00');
+        const alert = el('outlook-sync-flag-alert');
+        expect(alert.getAttribute('role')).toBe('alert');
+        expect(alert.className).toContain('text-destructive');
+        expect(alert.textContent?.trim()).toBe('Overlaps another entry');
+        expect(alert.querySelector('svg')).not.toBeNull();
+        expect(document.activeElement).toBe(el('outlook-sync-flag-adjust'));
+        expect((el('outlook-sync-flag-adjust') as HTMLButtonElement).disabled).toBe(false);
+        expect(blockOf('te-1').hasAttribute('aria-busy')).toBe(false);
+
+        // A retry clears the old alert until the new answer
+        answer = { status: 'ok' };
+        el('outlook-sync-flag-adjust').click();
+        await settle();
+        expect(adjustFlag).toHaveBeenCalledTimes(2);
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+    });
+
+    it('a failed Keep refocuses Keep; an empty message (nothing sent) shows no alert', async () => {
+        answer = { status: 'failed', message: '' };
+        mountPanel();
+        await openPanel();
+
+        el('outlook-sync-flag-keep').click();
+        await settle();
+
+        expect(query('outlook-sync-flag-panel')).not.toBeNull();
+        expect(query('outlook-sync-flag-alert')).toBeNull();
+        expect(document.activeElement).toBe(el('outlook-sync-flag-keep'));
+    });
+
+    it('a failed Delete keeps the confirm footer, the alert and focus on Delete', async () => {
+        answer = { status: 'failed', message: 'Could not delete' };
+        flags.value = [cancelled()];
+        mountPanel();
+        await openPanel();
+        el('outlook-sync-flag-delete').click();
+        await settle();
+
+        el('outlook-sync-flag-delete-confirm').click();
+        await settle();
+
+        expect(query('outlook-sync-flag-panel')).not.toBeNull();
+        expect(text('outlook-sync-flag-delete-question')).toBe(
+            "Delete this time entry? This can't be undone."
+        );
+        expect(text('outlook-sync-flag-alert')).toBe('Could not delete');
+        expect(document.activeElement).toBe(el('outlook-sync-flag-delete-confirm'));
+    });
+
+    it('a stale answer closes the popover and focuses the counter, else Sync', async () => {
+        answer = { status: 'stale' };
+        mountPanel();
+        await openPanel();
+
+        el('outlook-sync-flag-adjust').click();
+        await settle();
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(document.activeElement).toBe(el('outlook-out-of-sync'));
+
+        await openPanel();
+        el('outlook-sync-flag-keep').addEventListener('click', removeCounter);
+        el('outlook-sync-flag-keep').click();
+        await settle();
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(document.activeElement).toBe(el('outlook-sync-button'));
+    });
+});
+
+describe('OutlookSyncFlagPanel: anchors', () => {
+    it('anchored to the counter: data-anchor, below the counter, and the not-in-view line', async () => {
+        renderBlocks([]);
+        mountPanel();
+        await openPanel('te-1', 'counter', 'counter');
+
+        const panel = el('outlook-sync-flag-panel');
+        expect(panel.dataset.anchor).toBe('counter');
+        expect(panel.dataset.side).toBe('bottom');
+        expect(panel.dataset.align).toBe('end');
+        expect(text('outlook-sync-flag-not-in-view')).toBe(
+            'This entry is outside the days or hours shown.'
+        );
+        expect(el('outlook-sync-flag-not-in-view').className).toContain('text-text-tertiary');
+
+        pressEscape();
+        await settle();
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(document.activeElement).toBe(el('outlook-out-of-sync'));
+    });
+
+    it('anchored to the entry: beside the block, without the not-in-view line', async () => {
+        mountPanel();
+        await openPanel();
+
+        const panel = el('outlook-sync-flag-panel');
+        expect(panel.dataset.side).toBe('right');
+        expect(panel.dataset.align).toBe('start');
+        expect(query('outlook-sync-flag-not-in-view')).toBeNull();
+    });
+
+    it('does not open when the anchor is not rendered', async () => {
+        renderBlocks([]);
+        mountPanel();
+        open();
+        await settle();
+
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(flagPanel.value).toBeNull();
+    });
+
+    it('re-anchors an idle popover to the new block with the same data-event-id', async () => {
+        mountPanel();
+        await openPanel();
+        const old = blockOf('te-1');
+        expect(anchorReference()).toBe(old);
+
+        renderBlocks(['te-1', 'te-2']);
+        await settle();
+
+        const replacement = blockOf('te-1');
+        expect(replacement).not.toBe(old);
+        expect(query('outlook-sync-flag-panel')).not.toBeNull();
+        expect(closeFlagPanel).not.toHaveBeenCalled();
+
+        expect(anchorReference()).toBe(replacement);
+    });
+
+    it('closes an idle popover silently when its block is gone', async () => {
+        mountPanel();
+        await openPanel();
+
+        renderBlocks(['te-2']);
+        await settle();
+
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(flagPanel.value).toBeNull();
+        // Silently: focus is not sent to the toolbar
+        expect(document.activeElement).not.toBe(el('outlook-out-of-sync'));
+        expect(document.activeElement).not.toBe(el('outlook-sync-button'));
+    });
+
+    it('closes when the flag disappears from the context (resolved elsewhere)', async () => {
+        mountPanel();
+        await openPanel();
+
+        flags.value = [];
+        await settle();
+
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(closeFlagPanel).toHaveBeenCalled();
+    });
+
+    it('a pointer-down on any entry block (drag or resize start) closes an idle popover', async () => {
+        mountPanel();
+        await openPanel();
+
+        pointerDown(blockOf('te-2'));
+        await settle();
+
+        expect(query('outlook-sync-flag-panel')).toBeNull();
+        expect(flagPanel.value).toBeNull();
+    });
+
+    it('a pointer-down on a marker leaves the popover to the marker click', async () => {
+        mountPanel();
+        await openPanel();
+        const marker = document.createElement('span');
+        marker.dataset.testid = 'outlook-sync-flag-marker';
+        blockOf('te-2').appendChild(marker);
+        await settle();
+        closeFlagPanel.mockClear();
+
+        pointerDown(marker);
+        await settle();
+
+        expect(closeFlagPanel).not.toHaveBeenCalled();
+    });
+
+    it('a busy popover does not move when its block re-renders, and removes aria-busy after', async () => {
+        const request = deferred<void>();
+        gate = request.promise;
+        answer = { status: 'failed', message: 'Overlaps another entry' };
+        mountPanel();
+        await openPanel();
+        el('outlook-sync-flag-adjust').click();
+        await settle();
+
+        renderBlocks(['te-1', 'te-2']);
+        await settle();
+        expect(query('outlook-sync-flag-panel')).not.toBeNull();
+
+        request.resolve();
+        await settle();
+        expect(query('outlook-sync-flag-panel')).not.toBeNull();
+        expect(text('outlook-sync-flag-alert')).toBe('Overlaps another entry');
+        expect(document.body.querySelector('[aria-busy="true"][data-event-id]')).toBeNull();
+    });
+
+    it('stops observing and listening after unmount', async () => {
+        mountPanel();
+        await openPanel();
+        wrapper?.unmount();
+        wrapper = null;
+        closeFlagPanel.mockClear();
+
+        renderBlocks([]);
+        pointerDown(document.body);
+        await settle();
+        expect(closeFlagPanel).not.toHaveBeenCalled();
     });
 });

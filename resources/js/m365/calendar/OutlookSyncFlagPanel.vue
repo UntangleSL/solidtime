@@ -1,10 +1,21 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, ref, useId, watch, type ComputedRef } from 'vue';
-import { CalendarSync, Trash2 } from '@lucide/vue';
+import {
+    computed,
+    inject,
+    nextTick,
+    onBeforeUnmount,
+    onMounted,
+    ref,
+    useId,
+    watch,
+    type ComputedRef,
+} from 'vue';
+import { CalendarSync, CircleX, Trash2 } from '@lucide/vue';
 import type { Organization } from '@/packages/api/src';
 import Button from '@/packages/ui/src/Buttons/Button.vue';
 import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
 import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
+import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
 import { Popover, PopoverAnchor, PopoverContent } from '@/packages/ui/src/popover';
 import { Separator } from '@/packages/ui/src/separator';
 import type { OutlookFlagPanelRequest, OutlookOutOfSyncItem } from '@/m365/types';
@@ -45,6 +56,8 @@ const visible = computed(
 const BLOCK_SELECTOR = '[data-event-id]';
 const COUNTER_SELECTOR = '[data-testid="outlook-out-of-sync"]';
 const SYNC_SELECTOR = '[data-testid="outlook-sync-button"]';
+// The marker opens its own entry's popover on click: its pointer-down never closes this one.
+const MARKER_SELECTOR = '[data-testid="outlook-sync-flag-marker"]';
 
 // The block of time entry `id` inside the calendar root (compared through the dataset, so no id
 // ever lands in a selector).
@@ -71,6 +84,10 @@ function resolveAnchor(current: OutlookFlagPanelRequest): HTMLElement | null {
 function focusFirst(...candidates: (HTMLElement | null)[]): void {
     candidates.find((element) => element !== null && element.isConnected)?.focus();
 }
+
+// Entry: beside the block. Counter (the entry is not rendered): below the toolbar button.
+const side = computed(() => (request.value?.anchor === 'counter' ? 'bottom' : 'right'));
+const align = computed(() => (request.value?.anchor === 'counter' ? 'end' : 'start'));
 
 // --- Content
 const titleId = `outlook-sync-flag-title-${useId()}`;
@@ -152,6 +169,10 @@ function onCloseAutoFocus(event: Event): void {
 let escapeClosing = false;
 
 function onEscapeKeyDown(event: KeyboardEvent): void {
+    if (busy.value) {
+        event.preventDefault();
+        return;
+    }
     if (confirmingDelete.value) {
         event.preventDefault();
         cancelDelete();
@@ -160,8 +181,20 @@ function onEscapeKeyDown(event: KeyboardEvent): void {
     escapeClosing = true;
 }
 
+// While an action runs the popover cannot be dismissed (the same guard as OutlookGhostDetail).
+// A marker's click asks for its own entry's popover, so its pointer-down does not close this one.
+function onInteractOutside(event: Event): void {
+    if (busy.value) {
+        event.preventDefault();
+        return;
+    }
+    const original = (event as CustomEvent<{ originalEvent?: Event }>).detail?.originalEvent;
+    const target = original?.target ?? event.target;
+    if (target instanceof Element && target.closest(MARKER_SELECTOR)) event.preventDefault();
+}
+
 function onOpenChange(value: boolean): void {
-    if (value) return;
+    if (value || busy.value) return;
     const current = request.value;
     const returnTo =
         escapeClosing && current
@@ -190,6 +223,34 @@ function cancelDelete(): void {
 // --- Actions
 type Action = 'keep' | 'adjust' | 'delete';
 const acting = ref<Action | null>(null);
+// The mapped reason of the last failed action (inline role=alert line).
+const alert = ref<string | null>(null);
+
+const busy = computed(() => {
+    if (acting.value !== null) return true;
+    const current = request.value;
+    return current !== null && context?.isFlagPending(current.timeEntryId) === true;
+});
+
+const ACTION_BUTTON: Record<Action, string> = {
+    keep: 'outlook-sync-flag-keep',
+    adjust: 'outlook-sync-flag-adjust',
+    delete: 'outlook-sync-flag-delete-confirm',
+};
+
+// The entry block is aria-busy while its action runs; only this panel sets and removes it.
+let busyBlock: HTMLElement | null = null;
+
+function markBusy(id: string): void {
+    busyBlock = findBlock(id);
+    busyBlock?.setAttribute('aria-busy', 'true');
+}
+
+function clearBusy(id: string | null): void {
+    busyBlock?.removeAttribute('aria-busy');
+    busyBlock = null;
+    if (id !== null) findBlock(id)?.removeAttribute('aria-busy');
+}
 
 async function run(action: Action): Promise<void> {
     const current = request.value;
@@ -198,6 +259,8 @@ async function run(action: Action): Promise<void> {
     const origin = current.origin;
 
     acting.value = action;
+    alert.value = null;
+    markBusy(id);
     let result: OutlookFlagActionResult;
     try {
         if (action === 'adjust') result = await context.adjustFlag(id);
@@ -205,14 +268,28 @@ async function run(action: Action): Promise<void> {
         else result = await context.keepFlag(id);
     } finally {
         acting.value = null;
+        clearBusy(id);
     }
-    if (result.status !== 'ok') return;
 
-    if (request.value?.seq === current.seq) context.closeFlagPanel();
+    const sameRequest = request.value?.seq === current.seq;
+    if (result.status === 'failed') {
+        if (!sameRequest) return;
+        // Stays open with its values (a failed delete keeps its confirm footer); retry is Enter.
+        // An empty message means nothing was sent (already pending): no alert then.
+        alert.value = result.message === '' ? null : result.message;
+        await nextTick();
+        reanchor();
+        focusFirst(button(ACTION_BUTTON[action]));
+        return;
+    }
+    // Another entry's popover was asked for meanwhile: leave it and its focus alone.
+    if (request.value !== null && !sameRequest) return;
+
+    if (sameRequest) context.closeFlagPanel();
     await nextTick();
     await nextTick();
-    // The entry is gone: the counter while it is shown, else Sync.
-    if (action === 'delete') {
+    // Deleted, or stale (the calendar refreshes): the counter while it is shown, else Sync.
+    if (action === 'delete' || result.status === 'stale') {
         focusFirst(findCounter(), findSync());
         return;
     }
@@ -222,6 +299,52 @@ async function run(action: Action): Promise<void> {
     else focusFirst(findBlock(id), findCounter(), findSync());
 }
 
+// --- Re-anchoring. The anchor block re-renders (refetch, drag elsewhere): an idle popover moves to
+// the block with the same data-event-id, or closes silently when there is none.
+function reanchor(): void {
+    const current = request.value;
+    if (!current || busy.value || anchorEl.value === null) return;
+    const anchor = resolveAnchor(current);
+    if (anchor === null) {
+        anchorEl.value = null;
+        context?.closeFlagPanel();
+        return;
+    }
+    if (anchor !== anchorEl.value) anchorEl.value = anchor;
+}
+
+let observer: MutationObserver | null = null;
+
+watch(visible, (value) => {
+    observer?.disconnect();
+    observer = null;
+    if (!value) return;
+    observer = new MutationObserver(reanchor);
+    observer.observe(document.body, { childList: true, subtree: true });
+});
+
+// The flag was resolved elsewhere (another tab, a sync): an idle popover closes with it.
+watch(item, (value) => {
+    if (value === null && request.value !== null && !busy.value) context?.closeFlagPanel();
+});
+
+// Starting a drag or resize on any entry closes an idle popover.
+function onDocumentPointerDown(event: Event): void {
+    if (!visible.value || busy.value) return;
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest(MARKER_SELECTOR)) return;
+    if (target.closest(BLOCK_SELECTOR)) context?.closeFlagPanel();
+}
+
+onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown, true));
+
+onBeforeUnmount(() => {
+    document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+    observer?.disconnect();
+    observer = null;
+    clearBusy(null);
+});
+
 // A new request (another entry, or the same one again) resets the popover and finds its anchor.
 watch(
     () => request.value?.seq ?? null,
@@ -230,6 +353,7 @@ watch(
         const wasOpen = visible.value;
         confirmingDelete.value = false;
         escapeClosing = false;
+        alert.value = null;
         if (!current || item.value === null) {
             anchorEl.value = null;
             return;
@@ -252,13 +376,15 @@ watch(
         <PopoverContent
             v-if="item && labels"
             class="w-96 p-4"
-            side="right"
-            align="start"
+            :side="side"
+            :align="align"
             :side-offset="8"
             :reference="anchorEl ?? undefined"
             data-testid="outlook-sync-flag-panel"
             :data-kind="item.kind"
             :data-anchor="request?.anchor"
+            :aria-busy="busy ? 'true' : undefined"
+            @interact-outside="onInteractOutside"
             @escape-key-down="onEscapeKeyDown"
             @open-auto-focus="onOpenAutoFocus"
             @close-auto-focus="onCloseAutoFocus">
@@ -319,6 +445,12 @@ watch(
                 <p class="mt-2 text-xs text-text-tertiary" data-testid="outlook-sync-flag-note">
                     {{ item.kind === 'moved' ? labels.osync_note_moved : labels.osync_note_gone }}
                 </p>
+                <p
+                    v-if="request?.anchor === 'counter'"
+                    class="mt-2 text-xs text-text-tertiary"
+                    data-testid="outlook-sync-flag-not-in-view">
+                    {{ labels.osync_not_in_view }}
+                </p>
                 <Separator class="mt-4" />
                 <div v-if="confirmingDelete" class="mt-4">
                     <p
@@ -329,7 +461,7 @@ watch(
                     <div class="mt-2 flex justify-end gap-2">
                         <SecondaryButton
                             type="button"
-                            :disabled="acting !== null"
+                            :disabled="busy"
                             data-testid="outlook-sync-flag-delete-cancel"
                             @click="cancelDelete">
                             {{ labels.cancel }}
@@ -337,10 +469,14 @@ watch(
                         <Button
                             type="button"
                             variant="destructive"
-                            :disabled="acting !== null"
+                            :disabled="busy"
                             data-testid="outlook-sync-flag-delete-confirm"
                             @click="run('delete')">
-                            <Trash2 aria-hidden="true" />
+                            <LoadingSpinner
+                                v-if="acting === 'delete'"
+                                class="m-0 h-4 w-4 text-current"
+                                data-testid="outlook-sync-flag-delete-spinner" />
+                            <Trash2 v-else aria-hidden="true" />
                             <span>{{ labels.osync_delete_confirm }}</span>
                         </Button>
                     </div>
@@ -349,7 +485,7 @@ watch(
                     <SecondaryButton
                         type="button"
                         :loading="acting === 'keep'"
-                        :disabled="acting !== null"
+                        :disabled="busy"
                         data-testid="outlook-sync-flag-keep"
                         @click="run('keep')">
                         {{ labels.osync_keep }}
@@ -359,7 +495,7 @@ watch(
                         type="button"
                         :icon="CalendarSync"
                         :loading="acting === 'adjust'"
-                        :disabled="acting !== null"
+                        :disabled="busy"
                         data-testid="outlook-sync-flag-adjust"
                         @click="run('adjust')">
                         {{ labels.osync_adjust }}
@@ -370,13 +506,21 @@ watch(
                         variant="outline"
                         size="default"
                         class="text-destructive hover:text-destructive"
-                        :disabled="acting !== null"
+                        :disabled="busy"
                         data-testid="outlook-sync-flag-delete"
                         @click="askDelete">
                         <Trash2 aria-hidden="true" />
                         <span>{{ labels.osync_delete }}</span>
                     </Button>
                 </div>
+                <p
+                    v-if="alert"
+                    role="alert"
+                    class="mt-2 flex items-center gap-1 text-xs text-destructive"
+                    data-testid="outlook-sync-flag-alert">
+                    <CircleX class="size-3 shrink-0" aria-hidden="true" />
+                    <span>{{ alert }}</span>
+                </p>
             </div>
         </PopoverContent>
     </Popover>
