@@ -33,9 +33,10 @@ use Illuminate\Validation\ValidationException;
  * - Each meeting is one transaction: the entry and its outlook_meeting_links row are written together,
  *   with the meeting row locked, so an occurrence is linked at most once (D-06).
  * - Converting a dismissed meeting brings it back from the dismissed state (D-11).
- * - Repeats are safe (D-06, D-16): an occurrence already linked to an entry of the user answers 'existing'
- *   with that entry and creates nothing; a link whose entry now belongs to someone else is stale and is
- *   replaced; a unique-index race rolls the meeting back and answers with the winner's entry.
+ * - Repeats are safe (D-06, D-16): an occurrence with an active link to an entry of the user answers
+ *   'existing' with that entry and creates nothing; a link whose entry now belongs to someone else is
+ *   stale and is replaced; a unique-index race rolls the meeting back and answers with the winner's
+ *   entry. A released link (Phase 6 D-03) is not active: the moved meeting converts again.
  * - The owner (member) and the subject are always read on the server; while an admin impersonates the
  *   user nothing is converted (D-13, Phase 5 D-14).
  * - Confirm mode (Phase 5 RULE-02, D-03, D-04): the body names meetings only and each meeting takes its
@@ -250,12 +251,18 @@ class MeetingConversionController extends Controller
         return ['prefill_source' => $source, 'prefill_kept' => $kept];
     }
 
+    /**
+     * The occurrence's active link. A released link (a started meeting Outlook moved, Phase 6 D-03) no
+     * longer counts as "already converted": "Create time entry" on the meeting at its new slot makes a
+     * second entry and a second, active link, which the partial unique index (active links only) allows.
+     */
     private function linkOf(User $user, string $graphId): ?OutlookMeetingLink
     {
         return OutlookMeetingLink::query()
             ->with('timeEntry')
             ->where('user_id', '=', $user->getKey())
             ->where('graph_id', '=', $graphId)
+            ->whereNull('released_at')
             ->first();
     }
 

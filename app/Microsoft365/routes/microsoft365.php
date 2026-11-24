@@ -7,6 +7,7 @@ use App\Microsoft365\Http\Controllers\MicrosoftAccountController;
 use App\Microsoft365\Http\Controllers\MicrosoftAuthController;
 use App\Microsoft365\Http\Controllers\OutlookMeetingController;
 use App\Microsoft365\Http\Controllers\OutlookSeriesController;
+use App\Microsoft365\Http\Controllers\OutOfSyncController;
 use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
 use Illuminate\Support\Facades\Route;
 
@@ -65,4 +66,25 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
             ->whereUuid('organization')
             ->middleware(['check-organization-blocked', 'throttle:30,1,m365-convert:'])
             ->name('microsoft.meetings.convert');
+        // The user's answer to an out-of-sync flag (Phase 6, OSYNC-03). The id is one of the session
+        // user's own flagged time entries; a foreign, unknown, unflagged or settled id, impersonation and a
+        // disconnected account are all a plain 404. Writes the link only, never the entry.
+        Route::post('/out-of-sync/{entry}/keep', [OutOfSyncController::class, 'keep'])
+            ->whereUuid('entry')
+            ->middleware('throttle:60,1,m365-osync:')
+            ->name('microsoft.meetings.out-of-sync.keep');
+        // Same lookup; moves the entry to the Outlook slot stored on a timed moved flag, through core's own
+        // update path only. The body is never read: the target comes from the flag.
+        Route::post('/out-of-sync/{entry}/adjust', [OutOfSyncController::class, 'adjust'])
+            ->whereUuid('entry')
+            ->middleware('throttle:60,1,m365-osync:')
+            ->name('microsoft.meetings.out-of-sync.adjust');
+        // "Move my entry here" (Phase 6 D-03): the entry logged on a started meeting that Outlook moved
+        // follows it to the new slot, through core's update path. The parameter must be named
+        // `organization` for core's blocked-organization middleware; the meeting is one of the session
+        // user's own (a foreign, unknown or gone id is a 404) and the body is never read.
+        Route::post('/organizations/{organization}/meetings/{meeting}/move-entry', [OutOfSyncController::class, 'moveEntry'])
+            ->whereUuid(['organization', 'meeting'])
+            ->middleware(['check-organization-blocked', 'throttle:30,1,m365-move:'])
+            ->name('microsoft.meetings.move-entry');
     });
