@@ -4,6 +4,7 @@ import type { TestContext } from '../playwright/fixtures';
 import { expect } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import {
+    createProjectViaApi,
     createTimeEntryWithTimestampsViaApi,
     getTimeEntriesViaApi,
     updateOrganizationSettingViaApi,
@@ -62,6 +63,24 @@ interface InjectOptions {
 interface FlagRequest {
     action: 'keep' | 'adjust';
     timeEntryId: string;
+}
+
+interface ConvertBody {
+    meeting_ids: string[];
+    project_id: string | null;
+    task_id: string | null;
+    tags: string[];
+    billable: boolean;
+    description?: string;
+    start?: string;
+    end?: string;
+}
+
+interface ConvertResult {
+    meeting_id: string;
+    status: 'created' | 'existing' | 'failed';
+    time_entry_id: string | null;
+    error: { key: string; message: string } | null;
 }
 
 // English copy of microsoft365.calendar.* (lang/en/microsoft365.php), the labels the Outlook layer,
@@ -259,6 +278,13 @@ const FLAG_PANEL = '[data-testid="outlook-sync-flag-panel"]';
 const MARKER = '[data-testid="outlook-sync-flag-marker"]';
 const COUNTER = '[data-testid="outlook-out-of-sync"]';
 const OUT_OF_SYNC_ROUTE = '**/m365/out-of-sync/**';
+const DETAIL_PANEL = '[data-testid="outlook-ghost-detail"]';
+const CONVERT_FORM = '[data-testid="outlook-convert-form"]';
+const CONVERT_ROUTE = '**/m365/organizations/*/meetings/time-entries';
+const MOVE_ROUTE = '**/m365/organizations/*/meetings/*/move-entry';
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 async function goToCalendar(page: Page) {
     await page.goto(PLAYWRIGHT_BASE_URL + '/calendar');
@@ -290,6 +316,24 @@ function outOfSyncUrl(): string {
 
 function timeEntryUrl(ctx: TestContext, id: string): string {
     return `${PLAYWRIGHT_BASE_URL}/api/v1/organizations/${ctx.orgId}/time-entries/${id}`;
+}
+
+function convertUrl(ctx: TestContext): string {
+    return `${PLAYWRIGHT_BASE_URL}/m365/organizations/${ctx.orgId}/meetings/time-entries`;
+}
+
+function moveEntryUrl(ctx: TestContext): string {
+    return `${PLAYWRIGHT_BASE_URL}/m365/organizations/${ctx.orgId}/meetings`;
+}
+
+// The UI's short day ('ddd, MMM D' in the user's UTC timezone), e.g. 'Mon, Nov 23'.
+function shortDay(day: string): string {
+    const date = new Date(`${day}T00:00:00Z`);
+    return `${WEEKDAYS[date.getUTCDay()]}, ${MONTHS[date.getUTCMonth()]} ${date.getUTCDate()}`;
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function withDefaults(meeting: InjectedMeeting) {
@@ -432,6 +476,142 @@ async function offsetFromSlot(page: Page, block: Locator, time: string): Promise
 // The core edit modal of a time entry (its submit button only exists there).
 function coreEditButton(page: Page): Locator {
     return page.getByRole('button', { name: 'Update Time Entry' });
+}
+
+function ghost(page: Page, id: string): Locator {
+    return page.locator(`.m365-ghost[data-ghost-id="${id}"]`);
+}
+
+// Answers "Move my entry here" in place of the (disabled) fork route: the meeting's logged entry
+// (moved_from) moves to the meeting's new slot through the core API, exactly like the server.
+// Returns the meeting ids of every move request, in order.
+async function routeMoves(
+    page: Page,
+    ctx: TestContext,
+    meetings: InjectedMeeting[]
+): Promise<string[]> {
+    const byId = new Map(meetings.map((meeting) => [meeting.id, meeting]));
+    const requests: string[] = [];
+
+    await page.route(MOVE_ROUTE, async (route) => {
+        const request = route.request();
+        const match = /\/meetings\/([^/]+)\/move-entry$/.exec(new URL(request.url()).pathname);
+        if (request.method() !== 'POST' || !match) {
+            await route.fallback();
+            return;
+        }
+        const meetingId = decodeURIComponent(match[1]!);
+        requests.push(meetingId);
+        const meeting = byId.get(meetingId);
+        const entryId = meeting?.moved_from?.time_entry_id;
+        if (!meeting || !entryId) {
+            await route.fulfill({
+                status: 404,
+                contentType: 'application/json',
+                body: JSON.stringify({ message: 'Not found' }),
+            });
+            return;
+        }
+        const response = await ctx.request.put(timeEntryUrl(ctx, entryId), {
+            data: { start: meeting.start, end: meeting.end },
+        });
+        await route.fulfill({
+            status: response.status() === 200 ? 200 : 500,
+            contentType: 'application/json',
+            body: JSON.stringify(
+                response.status() === 200
+                    ? { status: 'moved', time_entry_id: entryId }
+                    : { message: 'Server error' }
+            ),
+        });
+    });
+
+    return requests;
+}
+
+// Answers the convert request in place of the (disabled) fork route (the 04-08 handler): each
+// meeting becomes a real time entry through the core API with the form's values.
+async function routeConversions(
+    page: Page,
+    ctx: TestContext,
+    meetings: InjectedMeeting[]
+): Promise<ConvertBody[]> {
+    const byId = new Map(meetings.map((meeting) => [meeting.id, meeting]));
+    const bodies: ConvertBody[] = [];
+
+    await page.route(CONVERT_ROUTE, async (route) => {
+        const body = route.request().postDataJSON() as ConvertBody;
+        bodies.push(body);
+        const results: ConvertResult[] = [];
+        for (const id of body.meeting_ids) {
+            const meeting = byId.get(id);
+            const response = meeting
+                ? await ctx.request.post(
+                      `${PLAYWRIGHT_BASE_URL}/api/v1/organizations/${ctx.orgId}/time-entries`,
+                      {
+                          data: {
+                              member_id: ctx.memberId,
+                              start: body.start ?? meeting.start,
+                              end: body.end ?? meeting.end,
+                              description: body.description ?? meeting.subject,
+                              project_id: body.project_id,
+                              task_id: body.task_id,
+                              tags: body.tags,
+                              billable: body.billable,
+                              type: 'work',
+                          },
+                      }
+                  )
+                : null;
+            if (!response || response.status() !== 201) {
+                results.push({
+                    meeting_id: id,
+                    status: 'failed',
+                    time_entry_id: null,
+                    error: { key: 'request_failed', message: LABELS.error_generic! },
+                });
+                continue;
+            }
+            const created = (await response.json()).data as { id: string };
+            results.push({
+                meeting_id: id,
+                status: 'created',
+                time_entry_id: created.id,
+                error: null,
+            });
+        }
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ results }),
+        });
+    });
+
+    return bodies;
+}
+
+// Opens the project picker inside `scope` and picks the project.
+async function pickProject(page: Page, scope: Locator, projectName: string) {
+    await scope.locator('[data-testid="outlook-convert-project"] button').first().click();
+    await page.getByRole('option', { name: projectName }).click();
+    await expect(scope.locator('[data-testid="outlook-convert-project"]')).toContainText(
+        projectName
+    );
+}
+
+// A meeting Outlook moved to today 15:00-16:00 after it started, whose entry is logged yesterday.
+function movedMeeting(
+    id: string,
+    entry: { id: string; start: string; end: string },
+    today: string
+): InjectedMeeting {
+    return {
+        id,
+        subject: 'Design review',
+        start: at(today, '15:00:00'),
+        end: at(today, '16:00:00'),
+        moved_from: { time_entry_id: entry.id, entry_start: entry.start, entry_end: entry.end },
+    };
 }
 
 test.describe('Outlook out-of-sync review', () => {
@@ -590,6 +770,11 @@ test.describe('Outlook out-of-sync review', () => {
 
         const counter = page.locator(COUNTER);
         await expect(counter).toHaveAttribute('data-count', '2');
+        await expect(counter.locator('[data-testid="outlook-out-of-sync-count"]')).toHaveText('2');
+        await expect(counter).toHaveAttribute(
+            'aria-label',
+            '2 time entries out of sync with Outlook. Show the first one.'
+        );
         const cancelledBlock = entryBlock(page, cancelledEntry.id);
         await expect(cancelledBlock.locator(MARKER)).toHaveAttribute('data-flag-kind', 'cancelled');
         await expect(entryBlock(page, removedEntry.id).locator(MARKER)).toHaveAttribute(
@@ -753,5 +938,130 @@ test.describe('Outlook out-of-sync review', () => {
         await expect(panel).toHaveAttribute('data-anchor', 'entry');
         await expect(panel).toHaveAttribute('data-kind', 'cancelled');
         await expect(coreEditButton(page)).toHaveCount(0);
+    });
+});
+
+test.describe('Outlook meeting moved after it started (D-03)', () => {
+    test('moves my logged entry to a meeting that moved after it started', async ({
+        page,
+        ctx,
+    }) => {
+        const today = utcDay();
+        const yesterday = utcDay(-1);
+        const entry = await createTimeEntryWithTimestampsViaApi(ctx, {
+            description: 'Design review',
+            start: at(yesterday, '10:00:00'),
+            end: at(yesterday, '11:00:00'),
+        });
+        const meeting = movedMeeting('m-moved-here', entry, today);
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '15:00:00');
+        const moves = await routeMoves(page, ctx, [meeting]);
+        await injectFlags(page, [meeting], {
+            moveEntryUrl: moveEntryUrl(ctx),
+            convertUrl: convertUrl(ctx),
+            linkedTimeEntryIds: [entry.id],
+        });
+
+        const block = ghost(page, 'm-moved-here');
+        await expect(block).toHaveCount(1);
+        await expect(block).toHaveAttribute('data-moved-from', '');
+        await expect(block).toHaveAttribute(
+            'aria-label',
+            new RegExp(`, already logged on ${escapeRegExp(shortDay(yesterday))}$`)
+        );
+
+        await block.click();
+        const panel = page.locator(DETAIL_PANEL);
+        await expect(panel).toBeVisible();
+        const movedBlock = panel.locator('[data-testid="outlook-moved-block"]');
+        await expect(movedBlock).toBeVisible();
+        await expect(movedBlock.locator('[data-testid="outlook-moved-eyebrow"]')).toHaveText(
+            'Moved in Outlook · Already logged'
+        );
+        const moveButton = movedBlock.locator('[data-testid="outlook-detail-move-entry"]');
+        await expect(moveButton).toHaveText('Move my entry here');
+        await moveButton.click();
+
+        // The routed move put the real entry on the meeting's new slot; the meeting leaves the lane
+        await expect(block).toHaveCount(0);
+        await expect(page.locator(DETAIL_PANEL)).toHaveCount(0);
+        expect(moves).toEqual(['m-moved-here']);
+        await expect(page.getByText('Time entry moved here').first()).toBeVisible();
+        const moved = await entryById(ctx, entry.id);
+        expect(moved?.start).toBe(at(today, '15:00:00'));
+        expect(moved?.end).toBe(at(today, '16:00:00'));
+        // Moved, not copied: still one entry
+        const designReviews = (await getTimeEntriesViaApi(ctx)).filter(
+            (item) => item.description === 'Design review'
+        );
+        expect(designReviews.map((item) => item.id)).toEqual([entry.id]);
+        await expect(entryBlock(page, entry.id)).toBeVisible();
+    });
+
+    test('creates a second entry for a meeting that moved after it started', async ({
+        page,
+        ctx,
+    }) => {
+        const projectName = 'Moved Meeting Project ' + Math.floor(1 + Math.random() * 10000);
+        const project = await createProjectViaApi(ctx, { name: projectName });
+        const today = utcDay();
+        const yesterday = utcDay(-1);
+        const entry = await createTimeEntryWithTimestampsViaApi(ctx, {
+            description: 'Design review',
+            start: at(yesterday, '10:00:00'),
+            end: at(yesterday, '11:00:00'),
+        });
+        const meeting = movedMeeting('m-moved-create', entry, today);
+
+        await goToCalendar(page);
+        await scrollCalendarToTime(page, '15:00:00');
+        const moves = await routeMoves(page, ctx, [meeting]);
+        const conversions = await routeConversions(page, ctx, [meeting]);
+        await injectFlags(page, [meeting], {
+            moveEntryUrl: moveEntryUrl(ctx),
+            convertUrl: convertUrl(ctx),
+            linkedTimeEntryIds: [entry.id],
+        });
+
+        const block = ghost(page, 'm-moved-create');
+        await expect(block).toHaveAttribute('data-moved-from', '');
+        await block.click();
+        const panel = page.locator(DETAIL_PANEL);
+        await expect(panel.locator('[data-testid="outlook-moved-block"]')).toBeVisible();
+        await panel.locator('[data-testid="outlook-detail-create"]').click();
+
+        const form = panel.locator(CONVERT_FORM);
+        await expect(form).toBeVisible();
+        await expect(form.locator('[data-testid="outlook-convert-description"]')).toHaveValue(
+            'Design review'
+        );
+        await expect(form.locator('[data-testid="outlook-convert-start"]')).toHaveValue('15:00');
+        await expect(form.locator('[data-testid="outlook-convert-end"]')).toHaveValue('16:00');
+        await pickProject(page, form, projectName);
+        await form.locator('[data-testid="outlook-convert-submit"]').click();
+
+        // Let the intercepted conversion finish: the meeting leaves the lane
+        await expect(block).toHaveCount(0);
+        expect(conversions).toHaveLength(1);
+        expect(conversions[0]!.meeting_ids).toEqual(['m-moved-create']);
+        expect(conversions[0]!.project_id).toBe(project.id);
+        expect(moves).toEqual([]);
+
+        // A second, new entry at the meeting's slot; the logged one is untouched
+        const entries = (await getTimeEntriesViaApi(ctx)).filter(
+            (item) => item.description === 'Design review'
+        );
+        expect(entries).toHaveLength(2);
+        const old = entries.find((item) => item.id === entry.id);
+        expect(old?.start).toBe(at(yesterday, '10:00:00'));
+        expect(old?.end).toBe(at(yesterday, '11:00:00'));
+        const created = entries.find((item) => item.id !== entry.id);
+        expect(created?.start).toBe(at(today, '15:00:00'));
+        expect(created?.end).toBe(at(today, '16:00:00'));
+        expect(created?.description).toBe('Design review');
+        expect(created?.project_id).toBe(project.id);
+        await expect(entryBlock(page, created!.id)).toBeVisible();
     });
 });
