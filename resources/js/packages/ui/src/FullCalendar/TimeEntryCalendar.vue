@@ -153,6 +153,8 @@ const {
 
 const {
     activeView,
+    // Fork seam (m365, Phase 6): currentDate drives goToDate below
+    currentDate,
     viewDays,
     rangeLabel,
     emitDatesChange,
@@ -169,6 +171,15 @@ const {
     initialDate: props.initialDate ? getLocalizedDayJsFromMinutes(props.initialDate, 0) : null,
     showWeekends: () => calendarSettings.value.showWeekends === true,
 });
+
+// Fork seam (m365, Phase 6): moves the calendar to the local day `date` (YYYY-MM-DD) keeping the
+// view mode (week view shows that day's week, day view that day), without a page reload.
+function goToDate(date: string): void {
+    currentDate.value = getLocalizedDayJsFromMinutes(date, 0);
+    emitDatesChange();
+}
+
+defineExpose({ goToDate });
 
 const cssBackground = useCssVariable('--color-bg-background');
 
@@ -813,6 +824,12 @@ function getEventDurationSeconds(dayEvent: DayEvent, dayStr: string): number {
                         name="context-menu-overlay"
                         :element="contextMenuOverlayElement" />
                     <template v-else-if="contextMenuTimeEntry && contextMenuTimeEntry.end !== null">
+                        <!-- Fork seam (m365, Phase 6): optional items first in a completed entry's menu
+                             (`context-menu-entry-extra`); without that slot the menu is unchanged -->
+                        <slot
+                            v-if="$slots['context-menu-entry-extra']"
+                            name="context-menu-entry-extra"
+                            v-bind="{ timeEntry: contextMenuTimeEntry }" />
                         <ContextMenuItem class="space-x-3" @select="handleContextEdit()">
                             <PencilIcon class="w-4 h-4 text-icon-default" />
                             <span>Edit</span>
