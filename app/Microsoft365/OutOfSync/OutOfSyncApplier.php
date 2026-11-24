@@ -12,7 +12,7 @@ use App\Models\TimeEntry;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -69,9 +69,7 @@ final class OutOfSyncApplier
         }
 
         $lock = Cache::lock('m365:osync:'.$user->getKey(), $this->lockSeconds());
-        try {
-            $lock->block(self::LOCK_WAIT_SECONDS);
-        } catch (LockTimeoutException) {
+        if (! $this->acquireWithin($lock, self::LOCK_WAIT_SECONDS)) {
             $result = new ApplyResult(skipped: count($observations));
             Log::info('Outlook out-of-sync applied', $result->toArray());
 
@@ -275,6 +273,23 @@ final class OutOfSyncApplier
     private function at(string $utc): Carbon
     {
         return Carbon::parse($utc, 'UTC');
+    }
+
+    /**
+     * Waits up to $seconds for the lock on the monotonic clock. Lock::block() measures the wait with
+     * Carbon::now(), which never advances under a frozen test clock and would then wait forever.
+     */
+    private function acquireWithin(Lock $lock, int $seconds): bool
+    {
+        $deadline = hrtime(true) + $seconds * 1_000_000_000;
+        while (! $lock->get()) {
+            if (hrtime(true) >= $deadline) {
+                return false;
+            }
+            usleep(250_000);
+        }
+
+        return true;
     }
 
     private function lockSeconds(): int
