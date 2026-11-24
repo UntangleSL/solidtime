@@ -7,6 +7,7 @@ use App\Microsoft365\Http\Controllers\MicrosoftAccountController;
 use App\Microsoft365\Http\Controllers\MicrosoftAuthController;
 use App\Microsoft365\Http\Controllers\OutlookMeetingController;
 use App\Microsoft365\Http\Controllers\OutlookSeriesController;
+use App\Microsoft365\Http\Controllers\OutOfSyncController;
 use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
 use Illuminate\Support\Facades\Route;
 
@@ -65,4 +66,11 @@ Route::middleware(['web', EnsureMicrosoftIsEnabled::class, 'auth:web', 'auth.ses
             ->whereUuid('organization')
             ->middleware(['check-organization-blocked', 'throttle:30,1,m365-convert:'])
             ->name('microsoft.meetings.convert');
+        // The user's answer to an out-of-sync flag (Phase 6, OSYNC-03). The id is one of the session
+        // user's own flagged time entries; a foreign, unknown, unflagged or settled id, impersonation and a
+        // disconnected account are all a plain 404. Writes the link only, never the entry.
+        Route::post('/out-of-sync/{entry}/keep', [OutOfSyncController::class, 'keep'])
+            ->whereUuid('entry')
+            ->middleware('throttle:60,1,m365-osync:')
+            ->name('microsoft.meetings.out-of-sync.keep');
     });
