@@ -27,23 +27,29 @@ import type {
     OutlookConnectionState,
     OutlookConversionFields,
     OutlookConversionResult,
+    OutlookFlagPanelRequest,
     OutlookMeeting,
     OutlookMeetingsResponse,
+    OutlookOutOfSyncItem,
     OutlookSyncResponse,
 } from '@/m365/types';
 import { dismissMeeting, fetchMeetings, postSync, restoreMeeting } from './meetingsApi';
 import {
     conversionErrorMessage,
     failedResults,
+    flagActionFailure,
     forgetSeries as deleteSeriesAssignment,
     ignoreSeries as postSeriesIgnore,
+    keepFlag as postKeepFlag,
     postConversion,
     unignoreSeries as deleteSeriesIgnore,
     type OutlookConversionBody,
+    type OutlookFlagActionResult,
 } from './conversionApi';
 import { useOutlookSelection, type OutlookSelection } from './useOutlookSelection';
 import { ghostLaneWidth } from './ghostLayout';
 import { isFaded, isPreassigned, isRecurring } from './suggestions';
+import { firstFlag } from './syncFlagReason';
 
 export interface WeekBucket {
     start: string;
@@ -147,6 +153,34 @@ export interface OutlookMeetingsContext {
     // change; meetings that leave the list leave the selection.
     selection: OutlookSelection;
     dayOverlayLane: (dayStr: string, isDayView: boolean) => string | null;
+    // --- Phase 6: out-of-sync flags (OSYNC-01..03). Every member below is empty and inert while the
+    // context cannot act (impersonation, D-14) or the user is disconnected from Microsoft (D-19).
+    // The user's flagged entries over the whole flagged window (future plus the last 60 days,
+    // D-10/D-11), not only the visible days: the read's out_of_sync.items, or the injected list in
+    // test-hook mode.
+    outOfSync: Readonly<Ref<OutlookOutOfSyncItem[]>>;
+    // The flag of time entry `timeEntryId` (the marker and the context menu item), null when none.
+    flagOf: (timeEntryId: string) => OutlookOutOfSyncItem | null;
+    // The flag the toolbar counter jumps to: earliest current entry start (D-09).
+    firstOutOfSync: Readonly<Ref<OutlookOutOfSyncItem | null>>;
+    // Which resolve popover to open and where (one popover for the whole calendar). Each request
+    // gets a new seq, so the same entry can be asked for twice.
+    flagPanel: Readonly<Ref<OutlookFlagPanelRequest | null>>;
+    // Asks for the resolve popover of a flagged entry (marker click, context menu item). Ignored
+    // while the context cannot act or for an entry without a flag. Defaults: anchored to the entry,
+    // opened from the entry.
+    openFlagPanel: (
+        timeEntryId: string,
+        options?: { anchor?: 'entry' | 'counter'; origin?: 'entry' | 'counter' }
+    ) => void;
+    closeFlagPanel: () => void;
+    // "Keep as is" (D-04, D-16). Pessimistic: the flag leaves the list only after the server
+    // answered. ok: invalidations and the "Kept as is" announcement, no toast. failed: the
+    // osync_keep_failed toast, the message is for the inline alert. stale (404 / 409): the
+    // osync_stale toast, the panel closes and the calendar refreshes. Never rejects.
+    keepFlag: (timeEntryId: string) => Promise<OutlookFlagActionResult>;
+    // True while a resolve action of entry `timeEntryId` runs (spinner, aria-busy on the block).
+    isFlagPending: (timeEntryId: string) => boolean;
 }
 
 export const OUTLOOK_MEETINGS_KEY: InjectionKey<OutlookMeetingsContext> =
@@ -233,6 +267,9 @@ export function useOutlookMeetings(
     const testConvertUrl = ref<string | null>(null);
     const testSeriesUrl = ref<string | null>(null);
     const testLinkedIds = ref<string[]>([]);
+    // Phase 6 hook state: the injected flags (null outside test-hook mode) and the action urls.
+    const testOutOfSync = ref<OutlookOutOfSyncItem[] | null>(null);
+    const testOutOfSyncUrl = ref<string | null>(null);
 
     const lastSync = ref<OutlookSyncResponse | null>(null);
     const isSyncing = ref(false);
@@ -1005,6 +1042,176 @@ export function useOutlookMeetings(
         return null;
     }
 
+    // --- Out-of-sync flags (Phase 6). The flags are owner-only data: hidden and inert while the
+    // context cannot act (impersonation, D-14) and while the user is disconnected (D-19); injected
+    // flags follow canAct alone (the CI calendar has no connection state).
+    const flagsVisible = computed(
+        () =>
+            canAct.value &&
+            (testMeetings.value !== null || connectionState.value !== 'not_connected')
+    );
+
+    // Placeholder data of the previous week is kept like the linked ids: the list covers the whole
+    // flagged window, so it does not depend on the week anyway.
+    const outOfSync = computed<OutlookOutOfSyncItem[]>(() => {
+        if (!flagsVisible.value) return [];
+        if (testMeetings.value !== null) return testOutOfSync.value ?? [];
+        return meetingsQuery.data.value?.out_of_sync?.items ?? [];
+    });
+
+    const flagsById = computed(
+        () => new Map(outOfSync.value.map((item) => [item.time_entry_id, item]))
+    );
+
+    function flagOf(timeEntryId: string): OutlookOutOfSyncItem | null {
+        return flagsById.value.get(timeEntryId) ?? null;
+    }
+
+    const firstOutOfSync = computed<OutlookOutOfSyncItem | null>(() => firstFlag(outOfSync.value));
+
+    // --- Resolve popover request: one popover for the whole calendar, opened by the marker, the
+    // context menu or the counter jump.
+    const flagPanel = ref<OutlookFlagPanelRequest | null>(null);
+    let flagPanelSeq = 0;
+
+    function requestFlagPanel(
+        timeEntryId: string,
+        anchor: OutlookFlagPanelRequest['anchor'],
+        origin: OutlookFlagPanelRequest['origin']
+    ): void {
+        flagPanelSeq += 1;
+        flagPanel.value = { timeEntryId, anchor, origin, seq: flagPanelSeq };
+    }
+
+    function openFlagPanel(
+        timeEntryId: string,
+        options: { anchor?: 'entry' | 'counter'; origin?: 'entry' | 'counter' } = {}
+    ): void {
+        if (!flagsVisible.value || flagOf(timeEntryId) === null) return;
+        requestFlagPanel(timeEntryId, options.anchor ?? 'entry', options.origin ?? 'entry');
+    }
+
+    function closeFlagPanel(): void {
+        flagPanel.value = null;
+    }
+
+    // Losing the right to act (or the connection) closes the popover with the flags.
+    watch(flagsVisible, (visible) => {
+        if (!visible) flagPanel.value = null;
+    });
+
+    // --- Resolve actions (keep, adjust, delete). Pessimistic: nothing changes before the answer.
+    type FlagAction = 'keep';
+
+    // Entry ids whose resolve action runs (reactive: buttons and blocks show their pending state).
+    const pendingFlagIds = ref<string[]>([]);
+
+    function isFlagPending(timeEntryId: string): boolean {
+        return pendingFlagIds.value.includes(timeEntryId);
+    }
+
+    function outOfSyncUrl(): string | null {
+        const url =
+            testMeetings.value !== null ? testOutOfSyncUrl.value : calendar.value?.urls.out_of_sync;
+        return url ?? null;
+    }
+
+    // After a success the flag leaves every cached read (or the injected list) at once; the
+    // invalidated read confirms it.
+    function dropFlag(timeEntryId: string): void {
+        if (testMeetings.value !== null) {
+            if (testOutOfSync.value !== null) {
+                testOutOfSync.value = testOutOfSync.value.filter(
+                    (item) => item.time_entry_id !== timeEntryId
+                );
+            }
+            return;
+        }
+        queryClient.setQueriesData<OutlookMeetingsResponse>(
+            { queryKey: MEETINGS_QUERY_KEY },
+            (old) => {
+                const items = old?.out_of_sync?.items;
+                if (!old || !Array.isArray(items)) return old;
+                return {
+                    ...old,
+                    out_of_sync: {
+                        items: items.filter((item) => item.time_entry_id !== timeEntryId),
+                    },
+                };
+            }
+        );
+    }
+
+    // Time entries, goals and the meetings read (with its flags and counter) after an entry write
+    // or a stale answer. Injected meetings are not server rows: the real read is left alone.
+    function refreshAfterEntryWrite(): void {
+        void queryClient.invalidateQueries({ queryKey: ['timeEntries'] });
+        void queryClient.invalidateQueries({ queryKey: ['goals'] });
+        if (testMeetings.value === null) {
+            void queryClient.invalidateQueries({ queryKey: MEETINGS_QUERY_KEY });
+        }
+    }
+
+    // 404 / 409: the flag was resolved, the entry deleted or changed in another tab. The calendar
+    // refreshes and the user is told why (UI-SPEC section 2).
+    function handleStale(current: OutlookCalendarLabels): void {
+        useNotificationsStore().addNotification(
+            'error',
+            current.osync_stale,
+            current.osync_stale_body
+        );
+        refreshAfterEntryWrite();
+    }
+
+    function closePanelOf(timeEntryId: string): void {
+        if (flagPanel.value?.timeEntryId === timeEntryId) flagPanel.value = null;
+    }
+
+    async function runFlagAction(
+        timeEntryId: string,
+        action: FlagAction
+    ): Promise<OutlookFlagActionResult> {
+        const current = labels.value;
+        const retry = current?.retry_body ?? '';
+        if (!flagsVisible.value || !current) return { status: 'failed', message: retry };
+        // A second activation while the first runs sends nothing (an empty message: no alert).
+        if (isFlagPending(timeEntryId)) return { status: 'failed', message: '' };
+        const url = outOfSyncUrl();
+        if (!url) return { status: 'failed', message: retry };
+
+        pendingFlagIds.value = [...pendingFlagIds.value, timeEntryId];
+        try {
+            if (action === 'keep') await postKeepFlag(url, timeEntryId);
+        } catch (error) {
+            const failure = flagActionFailure(error, {
+                forbidden: current.osync_error_forbidden,
+                retry,
+            });
+            if (failure.status === 'stale') {
+                closePanelOf(timeEntryId);
+                handleStale(current);
+            } else if (failure.status === 'failed') {
+                useNotificationsStore().addNotification(
+                    'error',
+                    current.osync_keep_failed,
+                    failure.message
+                );
+            }
+            return failure;
+        } finally {
+            pendingFlagIds.value = pendingFlagIds.value.filter((id) => id !== timeEntryId);
+        }
+
+        dropFlag(timeEntryId);
+        closePanelOf(timeEntryId);
+        refreshAfterEntryWrite();
+        announce(current.osync_kept);
+        return { status: 'ok' };
+    }
+
+    const keepFlag = (timeEntryId: string): Promise<OutlookFlagActionResult> =>
+        runFlagAction(timeEntryId, 'keep');
+
     // The outcome of a Connect / Reconnect that returned to the calendar (flashed by the server, so
     // it is in the props for exactly one page load) goes through the existing notification store.
     // The store is only touched when there is something to say.
@@ -1078,6 +1285,14 @@ export function useOutlookMeetings(
         formRequest,
         selection,
         dayOverlayLane,
+        outOfSync,
+        flagOf,
+        firstOutOfSync,
+        flagPanel,
+        openFlagPanel,
+        closeFlagPanel,
+        keepFlag,
+        isFlagPending,
     };
 
     // The toolbar controls are rendered through core slots and inject this instead of taking props.

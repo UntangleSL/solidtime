@@ -11,6 +11,7 @@ import type {
     OutlookConnectionState,
     OutlookMeeting,
     OutlookMeetingsResponse,
+    OutlookOutOfSyncItem,
     OutlookSyncResponse,
 } from '@/m365/types';
 import { OUTLOOK_MEETINGS_KEY, useOutlookMeetings, weekBucket } from './useOutlookMeetings';
@@ -38,6 +39,8 @@ const axiosDelete = vi.mocked(axios.delete);
 const MEETINGS_URL = 'https://app.example.test/m365/meetings';
 const SYNC_URL = 'https://app.example.test/m365/meetings/sync';
 const CONVERT_URL = 'https://app.example.test/m365/organizations/org-1/meetings/time-entries';
+const OSYNC_URL = 'https://app.example.test/m365/out-of-sync';
+const ORG_MEETINGS_URL = 'https://app.example.test/m365/organizations/org-1/meetings';
 
 // Mondays (the test setup uses week start monday and timezone UTC)
 const WEEK_A = '2026-11-02T00:00:00Z';
@@ -61,7 +64,13 @@ function meeting(id: string, start: string, end: string): OutlookMeeting {
 function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
     return {
         state,
-        urls: { meetings: MEETINGS_URL, sync: SYNC_URL, convert: CONVERT_URL },
+        urls: {
+            meetings: MEETINGS_URL,
+            sync: SYNC_URL,
+            convert: CONVERT_URL,
+            out_of_sync: OSYNC_URL,
+            organization_meetings: ORG_MEETINGS_URL,
+        },
         connect_url:
             'https://app.example.test/auth/microsoft/redirect?intent=connect&return=calendar',
         notice: null,
@@ -85,6 +94,21 @@ function calendarProps(state: OutlookConnectionState): OutlookCalendarProps {
             series_forgotten_help:
                 'Its meetings are no longer pre-assigned. Your time entries are unchanged.',
             series_action_failed: 'Could not update this series',
+            osync_kept: 'Kept as is',
+            osync_keep_failed: 'Could not save your choice',
+            osync_adjusted: 'Time entry adjusted to Outlook',
+            osync_adjust_failed: 'Could not adjust the time entry',
+            osync_deleted_announcement: 'Time entry deleted',
+            osync_delete_failed: 'Could not delete the time entry',
+            osync_stale: 'This entry changed in the meantime',
+            osync_stale_body: 'The calendar was refreshed.',
+            osync_error_forbidden: "You can't edit this time entry.",
+            move_entry_success: 'Time entry moved here',
+            move_entry_from: 'From :when',
+            move_entry_announcement: 'Time entry moved',
+            move_entry_failed: 'Could not move the time entry',
+            auto_adjusted_one: '1 time entry updated from Outlook',
+            auto_adjusted_many: ':count time entries updated from Outlook',
         } as never,
     };
 }
@@ -2185,5 +2209,267 @@ describe('useOutlookMeetings series actions', () => {
             expect(mounted.api.meetings.value).toEqual([occurrenceA, oneOff, occurrenceB]);
             mounted.wrapper.unmount();
         });
+    });
+});
+
+// --- Phase 6: out-of-sync flags (06-07)
+
+function flagItem(
+    id: string,
+    kind: OutlookOutOfSyncItem['kind'],
+    entryStart: string,
+    overrides: Partial<OutlookOutOfSyncItem> = {}
+): OutlookOutOfSyncItem {
+    const entryEnd = new Date(Date.parse(entryStart) + 3_600_000).toISOString().replace('.000', '');
+    return {
+        time_entry_id: id,
+        kind,
+        meeting_start: entryStart,
+        meeting_end: entryEnd,
+        new_start: null,
+        new_end: null,
+        all_day: false,
+        entry_start: entryStart,
+        entry_end: entryEnd,
+        description: `Entry ${id}`,
+        ...overrides,
+    };
+}
+
+// A: moved, entry on Tuesday; B: cancelled, entry on Monday (the earliest, so the first flag).
+const FLAG_A = flagItem('te-a', 'moved', '2026-11-03T10:00:00Z', {
+    new_start: '2026-11-04T12:00:00Z',
+    new_end: '2026-11-04T13:00:00Z',
+});
+const FLAG_B = flagItem('te-b', 'cancelled', '2026-11-02T09:00:00Z');
+
+function flagsRead(
+    items: OutlookOutOfSyncItem[],
+    meetings: OutlookMeeting[] = []
+): { data: OutlookMeetingsResponse } {
+    return {
+        data: {
+            data: meetings,
+            sync: { last_synced_at: null, retry_after: null },
+            out_of_sync: { items },
+        },
+    };
+}
+
+function invalidatedKeysOf(spy: { mock: { calls: unknown[][] } }): unknown[] {
+    return spy.mock.calls.map((call) => (call[0] as { queryKey?: unknown } | undefined)?.queryKey);
+}
+
+async function mountWithFlags(
+    items: OutlookOutOfSyncItem[] = [FLAG_A, FLAG_B],
+    meetings: OutlookMeeting[] = []
+): Promise<Mounted> {
+    axiosGet.mockResolvedValue(flagsRead(items, meetings));
+    const mounted = mountComposable();
+    await advance(500);
+    axiosPost.mockReset();
+    axiosPost.mockResolvedValue({ data: {} });
+    addNotification.mockReset();
+    return mounted;
+}
+
+describe('useOutlookMeetings out-of-sync state and panel request', () => {
+    it('exposes the flags of the read, flagOf and the first flag (earliest entry start)', async () => {
+        const mounted = await mountWithFlags();
+
+        expect(mounted.api.outOfSync.value.map((item) => item.time_entry_id)).toEqual([
+            'te-a',
+            'te-b',
+        ]);
+        expect(mounted.api.flagOf('te-b')).toEqual(FLAG_B);
+        expect(mounted.api.flagOf('te-x')).toBeNull();
+        expect(mounted.api.firstOutOfSync.value?.time_entry_id).toBe('te-b');
+        mounted.wrapper.unmount();
+    });
+
+    it('is empty and inert while it cannot act (injected meetings without actions)', async () => {
+        const mounted = await mountWithFlags();
+        (
+            window as unknown as {
+                __TEST_SET_OUTLOOK_MEETINGS__: (list: OutlookMeeting[]) => void;
+            }
+        ).__TEST_SET_OUTLOOK_MEETINGS__([]);
+        await nextTick();
+
+        expect(mounted.api.canAct.value).toBe(false);
+        expect(mounted.api.outOfSync.value).toEqual([]);
+        expect(mounted.api.flagOf('te-a')).toBeNull();
+        expect(mounted.api.firstOutOfSync.value).toBeNull();
+        mounted.api.openFlagPanel('te-a');
+        expect(mounted.api.flagPanel.value).toBeNull();
+        const result = await mounted.api.keepFlag('te-a');
+        expect(result.status).toBe('failed');
+        expect(axiosPost).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('is empty without the calendar prop (impersonation, D-14)', async () => {
+        setPage(null);
+        axiosGet.mockResolvedValue(flagsRead([FLAG_A]));
+        const mounted = mountComposable();
+        await advance(500);
+
+        expect(mounted.api.outOfSync.value).toEqual([]);
+        expect(mounted.api.firstOutOfSync.value).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('hides the flags and closes the popover once a sync answers not_connected (D-19)', async () => {
+        const mounted = await mountWithFlags();
+        mounted.api.openFlagPanel('te-a');
+        expect(mounted.api.flagPanel.value).not.toBeNull();
+        axiosPost.mockResolvedValue(syncResponse({ status: 'not_connected' }));
+
+        mounted.api.requestSync(true);
+        await advance(0);
+
+        expect(mounted.api.connectionState.value).toBe('not_connected');
+        expect(mounted.api.outOfSync.value).toEqual([]);
+        expect(mounted.api.flagPanel.value).toBeNull();
+        mounted.wrapper.unmount();
+    });
+
+    it('openFlagPanel requests the popover with a new seq each call and ignores unknown ids', async () => {
+        const mounted = await mountWithFlags();
+
+        mounted.api.openFlagPanel('te-a');
+        expect(mounted.api.flagPanel.value).toEqual({
+            timeEntryId: 'te-a',
+            anchor: 'entry',
+            origin: 'entry',
+            seq: 1,
+        });
+
+        mounted.api.openFlagPanel('te-a');
+        expect(mounted.api.flagPanel.value?.seq).toBe(2);
+
+        mounted.api.openFlagPanel('unknown');
+        expect(mounted.api.flagPanel.value?.timeEntryId).toBe('te-a');
+        expect(mounted.api.flagPanel.value?.seq).toBe(2);
+
+        mounted.api.openFlagPanel('te-b', { anchor: 'counter', origin: 'counter' });
+        expect(mounted.api.flagPanel.value).toEqual({
+            timeEntryId: 'te-b',
+            anchor: 'counter',
+            origin: 'counter',
+            seq: 3,
+        });
+
+        mounted.api.closeFlagPanel();
+        expect(mounted.api.flagPanel.value).toBeNull();
+        mounted.wrapper.unmount();
+    });
+});
+
+describe('useOutlookMeetings keepFlag', () => {
+    it('posts keep, is pending until it settles, then invalidates and announces without a toast', async () => {
+        const mounted = await mountWithFlags();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        const request = deferred<{ data: unknown }>();
+        axiosPost.mockReturnValue(request.promise);
+        // Keep the refetch from settling so the change made after the answer is observed
+        axiosGet.mockReturnValue(new Promise(() => undefined));
+        mounted.api.openFlagPanel('te-a');
+
+        const done = mounted.api.keepFlag('te-a');
+
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+        expect(axiosPost.mock.calls[0]![0]).toBe(`${OSYNC_URL}/te-a/keep`);
+        expect(mounted.api.isFlagPending('te-a')).toBe(true);
+        expect(mounted.api.isFlagPending('te-b')).toBe(false);
+        // Pessimistic: the flag is still listed while the request runs
+        expect(mounted.api.flagOf('te-a')).not.toBeNull();
+        const again = await mounted.api.keepFlag('te-a');
+        expect(again).toEqual({ status: 'failed', message: '' });
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+
+        request.resolve({ data: {} });
+        const result = await done;
+        await advance(0);
+
+        expect(result).toEqual({ status: 'ok' });
+        expect(mounted.api.isFlagPending('te-a')).toBe(false);
+        expect(mounted.api.flagOf('te-a')).toBeNull();
+        expect(mounted.api.outOfSync.value.map((item) => item.time_entry_id)).toEqual(['te-b']);
+        expect(mounted.api.flagPanel.value).toBeNull();
+        const keys = invalidatedKeysOf(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['goals']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        expect(mounted.api.announcement.value).toBe('Kept as is');
+        expect(addNotification).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
+    });
+
+    it('a 404 answer is stale: the toast, a refresh and the popover closes', async () => {
+        const mounted = await mountWithFlags();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosPost.mockRejectedValue(httpError(404));
+        mounted.api.openFlagPanel('te-a');
+
+        const result = await mounted.api.keepFlag('te-a');
+
+        expect(result).toEqual({ status: 'stale' });
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'This entry changed in the meantime',
+            'The calendar was refreshed.'
+        );
+        const keys = invalidatedKeysOf(invalidate);
+        expect(keys).toContainEqual(['timeEntries']);
+        expect(keys).toContainEqual(['m365', 'meetings']);
+        expect(mounted.api.flagPanel.value).toBeNull();
+        expect(mounted.api.isFlagPending('te-a')).toBe(false);
+        mounted.wrapper.unmount();
+    });
+
+    it('a 409 answer is stale as well', async () => {
+        const mounted = await mountWithFlags();
+        axiosPost.mockRejectedValue(httpError(409));
+
+        expect(await mounted.api.keepFlag('te-a')).toEqual({ status: 'stale' });
+        mounted.wrapper.unmount();
+    });
+
+    it('a 500 answer fails with the retry copy and the osync_keep_failed toast, keeping the flag', async () => {
+        const mounted = await mountWithFlags();
+        const invalidate = vi.spyOn(mounted.queryClient, 'invalidateQueries');
+        axiosPost.mockRejectedValue(httpError(500));
+        mounted.api.openFlagPanel('te-a');
+
+        const result = await mounted.api.keepFlag('te-a');
+        await advance(0);
+
+        expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
+        expect(addNotification).toHaveBeenCalledTimes(1);
+        expect(addNotification).toHaveBeenCalledWith(
+            'error',
+            'Could not save your choice',
+            'Try again in a moment.'
+        );
+        expect(mounted.api.flagOf('te-a')).not.toBeNull();
+        // The popover stays open for the inline alert
+        expect(mounted.api.flagPanel.value?.timeEntryId).toBe('te-a');
+        expect(mounted.api.announcement.value).toBe('');
+        expect(invalidatedKeysOf(invalidate)).not.toContainEqual(['timeEntries']);
+        mounted.wrapper.unmount();
+    });
+
+    it('sends nothing without an out_of_sync url', async () => {
+        const mounted = await mountWithFlags();
+        delete (pageProps.microsoft as { calendar: OutlookCalendarProps }).calendar.urls
+            .out_of_sync;
+
+        const result = await mounted.api.keepFlag('te-a');
+
+        expect(result).toEqual({ status: 'failed', message: 'Try again in a moment.' });
+        expect(axiosPost).not.toHaveBeenCalled();
+        mounted.wrapper.unmount();
     });
 });
