@@ -196,9 +196,16 @@ class OutlookMeetingLinkLifecycleTest extends TestCaseWithDatabase
     /**
      * @return array<string, mixed>
      */
+    /**
+     * The link's identity, snapshot and assignment. A complete sync stamps last_checked_at (and so
+     * updated_at) on every link it checks since Phase 6, which is bookkeeping, not a change.
+     */
     private function linkRow(OutlookMeetingLink $link): array
     {
-        return OutlookMeetingLink::query()->findOrFail($link->getKey())->getAttributes();
+        $attributes = OutlookMeetingLink::query()->findOrFail($link->getKey())->getAttributes();
+        unset($attributes['last_checked_at'], $attributes['updated_at']);
+
+        return $attributes;
     }
 
     public function test_deleting_the_entry_resurfaces_the_meeting(): void
