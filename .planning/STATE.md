@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 04
 current_phase_name: Assign Meetings to Projects
 status: planning
-stopped_at: Phase 5 deployed (sha-0f2d424, 2026-11-17); Phase 4 and 5 owner UAT pending
-last_updated: "2026-11-17T19:56:18.623Z"
-last_activity: 2026-11-17
+stopped_at: Phase 6 deployed (sha-8ec9a5a, 2026-11-24); Phase 6 owner UAT pending
+last_updated: "2026-11-24T13:13:32.000Z"
+last_activity: 2026-11-24
 last_activity_desc: Phases 3.1 + 3.2 complete (owner UAT), Phase 4 planning
-state_head: 96c23eb7248d96e67170c1848bd94735a304b6b8
+state_head: cc783a4544c4c302e38ba35402c100e2b1a3f6eb
 progress:
   total_phases: 10
   completed_phases: 5
-  total_plans: 72
-  completed_plans: 72
+  total_plans: 91
+  completed_plans: 91
   percent: 50
 ---
 
@@ -156,7 +156,8 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- [Phase 6]: Owner UAT for OSYNC-01..03 on real Outlook meetings (six end-of-phase checks listed in .planning/phases/06-out-of-sync-detection/06-19-SUMMARY.md)
+- [Phase 6]: Unverified in the containers (Dokploy log tool HTTP 500, no exec tool): `php artisan schedule:list` shows m365:check-out-of-sync, and `php artisan m365:check-out-of-sync --dry-run` prints counts; first real 05:30 run not yet observed
 
 ### Blockers/Concerns
 
@@ -174,6 +175,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-17T19:56:17.981Z
-Stopped at: Phase 5 deployed (sha-0f2d424, 2026-11-17); Phase 4 and 5 owner UAT pending
-Resume file: .planning/phases/05-smart-meeting-suggestions/05-15-SUMMARY.md
+Last session: 2026-11-24T13:13:32.000Z
+Stopped at: Phase 6 deployed (sha-8ec9a5a, 2026-11-24); Phase 6 owner UAT pending
+Resume file: .planning/phases/06-out-of-sync-detection/06-19-SUMMARY.md
