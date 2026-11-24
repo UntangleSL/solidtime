@@ -37,6 +37,8 @@ const labels = {
     tags_many: ':count Tags',
     billable: 'Billable',
     non_billable: 'Non-Billable',
+    // Phase 6 (D-03)
+    moved_hover_note: 'Moved in Outlook. You logged it on :date.',
 } as OutlookCalendarLabels;
 
 const settings: CalendarSettings = { snapMinutes: 15, startHour: 0, endHour: 24, slotMinutes: 15 };
@@ -604,5 +606,113 @@ describe('Outlook meeting hover card, pre-assigned meeting', () => {
 
         expect(byTestId('outlook-hover-edit')).toBeNull();
         expect(byTestId('outlook-hover-confirm')).toBeNull();
+    });
+});
+
+describe('Outlook meeting hover card, meeting moved after it started (Phase 6, D-03)', () => {
+    let standalone: VueWrapper | null = null;
+
+    const movedFrom = {
+        time_entry_id: 'te-1',
+        entry_start: '2026-11-24T10:00:00Z',
+        entry_end: '2026-11-24T11:00:00Z',
+    };
+
+    const assignment: OutlookAssignment = {
+        project_id: 'p-1',
+        project_name: 'Acme Website',
+        project_color: '#ef5350',
+        client_name: 'Acme',
+        task_id: null,
+        task_name: null,
+        tags: [],
+        billable: true,
+        converted_at: '2026-11-10T09:00:00Z',
+    };
+
+    function moved(overrides: Partial<OutlookMeeting> = {}): OutlookMeeting {
+        return meeting({ moved_from: movedFrom, ...overrides });
+    }
+
+    function mountCard(item: OutlookMeeting, context: Partial<OutlookMeetingsContext> | null) {
+        standalone = mountStandaloneCard(item, context);
+        return standalone;
+    }
+
+    function byTestId(id: string): HTMLElement | null {
+        return document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    }
+
+    function actingContext(canAct = true) {
+        return {
+            canAct: { value: canAct },
+            openForm: vi.fn(),
+            confirmOne: vi.fn(),
+            isConfirmPending: () => false,
+        } as unknown as OutlookMeetingsContext;
+    }
+
+    function buttons(): string[] {
+        return Array.from(card()?.querySelectorAll('button') ?? []).map(
+            (button) => button.getAttribute('data-testid') ?? ''
+        );
+    }
+
+    afterEach(() => {
+        standalone?.unmount();
+        standalone = null;
+    });
+
+    it('adds one note line with the logged date between the summary and the hint', async () => {
+        mountCard(moved(), actingContext());
+        await nextTick();
+
+        const note = byTestId('outlook-hover-moved-note');
+        expect(note?.textContent?.trim()).toBe('Moved in Outlook. You logged it on Tue, Nov 24.');
+        expect(note?.querySelector('svg.lucide-calendar-clock')).not.toBeNull();
+        expect(note?.className).toContain('mt-2');
+        const subject = byTestId('outlook-hover-subject') as HTMLElement;
+        const hint = byTestId('outlook-hover-hint') as HTMLElement;
+        expect(subject.compareDocumentPosition(note as Node)).toBe(
+            Node.DOCUMENT_POSITION_FOLLOWING
+        );
+        expect(note?.compareDocumentPosition(hint)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+
+    it('keeps the actions unchanged (Create time entry only, no move button)', async () => {
+        mountCard(moved(), actingContext());
+        await nextTick();
+
+        expect(buttons()).toEqual(['outlook-hover-create']);
+        expect(byTestId('outlook-detail-move-entry')).toBeNull();
+    });
+
+    it('a pre-assigned moved meeting shows the note after the pre-assignment, Edit and Confirm kept', async () => {
+        mountCard(moved({ series_key: 'series-1', assignment }), actingContext());
+        await nextTick();
+
+        const block = byTestId('outlook-preassignment') as HTMLElement;
+        const note = byTestId('outlook-hover-moved-note') as HTMLElement;
+        expect(block.compareDocumentPosition(note)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+        expect(buttons()).toEqual(['outlook-hover-edit', 'outlook-hover-confirm']);
+    });
+
+    it('a meeting without moved_from shows no note', async () => {
+        mountCard(meeting(), actingContext());
+        await nextTick();
+
+        expect(byTestId('outlook-hover-moved-note')).toBeNull();
+    });
+
+    it('without canAct or without a context there is no note', async () => {
+        mountCard(moved(), actingContext(false));
+        await nextTick();
+        expect(byTestId('outlook-hover-moved-note')).toBeNull();
+        standalone?.unmount();
+        document.body.innerHTML = '';
+
+        mountCard(moved(), null);
+        await nextTick();
+        expect(byTestId('outlook-hover-moved-note')).toBeNull();
     });
 });

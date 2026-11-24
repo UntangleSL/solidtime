@@ -16,6 +16,7 @@ import OutlookMeetingHoverCard from './OutlookMeetingHoverCard.vue';
 import OutlookProjectDot from './OutlookProjectDot.vue';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
 import { isFaded, isPreassigned } from './suggestions';
+import { shortDate } from './syncFlagReason';
 import {
     HOVER_CLOSE_DELAY_MS,
     hoverOpenDelay,
@@ -375,13 +376,21 @@ async function onConverted(meeting: OutlookMeeting): Promise<void> {
 
 // A confirm of this meeting runs, from any surface (panel, hover card, menu, bulk): the block shows
 // a spinner instead of the project dot, aria-busy and the progress cursor (UI-SPEC section 1).
+// Phase 6 (D-03): a move of its logged entry ("Move my entry here", panel or menu) shows the same.
 function isPending(id: string): boolean {
-    return context?.isConfirmPending?.(id) === true || confirmingIds.value.includes(id);
+    return (
+        context?.isConfirmPending?.(id) === true || confirmingIds.value.includes(id) || isMoving(id)
+    );
 }
 
-// Phase 6 (D-03): a move of this meeting's logged entry runs ("Move my entry here").
 function isMoving(id: string): boolean {
     return context?.isMovePending?.(id) === true;
+}
+
+// A block without a project dot gets the move spinner on its own: before the subject on one-line
+// tiers, in place of the calendar icon of the time line otherwise.
+function showsMoveSpinner(meeting: OutlookMeeting): boolean {
+    return !preassignmentOf(meeting) && isMoving(meeting.id);
 }
 
 function confirmErrorOf(id: string): string | null {
@@ -629,6 +638,12 @@ function ariaLabelOf(meeting: OutlookMeeting): string {
     if (assignment) {
         label += fillLabel(props.labels.preassigned_suffix, { project: assignment.project_name });
     }
+    // D-03: the meeting moved after it started and its entry is already logged (UI-SPEC section 4).
+    if (meeting.moved_from) {
+        label += fillLabel(props.labels.moved_suffix, {
+            date: shortDate(meeting.moved_from.entry_start),
+        });
+    }
     // An occurrence of an ignored series reads as such instead of ", dismissed" (UI-SPEC section 5).
     if (meeting.series_ignored === true) label += props.labels.series_ignored_suffix;
     else if (meeting.dismissed) label += props.labels.dismissed_suffix;
@@ -698,6 +713,7 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                         :data-panel-open="openId === box.meeting.id ? '' : undefined"
                         :data-selected="isSelected(box.meeting.id) ? '' : undefined"
                         :data-preassigned="preassignmentOf(box.meeting) ? '' : undefined"
+                        :data-moved-from="box.meeting.moved_from ? '' : undefined"
                         role="button"
                         tabindex="0"
                         :aria-label="ariaLabelOf(box.meeting)"
@@ -723,6 +739,10 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                         v-else
                                         :color="preassignmentOf(box.meeting)!.project_color" />
                                 </template>
+                                <LoadingSpinner
+                                    v-else-if="showsMoveSpinner(box.meeting)"
+                                    class="m365-meeting__meta m-0 h-3 w-3 shrink-0"
+                                    data-testid="outlook-move-spinner" />
                                 <span
                                     class="m365-meeting__subject min-w-0 truncate"
                                     :class="{ 'font-semibold': !isFaded(box.meeting) }"
@@ -755,8 +775,12 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                     v-if="showsTimeLine(box)"
                                     class="m365-meeting__meta flex min-w-0 items-center gap-1"
                                     data-ghost-time>
+                                    <LoadingSpinner
+                                        v-if="showsMoveSpinner(box.meeting)"
+                                        class="m-0 h-3 w-3 shrink-0 text-current"
+                                        data-testid="outlook-move-spinner" />
                                     <EyeOff
-                                        v-if="isFaded(box.meeting)"
+                                        v-else-if="isFaded(box.meeting)"
                                         class="size-3 shrink-0"
                                         aria-hidden="true" />
                                     <CalendarDays

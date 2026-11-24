@@ -6,6 +6,7 @@ import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
 import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
 import type { OutlookCalendarLabels, OutlookMeeting } from '@/m365/types';
 import OutlookMeetingSummary from './OutlookMeetingSummary.vue';
+import OutlookMovedMeeting from './OutlookMovedMeeting.vue';
 import OutlookPreassignment from './OutlookPreassignment.vue';
 import { OUTLOOK_MEETINGS_KEY } from './useOutlookMeetings';
 import { isPreassigned } from './suggestions';
@@ -21,6 +22,9 @@ import { isPreassigned } from './suggestions';
 // A pre-assigned meeting (Phase 5, D-03) shows its pre-assignment (series, project, client, task,
 // tags, billable) and offers Edit (the same form channel) and a one-click Confirm instead; the card
 // may close while the confirm runs, the block and the toast carry the outcome.
+// Phase 6 (D-03): a meeting Outlook moved after it started adds one note line before the hint
+// ("Moved in Outlook. You logged it on …"); the actions are unchanged (the move lives in the panel
+// and the meeting menu). Only while the context can act (D-14).
 //
 // `reference` anchors the card to the meeting block: the block's HoverCardTrigger sits inside the
 // panel's Popover, whose Popper context captures the trigger's anchor, so the card's own Popper root
@@ -46,6 +50,8 @@ const hint = computed(() => {
     if (!canAct.value) return props.labels.hover_hint;
     return isMacPlatform() ? props.labels.hover_hint_select_mac : props.labels.hover_hint_select;
 });
+
+const moved = computed(() => canAct.value && Boolean(props.meeting.moved_from));
 
 const preassigned = computed(() => canAct.value && isPreassigned(props.meeting));
 const confirmPending = computed(
@@ -87,6 +93,7 @@ function onConfirm(): void {
                 variant="compact"
                 :assignment="meeting.assignment"
                 :labels="labels" />
+            <OutlookMovedMeeting v-if="moved" :meeting="meeting" :labels="labels" variant="note" />
             <p class="mt-3 text-xs text-text-tertiary" data-testid="outlook-hover-hint">
                 {{ hint }}
             </p>

@@ -2982,4 +2982,161 @@ describe('OutlookGhostLayer moved meeting (Phase 6, D-03)', () => {
             expect(mounted.moveEntry).not.toHaveBeenCalled();
         });
     });
+
+    describe('moved block: label, attribute and pending state', () => {
+        function moveSpinnerOf(id: string): Element | null {
+            return block(id).querySelector('[data-testid="outlook-move-spinner"]');
+        }
+
+        it('the aria-label ends with the already-logged suffix and the block carries data-moved-from', () => {
+            mountMoved([moved('a', 8), at('b', 10)]);
+
+            expect(block('a').getAttribute('aria-label')).toBe(
+                'Meeting a, 08:00 to 09:00, Outlook meeting suggestion, already logged on Mon, Oct 19'
+            );
+            expect(block('a').hasAttribute('data-moved-from')).toBe(true);
+            expect(block('b').getAttribute('aria-label')).toBe(
+                'Meeting b, 10:00 to 11:00, Outlook meeting suggestion'
+            );
+            expect(block('b').hasAttribute('data-moved-from')).toBe(false);
+        });
+
+        it('the suffix comes after the pre-assigned one and before dismissed and selected', async () => {
+            mountMoved([
+                moved('a', 8, { series_key: 'series-a', assignment }),
+                moved('b', 10, { dismissed: true }),
+            ]);
+
+            expect(block('a').getAttribute('aria-label')).toBe(
+                'Meeting a, 08:00 to 09:00, Outlook meeting suggestion, pre-assigned to Acme Website, already logged on Mon, Oct 19'
+            );
+            expect(block('b').getAttribute('aria-label')).toMatch(
+                /, already logged on Mon, Oct 19, dismissed$/
+            );
+        });
+
+        it('the suffix comes before the selected suffix', async () => {
+            const mounted = mountMoved([moved('a', 8), at('b', 10)]);
+            const selection = mounted.context.selection as unknown as {
+                selectedIds: Ref<string[]>;
+            };
+            selection.selectedIds.value = ['a'];
+            await nextTick();
+
+            expect(block('a').getAttribute('aria-label')).toMatch(
+                /, already logged on Mon, Oct 19, selected$/
+            );
+        });
+
+        it('the suffix uses the local date of the logged entry', () => {
+            vi.mocked(window.getTimezoneSetting).mockReturnValue('Pacific/Auckland');
+            mountMoved([
+                at('a', 8, {
+                    moved_from: {
+                        time_entry_id: 'te-old',
+                        entry_start: '2026-10-19T12:00:00Z',
+                        entry_end: '2026-10-19T13:00:00Z',
+                    },
+                }),
+            ]);
+
+            expect(block('a').getAttribute('aria-label')).toMatch(
+                /, already logged on Tue, Oct 20$/
+            );
+        });
+
+        it('without canAct the label still says already logged and nothing else changes', async () => {
+            const mounted = mountMoved([moved('a', 8)], { canAct: false });
+
+            expect(block('a').getAttribute('aria-label')).toMatch(
+                /, already logged on Mon, Oct 19$/
+            );
+            expect(block('a').hasAttribute('aria-busy')).toBe(false);
+            expect(moveSpinnerOf('a')).toBeNull();
+            expect(mounted.moveEntry).not.toHaveBeenCalled();
+        });
+
+        it('a move started elsewhere (menu) shows the block pending: aria-busy, cursor, 12px spinner', async () => {
+            const mounted = mountMoved([moved('a', 8), at('b', 10)]);
+            expect(block('a').hasAttribute('aria-busy')).toBe(false);
+            expect(block('a').classList.contains('cursor-pointer')).toBe(true);
+            expect(moveSpinnerOf('a')).toBeNull();
+
+            mounted.movePending.value = ['a'];
+            await nextTick();
+
+            expect(block('a').getAttribute('aria-busy')).toBe('true');
+            expect(block('a').classList.contains('cursor-progress')).toBe(true);
+            expect(block('a').classList.contains('cursor-pointer')).toBe(false);
+            const spinner = moveSpinnerOf('a');
+            expect(spinner).not.toBeNull();
+            expect(spinner!.getAttribute('class')).toContain('h-3');
+            expect(spinner!.getAttribute('class')).toContain('w-3');
+            // The calendar icon of the time line gives way to the spinner
+            expect(
+                block('a').querySelector('[data-ghost-time] svg.lucide-calendar-days')
+            ).toBeNull();
+            expect(block('b').hasAttribute('aria-busy')).toBe(false);
+            expect(moveSpinnerOf('b')).toBeNull();
+
+            mounted.movePending.value = [];
+            await nextTick();
+
+            expect(block('a').hasAttribute('aria-busy')).toBe(false);
+            expect(moveSpinnerOf('a')).toBeNull();
+            expect(
+                block('a').querySelector('[data-ghost-time] svg.lucide-calendar-days')
+            ).not.toBeNull();
+        });
+
+        it('on one-line tiers the move spinner sits before the subject', async () => {
+            const mounted = mountMoved([moved('a', 8, { end: '2026-10-20T08:20:00Z' })]);
+            expect(
+                block('a').querySelector('[data-ghost-tier]')!.getAttribute('data-ghost-tier')
+            ).toBe('2');
+
+            mounted.movePending.value = ['a'];
+            await nextTick();
+
+            const html = block('a').innerHTML;
+            expect(html.indexOf('outlook-move-spinner')).toBeGreaterThan(-1);
+            expect(html.indexOf('outlook-move-spinner')).toBeLessThan(
+                html.indexOf('data-ghost-subject')
+            );
+        });
+
+        it('a pre-assigned moved meeting uses the pre-assigned spinner in place of its dot', async () => {
+            const mounted = mountMoved([moved('a', 8, { series_key: 'series-a', assignment })]);
+
+            mounted.movePending.value = ['a'];
+            await nextTick();
+
+            expect(block('a').getAttribute('aria-busy')).toBe('true');
+            expect(
+                block('a').querySelector('[data-testid="outlook-preassigned-spinner"]')
+            ).not.toBeNull();
+            expect(block('a').querySelector('[data-testid="outlook-project-dot"]')).toBeNull();
+            expect(moveSpinnerOf('a')).toBeNull();
+        });
+
+        it('a confirm pending on a plain meeting still shows no move spinner', async () => {
+            const mounted = mountMoved([at('a', 8)]);
+
+            mounted.confirmPending.value = ['a'];
+            await nextTick();
+
+            expect(block('a').getAttribute('aria-busy')).toBe('true');
+            expect(moveSpinnerOf('a')).toBeNull();
+        });
+
+        it('a panel move shows the block pending too', async () => {
+            mountMoved([moved('a', 8)]);
+            await openPanel('a');
+
+            await pressMove();
+
+            expect(block('a').getAttribute('aria-busy')).toBe('true');
+            expect(moveSpinnerOf('a')).not.toBeNull();
+        });
+    });
 });
