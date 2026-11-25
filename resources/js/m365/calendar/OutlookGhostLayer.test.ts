@@ -83,6 +83,7 @@ const labels = {
         'You logged it on :when. Create a new entry for this session, or move that one here.',
     moved_hover_note: 'Moved in Outlook. You logged it on :date.',
     moved_suffix: ', already logged on :date',
+    moved_badge: 'Already logged',
     move_entry_here: 'Move my entry here',
     move_entry_failed: 'Could not move the time entry',
 } as OutlookCalendarLabels;
@@ -2844,6 +2845,35 @@ describe('OutlookGhostLayer moved meeting (Phase 6, D-03)', () => {
             expect(byTestId('outlook-detail-create')).not.toBeNull();
         });
 
+        it('shows "Already logged" in the block of a moved meeting, not the series project', async () => {
+            mountMoved([
+                moved('a', 8, {
+                    assignment: {
+                        project_id: 'p-1',
+                        project_name: 'Alpha',
+                        project_color: '#ec407a',
+                        client_name: null,
+                        task_id: null,
+                        task_name: null,
+                        tags: [],
+                        billable: true,
+                        converted_at: '2026-10-19T09:00:00Z',
+                    },
+                }),
+                at('b', 10),
+            ]);
+            await nextTick();
+
+            const block = document.querySelector('[data-ghost-id="a"]');
+            expect(
+                block?.querySelector('[data-testid="outlook-moved-line"]')?.textContent?.trim()
+            ).toBe('Already logged');
+            expect(block?.hasAttribute('data-preassigned')).toBe(false);
+            expect(block?.querySelector('[data-testid="outlook-preassigned-line"]')).toBeNull();
+            const other = document.querySelector('[data-ghost-id="b"]');
+            expect(other?.querySelector('[data-testid="outlook-moved-line"]')).toBeNull();
+        });
+
         it('a meeting without moved_from has no moved block', async () => {
             mountMoved([at('a', 8)]);
             await openPanel('a');
@@ -3001,14 +3031,14 @@ describe('OutlookGhostLayer moved meeting (Phase 6, D-03)', () => {
             expect(block('b').hasAttribute('data-moved-from')).toBe(false);
         });
 
-        it('the suffix comes after the pre-assigned one and before dismissed and selected', async () => {
+        it('a moved series meeting is not pre-assigned; the suffix comes before dismissed', async () => {
             mountMoved([
                 moved('a', 8, { series_key: 'series-a', assignment }),
                 moved('b', 10, { dismissed: true }),
             ]);
 
             expect(block('a').getAttribute('aria-label')).toBe(
-                'Meeting a, 08:00 to 09:00, Outlook meeting suggestion, pre-assigned to Acme Website, already logged on Mon, Oct 19'
+                'Meeting a, 08:00 to 09:00, Outlook meeting suggestion, already logged on Mon, Oct 19'
             );
             expect(block('b').getAttribute('aria-label')).toMatch(
                 /, already logged on Mon, Oct 19, dismissed$/
@@ -3105,7 +3135,7 @@ describe('OutlookGhostLayer moved meeting (Phase 6, D-03)', () => {
             );
         });
 
-        it('a pre-assigned moved meeting uses the pre-assigned spinner in place of its dot', async () => {
+        it('a moved series meeting shows the move spinner, never the pre-assigned one', async () => {
             const mounted = mountMoved([moved('a', 8, { series_key: 'series-a', assignment })]);
 
             mounted.movePending.value = ['a'];
@@ -3114,9 +3144,9 @@ describe('OutlookGhostLayer moved meeting (Phase 6, D-03)', () => {
             expect(block('a').getAttribute('aria-busy')).toBe('true');
             expect(
                 block('a').querySelector('[data-testid="outlook-preassigned-spinner"]')
-            ).not.toBeNull();
+            ).toBeNull();
             expect(block('a').querySelector('[data-testid="outlook-project-dot"]')).toBeNull();
-            expect(moveSpinnerOf('a')).toBeNull();
+            expect(moveSpinnerOf('a')).not.toBeNull();
         });
 
         it('a confirm pending on a plain meeting still shows no move spinner', async () => {

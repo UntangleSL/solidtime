@@ -44,8 +44,10 @@ export function isFaded(meeting: OutlookMeeting): boolean {
     return meeting.dismissed || meeting.series_ignored === true;
 }
 
+// A meeting Outlook moved after its entry was logged (Phase 6 D-03) is not pre-assigned: the user
+// chooses between a new entry and moving the logged one, so Confirm never creates a duplicate.
 export function isPreassigned(meeting: OutlookMeeting): boolean {
-    return (meeting.assignment ?? null) !== null && !isFaded(meeting);
+    return (meeting.assignment ?? null) !== null && !isFaded(meeting) && !meeting.moved_from;
 }
 
 function usableProject(projectId: string, projects: readonly PrefillProject[]): boolean {

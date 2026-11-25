@@ -969,23 +969,19 @@ describe('OutlookMeetingContextItems "Move my entry here"', () => {
         }
     });
 
-    it('follows Confirm and Edit for a pre-assigned meeting', async () => {
+    it('a moved meeting with a series assignment offers Create, never Confirm', async () => {
         const [block] = renderLane(['m-1']);
         const { context } = fakeContext([preassigned({ series_key: null, moved_from: movedFrom })]);
         await openMenu(block!, context);
 
         expect(itemOrder()).toEqual([
             'outlook-menu-label',
-            'outlook-menu-confirm',
-            'outlook-project-dot',
-            'outlook-menu-project-hint',
-            'outlook-menu-edit',
+            'outlook-menu-create',
             'outlook-menu-move-entry',
             'outlook-menu-move-entry-hint',
             'outlook-menu-select',
             'separator',
             'outlook-menu-dismiss',
-            'outlook-menu-forget-series',
         ]);
     });
 

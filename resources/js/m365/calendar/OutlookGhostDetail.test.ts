@@ -857,20 +857,17 @@ describe('OutlookGhostDetail', () => {
             );
         });
 
-        it('a pre-assigned moved meeting shows the block after the pre-assignment', async () => {
+        it('a moved series meeting is not pre-assigned: no Confirm, the user chooses', async () => {
             mountOpen(moved({ series_key: 'series-1', assignment }));
             await nextTick();
 
-            const html = panel().innerHTML;
-            expect(html.indexOf('outlook-moved-block')).toBeGreaterThan(
-                html.indexOf('outlook-detail-preassignment')
-            );
-            expect(html.indexOf('outlook-moved-block')).toBeLessThan(
-                html.indexOf('outlook-detail-confirm')
-            );
-            // The footer keeps Edit and Confirm
-            expect(byTestId('outlook-detail-edit')).not.toBeNull();
-            expect(byTestId('outlook-detail-confirm')).not.toBeNull();
+            expect(byTestId('outlook-moved-block')).not.toBeNull();
+            expect(byTestId('outlook-detail-preassignment')).toBeNull();
+            // Confirm would log a second entry without asking: only Create and Move remain
+            expect(byTestId('outlook-detail-confirm')).toBeNull();
+            expect(byTestId('outlook-detail-edit')).toBeNull();
+            expect(byTestId('outlook-detail-create')).not.toBeNull();
+            expect(byTestId('outlook-detail-move-entry')).not.toBeNull();
         });
 
         it('the block sits before the separator', async () => {
@@ -932,17 +929,16 @@ describe('OutlookGhostDetail', () => {
             expect(w.emitted('create')).toBeUndefined();
         });
 
-        it('while moving a pre-assigned meeting Confirm and Edit are disabled', async () => {
+        it('while moving a series meeting Create is disabled', async () => {
             const w = mountOpen(moved({ series_key: 'series-1', assignment }), true, {}, 'detail', {
                 moving: true,
             });
             await nextTick();
 
-            const confirm = byTestId('outlook-detail-confirm') as HTMLButtonElement;
-            expect(confirm.disabled).toBe(true);
-            expect((byTestId('outlook-detail-edit') as HTMLButtonElement).disabled).toBe(true);
-            confirm.click();
-            expect(w.emitted('confirm')).toBeUndefined();
+            const create = byTestId('outlook-detail-create') as HTMLButtonElement;
+            expect(create.disabled).toBe(true);
+            create.click();
+            expect(w.emitted('create')).toBeUndefined();
         });
 
         it('while confirming the move button is disabled', async () => {

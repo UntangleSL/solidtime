@@ -264,6 +264,7 @@ const LABELS: Record<string, string> = {
         'You logged it on :when. Create a new entry for this session, or move that one here.',
     moved_hover_note: 'Moved in Outlook. You logged it on :date.',
     moved_suffix: ', already logged on :date',
+    moved_badge: 'Already logged',
     move_entry_here: 'Move my entry here',
     move_entry_success: 'Time entry moved here',
     move_entry_from: 'From :when',
@@ -970,6 +971,10 @@ test.describe('Outlook meeting moved after it started (D-03)', () => {
         await expect(block).toHaveAttribute(
             'aria-label',
             new RegExp(`, already logged on ${escapeRegExp(shortDay(yesterday))}$`)
+        );
+        // The block itself says it is already logged, before it is opened
+        await expect(block.locator('[data-testid="outlook-moved-line"]')).toHaveText(
+            'Already logged'
         );
 
         await block.click();

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, ref, watch, type ComputedRef } from 'vue';
-import { CalendarDays, Check, EyeOff, User, Video } from '@lucide/vue';
+import { CalendarCheck, CalendarDays, Check, EyeOff, User, Video } from '@lucide/vue';
 import { HoverCardRoot, HoverCardTrigger } from 'reka-ui';
 import type { Organization } from '@/packages/api/src';
 import { formatTime, getLocalizedDayJsFromMinutes } from '@/packages/ui/src/utils/time';
@@ -601,12 +601,23 @@ function tierOf(box: GhostBox): ContentTier {
 // (the grid position gives the time) and keeps the subject on one line; T4 under 60px keeps the
 // subject on one line; from 60px the subject may take two lines. Never the organizer line.
 function subjectLinesOf(box: GhostBox): 1 | 2 {
-    if (preassignmentOf(box.meeting)) return box.height >= TIER_5_MIN_HEIGHT ? 2 : 1;
+    if (hasStatusLine(box.meeting)) return box.height >= TIER_5_MIN_HEIGHT ? 2 : 1;
     return tierOf(box) >= 4 ? 2 : 1;
 }
 
 function showsTimeLine(box: GhostBox): boolean {
-    return !(preassignmentOf(box.meeting) && tierOf(box) === 3);
+    return !(hasStatusLine(box.meeting) && tierOf(box) === 3);
+}
+
+// Phase 6 D-03: a meeting moved after its entry was logged shows "Already logged" in the block
+// itself, so the user sees it needs a choice without opening it.
+function isMovedLogged(meeting: OutlookMeeting): boolean {
+    return Boolean(meeting.moved_from) && !isFaded(meeting);
+}
+
+// The extra line under the subject: the series project, or the moved-and-logged note.
+function hasStatusLine(meeting: OutlookMeeting): boolean {
+    return preassignmentOf(meeting) !== null || isMovedLogged(meeting);
 }
 
 function timeRangeOf(meeting: OutlookMeeting): string {
@@ -743,6 +754,11 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                     v-else-if="showsMoveSpinner(box.meeting)"
                                     class="m365-meeting__meta m-0 h-3 w-3 shrink-0"
                                     data-testid="outlook-move-spinner" />
+                                <CalendarCheck
+                                    v-else-if="isMovedLogged(box.meeting)"
+                                    class="m365-meeting__meta size-3 shrink-0"
+                                    data-testid="outlook-moved-icon"
+                                    aria-hidden="true" />
                                 <span
                                     class="m365-meeting__subject min-w-0 truncate"
                                     :class="{ 'font-semibold': !isFaded(box.meeting) }"
@@ -809,6 +825,13 @@ function ariaPressedOf(id: string): 'true' | 'false' | undefined {
                                         :title="preassignmentOf(box.meeting)!.project_name"
                                         >{{ preassignmentOf(box.meeting)!.project_name }}</span
                                     >
+                                </div>
+                                <div
+                                    v-else-if="isMovedLogged(box.meeting)"
+                                    class="m365-meeting__meta flex min-w-0 items-center gap-1 font-medium"
+                                    data-testid="outlook-moved-line">
+                                    <CalendarCheck class="size-3 shrink-0" aria-hidden="true" />
+                                    <span class="min-w-0 truncate">{{ labels.moved_badge }}</span>
                                 </div>
                                 <div
                                     v-else-if="tierOf(box) === 5 && organizerOf(box.meeting)"

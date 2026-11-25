@@ -83,6 +83,34 @@ describe('meeting state helpers', () => {
             false
         );
     });
+
+    it('a meeting moved after its entry was logged is not pre-assigned (no duplicate Confirm)', () => {
+        const movedFrom = {
+            time_entry_id: 'te-1',
+            entry_start: '2026-11-23T11:00:00Z',
+            entry_end: '2026-11-23T12:00:00Z',
+        };
+        expect(isPreassigned(meeting({ assignment: assignment(), moved_from: movedFrom }))).toBe(
+            false
+        );
+        expect(isPreassigned(meeting({ assignment: assignment(), moved_from: null }))).toBe(true);
+    });
+
+    it('a moved meeting still prefills its form from the series assignment', () => {
+        const result = resolveSinglePrefill(
+            meeting({
+                assignment: assignment(),
+                moved_from: {
+                    time_entry_id: 'te-1',
+                    entry_start: '2026-11-23T11:00:00Z',
+                    entry_end: '2026-11-23T12:00:00Z',
+                },
+            }),
+            projects,
+            'last-p'
+        );
+        expect(result.source).toBe('series');
+    });
 });
 
 describe('resolveSinglePrefill', () => {

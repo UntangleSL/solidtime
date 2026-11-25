@@ -687,14 +687,13 @@ describe('Outlook meeting hover card, meeting moved after it started (Phase 6, D
         expect(byTestId('outlook-detail-move-entry')).toBeNull();
     });
 
-    it('a pre-assigned moved meeting shows the note after the pre-assignment, Edit and Confirm kept', async () => {
+    it('a moved series meeting shows the note, no pre-assignment and no Confirm', async () => {
         mountCard(moved({ series_key: 'series-1', assignment }), actingContext());
         await nextTick();
 
-        const block = byTestId('outlook-preassignment') as HTMLElement;
-        const note = byTestId('outlook-hover-moved-note') as HTMLElement;
-        expect(block.compareDocumentPosition(note)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-        expect(buttons()).toEqual(['outlook-hover-edit', 'outlook-hover-confirm']);
+        expect(byTestId('outlook-preassignment')).toBeNull();
+        expect(byTestId('outlook-hover-moved-note')).not.toBeNull();
+        expect(buttons()).toEqual(['outlook-hover-create']);
     });
 
     it('a meeting without moved_from shows no note', async () => {

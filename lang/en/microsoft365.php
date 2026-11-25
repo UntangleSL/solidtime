@@ -193,6 +193,7 @@ return [
         'moved_body' => 'You logged it on :when. Create a new entry for this session, or move that one here.',
         'moved_hover_note' => 'Moved in Outlook. You logged it on :date.',
         'moved_suffix' => ', already logged on :date',
+        'moved_badge' => 'Already logged',
         'move_entry_here' => 'Move my entry here',
         'move_entry_success' => 'Time entry moved here',
         'move_entry_from' => 'From :when',

@@ -194,6 +194,7 @@ return [
         'moved_body' => 'La registraste el :when. Crea un registro nuevo para esta sesión o mueve ese aquí.',
         'moved_hover_note' => 'Movida en Outlook. La registraste el :date.',
         'moved_suffix' => ', ya registrada el :date',
+        'moved_badge' => 'Ya registrada',
         'move_entry_here' => 'Mover mi registro aquí',
         'move_entry_success' => 'Registro de tiempo movido aquí',
         'move_entry_from' => 'Desde el :when',

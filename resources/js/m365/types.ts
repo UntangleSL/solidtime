@@ -338,6 +338,7 @@ export interface OutlookCalendarLabels {
     moved_body: string;
     moved_hover_note: string;
     moved_suffix: string;
+    moved_badge: string;
     move_entry_here: string;
     move_entry_success: string;
     move_entry_from: string;
