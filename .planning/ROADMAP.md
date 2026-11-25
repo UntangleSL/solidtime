@@ -28,9 +28,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Outlook Meetings in the Calendar** - Eligible meetings appear as ghost suggestions on calendar open and via Sync, with dismiss, privacy and graceful Graph failures (completed 2026-11-10)
 - [x] **Phase 3.1: Calendar UX Polish** (INSERTED) - View options (weekends, hour range), readable high-contrast meeting blocks, hover tooltip, context-menu layering, wheel zoom/scroll, visible Sync cooldown
 - [x] **Phase 3.2: Appearance & Untangle Branding** (INSERTED) - Untangle colours by default, light/dark theme and accent colour per user, organization icon in workspace settings
-- [ ] **Phase 4: Assign Meetings to Projects** - Single and bulk conversion of meeting suggestions into real time entries using core rules, with no duplicates
-- [ ] **Phase 5: Smart Meeting Suggestions** - Recurring meetings come pre-assigned from series history, other meetings get a project suggested from past conversions (organizer, attendees, subject), one-click or bulk confirm, "always ignore this series"
-- [ ] **Phase 6: Out-of-Sync Detection** - Logged meetings moved or cancelled in Outlook are flagged, never changed automatically; user chooses keep, adjust or delete
+- [x] **Phase 4: Assign Meetings to Projects** - Single and bulk conversion of meeting suggestions into real time entries using core rules, with no duplicates (completed 2026-11-24, owner UAT)
+- [x] **Phase 5: Smart Meeting Suggestions** - Recurring meetings come pre-assigned from series history, other meetings get a project suggested from past conversions (organizer, attendees, subject), one-click or bulk confirm, "always ignore this series" (completed 2026-11-24, owner UAT)
+- [x] **Phase 6: Out-of-Sync Detection** - Entries of meetings not yet started follow Outlook moves unless edited; edited or cancelled ones are flagged (keep, adjust or delete); started meetings are never changed (completed 2026-11-25, owner UAT)
 - [ ] **Phase 7: Hardening & Release** - Complete deletion cleanup, impersonation guard, clean off switch, documented fork seams and upstream merge rehearsal
 - [ ] **Phase 8: Project Hour Budgets & Profitability** - Projects and contracts carry scheduled, renewing hour budgets; reported time counts against them; profitability per month and contract
 

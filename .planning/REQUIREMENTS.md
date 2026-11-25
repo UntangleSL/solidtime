@@ -45,32 +45,32 @@
 
 ### Assign Meetings to Projects (ASGN)
 
-- [ ] **ASGN-01**: User can select a meeting suggestion and assign it to a project (from the hover tooltip or detail panel) (optionally task, tags, billable, description prefilled from the meeting subject), which creates a real time entry with the meeting's start/end
-- [ ] **ASGN-02**: Time entries created from meetings follow the same rules as manual entries (permissions, billable rates, rounding, overlap checks, project totals recalculation)
-- [ ] **ASGN-03**: A meeting occurrence can only be converted once; after conversion it no longer shows as a suggestion, and double clicks/concurrent requests never create duplicate entries
-- [ ] **ASGN-04**: User can multi-select several meeting suggestions and assign them all to a project in one action, seeing which succeeded and which failed
-- [ ] **ASGN-05**: Time entries created from meetings remain normal, fully editable/deletable time entries (deleting one makes the meeting a suggestion again)
+- [x] **ASGN-01**: User can select a meeting suggestion and assign it to a project (from the hover tooltip or detail panel) (optionally task, tags, billable, description prefilled from the meeting subject), which creates a real time entry with the meeting's start/end
+- [x] **ASGN-02**: Time entries created from meetings follow the same rules as manual entries (permissions, billable rates, rounding, overlap checks, project totals recalculation)
+- [x] **ASGN-03**: A meeting occurrence can only be converted once; after conversion it no longer shows as a suggestion, and double clicks/concurrent requests never create duplicate entries
+- [x] **ASGN-04**: User can multi-select several meeting suggestions and assign them all to a project in one action, seeing which succeeded and which failed
+- [x] **ASGN-05**: Time entries created from meetings remain normal, fully editable/deletable time entries (deleting one makes the meeting a suggestion again)
 
 ### Smart Meeting Suggestions (RULE)
 
 Revised 2026-11-17 (owner): instead of rules the user must create, assignments are learned from the user's own conversions. An AI "propose my week" button is deferred to v2 (PROD-05).
 
-- [ ] **RULE-01**: An occurrence of a recurring series in which the user already converted another occurrence shows pre-assigned with that series' last project, task, tags and billable, with no rule setup; the mini form opens prefilled with it
-- [ ] **RULE-02**: A pre-assigned meeting becomes a time entry only when the user confirms it: one click per meeting, or several at once (e.g. all pre-assigned meetings visible in the day/week)
-- [ ] **RULE-03**: For meetings without series history, the system suggests a project (and its client) learned from the user's own past conversions, using the organizer, attendee emails/domains and subject words; the mini form opens prefilled with the best suggestion and offers the next alternatives; suggestions never leave the server
-- [ ] **RULE-04**: From an occurrence of a recurring meeting, user can choose "always ignore this series" so its occurrences stop appearing as suggestions, and can undo it
-- [ ] **RULE-05**: User can see why a meeting is pre-assigned/suggested, change a series' assignment or make the system forget it; none of this ever changes time entries already created
+- [x] **RULE-01**: An occurrence of a recurring series in which the user already converted another occurrence shows pre-assigned with that series' last project, task, tags and billable, with no rule setup; the mini form opens prefilled with it
+- [x] **RULE-02**: A pre-assigned meeting becomes a time entry only when the user confirms it: one click per meeting, or several at once (e.g. all pre-assigned meetings visible in the day/week)
+- [x] **RULE-03**: For meetings without series history, the system suggests a project (and its client) learned from the user's own past conversions, using the organizer, attendee emails/domains and subject words; the mini form opens prefilled with the best suggestion and offers the next alternatives; suggestions never leave the server
+- [x] **RULE-04**: From an occurrence of a recurring meeting, user can choose "always ignore this series" so its occurrences stop appearing as suggestions, and can undo it
+- [x] **RULE-05**: User can see why a meeting is pre-assigned/suggested, change a series' assignment or make the system forget it; none of this ever changes time entries already created
 
 ### Out-of-Sync Detection (OSYNC)
 
-- [ ] **OSYNC-01**: For entries created from meetings whose recorded start is in the future or within the last 60 days, Outlook changes are checked on calendar sync and by a daily background job. A meeting that had already started is never flagged and its entry is never changed. If such a meeting was moved, it shows again at its new slot, where the user can create a second entry or move the existing one there.
-- [ ] **OSYNC-02**: For a meeting that had not started:
+- [x] **OSYNC-01**: For entries created from meetings whose recorded start is in the future or within the last 60 days, Outlook changes are checked on calendar sync and by a daily background job. A meeting that had already started is never flagged and its entry is never changed. If such a meeting was moved, it shows again at its new slot, where the user can create a second entry or move the existing one there.
+- [x] **OSYNC-02**: For a meeting that had not started:
   - If it is moved and the entry still has the meeting's original times, the entry follows the new Outlook time automatically.
   - If the user had edited the entry's times, or the meeting was cancelled or removed, the entry is flagged "out of sync" with what changed, and a toolbar counter shows the number of flagged entries.
   - Entries are never deleted automatically. Subject or attendee changes, the user's own edits, and Graph errors never flag or change anything.
 
   (Revised 2026-11-23, owner.)
-- [ ] **OSYNC-03**: For a flagged entry, user can choose: keep as is (clears flag), adjust to the new Outlook time, or delete the entry
+- [x] **OSYNC-03**: For a flagged entry, user can choose: keep as is (clears flag), adjust to the new Outlook time, or delete the entry
 
 ### Operations (OPS)
 
@@ -165,19 +165,19 @@ High level, added by the owner 2026-11-05; details to be refined in Phase 8 disc
 | CAL-02 | Phase 3 | Complete |
 | CAL-03 | Phase 3 | Complete |
 | CAL-04 | Phase 3 | Complete |
-| ASGN-01 | Phase 4 | Pending |
-| ASGN-02 | Phase 4 | Pending |
-| ASGN-03 | Phase 4 | Pending |
-| ASGN-04 | Phase 4 | Pending |
-| ASGN-05 | Phase 4 | Pending |
-| RULE-01 | Phase 5 | Pending |
-| RULE-02 | Phase 5 | Pending |
-| RULE-03 | Phase 5 | Pending |
-| RULE-04 | Phase 5 | Pending |
-| RULE-05 | Phase 5 | Pending |
-| OSYNC-01 | Phase 6 | Pending |
-| OSYNC-02 | Phase 6 | Pending |
-| OSYNC-03 | Phase 6 | Pending |
+| ASGN-01 | Phase 4 | Complete |
+| ASGN-02 | Phase 4 | Complete |
+| ASGN-03 | Phase 4 | Complete |
+| ASGN-04 | Phase 4 | Complete |
+| ASGN-05 | Phase 4 | Complete |
+| RULE-01 | Phase 5 | Complete |
+| RULE-02 | Phase 5 | Complete |
+| RULE-03 | Phase 5 | Complete |
+| RULE-04 | Phase 5 | Complete |
+| RULE-05 | Phase 5 | Complete |
+| OSYNC-01 | Phase 6 | Complete |
+| OSYNC-02 | Phase 6 | Complete |
+| OSYNC-03 | Phase 6 | Complete |
 | OPS-01 | Phase 2 | Complete |
 | OPS-02 | Phase 7 | Pending |
 | OPS-03 | Phase 7 | Pending |
