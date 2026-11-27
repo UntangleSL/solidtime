@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { Link, router } from '@inertiajs/vue3';
-import { CircleAlert, Ellipsis, Info, TriangleAlert } from '@lucide/vue';
+import { CircleAlert, Ellipsis, Info, Plus, TriangleAlert } from '@lucide/vue';
 import Card from '@/Components/Common/Card.vue';
 import StatCard from '@/Components/Common/StatCard.vue';
 import TableHeading from '@/Components/Common/TableHeading.vue';
@@ -15,6 +15,7 @@ import {
     DropdownMenuTrigger,
 } from '@/packages/ui/src';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
+import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
 import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
 import {
     Select,
@@ -40,6 +41,8 @@ import {
 } from '@/utils/useSortableTable';
 import { useTableSortState, type TableSortState } from '@/utils/useTableSortState';
 import BudgetMeter from './BudgetMeter.vue';
+import ContractEditor from './ContractEditor.vue';
+import PlanGrid from './PlanGrid.vue';
 import StatusPill from './StatusPill.vue';
 import { formatHours, formatHoursNumber, formatPeriod } from './format';
 import {
@@ -313,6 +316,63 @@ const emptyState = computed(() => {
     return canEditTermsSomewhere.value ? 'editor' : 'pm';
 });
 
+// Editors (08-16): "Set contract terms" in the toolbar (with a project picker), and per row "Set" or
+// "Edit contract terms" and "Plan months", each only where the row's flags allow it and never for a
+// closed period (D-03). The server re-checks every write (T-08-41).
+const organizationUrl = computed(() => profitability.value.organization_url ?? null);
+
+interface EditorTarget {
+    mode: 'set' | 'edit';
+    projectId: string | null;
+    projectName: string | null;
+}
+
+const editor = ref<EditorTarget | null>(null);
+const editorOpen = ref(false);
+
+const canOpenEditors = computed(() => organizationUrl.value !== null);
+const canSetTermsFromToolbar = computed(() => canOpenEditors.value && canEditTermsSomewhere.value);
+
+function openTerms(row: ProjectsViewRow | null) {
+    editor.value =
+        row === null
+            ? { mode: 'set', projectId: null, projectName: null }
+            : {
+                  mode: row.schedule === null ? 'set' : 'edit',
+                  projectId: row.project_id,
+                  projectName: row.name,
+              };
+    editorOpen.value = true;
+}
+
+function canEditRowTerms(row: ProjectsViewRow): boolean {
+    return canOpenEditors.value && row.can_edit_terms && row.period?.state !== 'closed';
+}
+
+function canPlanRow(row: ProjectsViewRow): boolean {
+    return (
+        canOpenEditors.value &&
+        row.can_edit_plan &&
+        row.period !== null &&
+        row.period.state !== 'closed'
+    );
+}
+
+interface PlanTarget {
+    projectId: string;
+    projectName: string;
+    periodId: string;
+}
+
+const plan = ref<PlanTarget | null>(null);
+const planOpen = ref(false);
+
+function openPlan(row: ProjectsViewRow) {
+    if (!row.period) return;
+    plan.value = { projectId: row.project_id, projectName: row.name, periodId: row.period.id };
+    planOpen.value = true;
+}
+
 const toolbarTarget = useViewToolbarTarget();
 const teleportTo = computed(() => toolbarTarget?.value ?? null);
 </script>
@@ -328,6 +388,14 @@ const teleportTo = computed(() => toolbarTarget?.value ?? null);
                 <span class="text-sm text-text-secondary">{{
                     label('projects.filter_label')
                 }}</span>
+                <PrimaryButton
+                    v-if="canSetTermsFromToolbar"
+                    type="button"
+                    :icon="Plus"
+                    data-testid="profitability-projects-set-terms"
+                    @click="openTerms(null)">
+                    {{ label('summary.set_terms') }}
+                </PrimaryButton>
                 <Select :model-value="contract" @update:model-value="setContract">
                     <SelectTrigger
                         class="w-56"
@@ -463,6 +531,15 @@ const teleportTo = computed(() => toolbarTarget?.value ?? null);
                                 : label('projects.empty_pm_body')
                         }}
                     </p>
+                    <PrimaryButton
+                        v-if="emptyState === 'editor' && canSetTermsFromToolbar"
+                        type="button"
+                        class="mt-4"
+                        :icon="Plus"
+                        data-testid="profitability-projects-empty-set-terms"
+                        @click="openTerms(null)">
+                        {{ label('summary.set_terms') }}
+                    </PrimaryButton>
                 </div>
                 <div v-else class="overflow-x-auto">
                     <div
@@ -731,6 +808,24 @@ const teleportTo = computed(() => toolbarTarget?.value ?? null);
                                             @click="openProject(row)">
                                             {{ label('projects.open_project') }}
                                         </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                            v-if="canEditRowTerms(row)"
+                                            class="cursor-pointer"
+                                            data-testid="profitability-projects-edit-terms"
+                                            @click="openTerms(row)">
+                                            {{
+                                                row.schedule === null
+                                                    ? label('summary.set_terms')
+                                                    : label('summary.edit_terms')
+                                            }}
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                            v-if="canPlanRow(row)"
+                                            class="cursor-pointer"
+                                            data-testid="profitability-projects-plan-months"
+                                            @click="openPlan(row)">
+                                            {{ label('summary.plan_months') }}
+                                        </DropdownMenuItem>
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </div>
@@ -739,5 +834,20 @@ const teleportTo = computed(() => toolbarTarget?.value ?? null);
                 </div>
             </Card>
         </template>
+
+        <ContractEditor
+            v-if="editor"
+            :key="`${editor.mode}-${editor.projectId ?? 'picker'}`"
+            v-model:show="editorOpen"
+            :mode="editor.mode"
+            :project-id="editor.projectId"
+            :project-name="editor.projectName" />
+        <PlanGrid
+            v-if="plan"
+            :key="`${plan.projectId}-${plan.periodId}`"
+            v-model:show="planOpen"
+            :project-id="plan.projectId"
+            :period-id="plan.periodId"
+            :project-name="plan.projectName" />
     </div>
 </template>

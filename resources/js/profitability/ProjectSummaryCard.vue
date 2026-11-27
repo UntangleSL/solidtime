@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import dayjs from 'dayjs';
-import { Briefcase, CalendarRange, TriangleAlert } from '@lucide/vue';
+import { Briefcase, CalendarRange, Pencil, TriangleAlert } from '@lucide/vue';
 import MainContainer from '@/packages/ui/src/MainContainer.vue';
 import CardTitle from '@/packages/ui/src/CardTitle.vue';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
@@ -279,6 +279,7 @@ const queryClient = useQueryClient();
 const projectName = ref<string | null>(null);
 const editorOpen = ref(false);
 const editorMounted = ref(false);
+const editorMode = ref<'set' | 'edit'>('set');
 
 const canSetTerms = computed(
     () =>
@@ -305,7 +306,18 @@ function openPlan() {
     planOpen.value = true;
 }
 
-function openEditor() {
+// "Edit contract terms" while the selected period is not closed (D-03: closed periods keep their
+// result; the editor itself never offers them)
+const canEditTerms = computed(
+    () =>
+        organizationUrl.value !== null &&
+        summary.value?.can_edit_terms === true &&
+        contract.value !== null &&
+        period.value?.state !== 'closed'
+);
+
+function openEditor(mode: 'set' | 'edit' = 'set') {
+    editorMode.value = mode;
     projectName.value = projectNameFromCache(queryClient, props.projectId);
     editorMounted.value = true;
     editorOpen.value = true;
@@ -326,7 +338,7 @@ const meterCaption = computed(() => {
 <template>
     <MainContainer v-if="visible" class="pt-6" data-testid="profitability-summary-card">
         <CardTitle :title="label('summary.title')" :icon="Briefcase">
-            <template v-if="periodOptions.length > 0 || canPlan" #actions>
+            <template v-if="periodOptions.length > 0 || canPlan || canEditTerms" #actions>
                 <div class="flex flex-wrap items-center justify-end gap-2">
                     <Select
                         v-if="periodOptions.length > 0"
@@ -355,6 +367,13 @@ const meterCaption = computed(() => {
                         data-testid="profitability-summary-plan-months"
                         @click="openPlan">
                         {{ label('summary.plan_months') }}
+                    </SecondaryButton>
+                    <SecondaryButton
+                        v-if="canEditTerms"
+                        :icon="Pencil"
+                        data-testid="profitability-summary-edit-terms"
+                        @click="openEditor('edit')">
+                        {{ label('summary.edit_terms') }}
                     </SecondaryButton>
                 </div>
             </template>
@@ -395,7 +414,7 @@ const meterCaption = computed(() => {
                     type="button"
                     class="mt-4"
                     data-testid="profitability-summary-set-terms"
-                    @click="openEditor">
+                    @click="openEditor('set')">
                     {{ label('summary.set_terms') }}
                 </PrimaryButton>
             </div>
@@ -502,6 +521,7 @@ const meterCaption = computed(() => {
         <ContractEditor
             v-if="editorMounted"
             v-model:show="editorOpen"
+            :mode="editorMode"
             :project-id="projectId"
             :project-name="projectName" />
         <PlanGrid
