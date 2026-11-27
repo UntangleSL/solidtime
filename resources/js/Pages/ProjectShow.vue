@@ -33,6 +33,7 @@ import { getOrganizationCurrencyString } from '../utils/money';
 import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
 import { useTableSortState } from '@/utils/useTableSortState';
+import ProjectSummaryCard from '@/profitability/ProjectSummaryCard.vue';
 
 const { projects } = useProjectsQuery();
 
@@ -152,6 +153,7 @@ const billableRatesLocked = computed(() => !canUseBillableRates());
                     :original-project="project"></ProjectEditModal>
             </div>
         </MainContainer>
+        <ProjectSummaryCard :project-id="projectId" />
         <MainContainer>
             <div class="grid lg:grid-cols-2 gap-x-6 pt-6">
                 <div>
