@@ -119,18 +119,7 @@ class ConsumptionQuery
             ->selectRaw('coalesce(round(sum(case when billable then '.$duration.' else 0 end)), 0) as billable_seconds', [$nowBinding]);
 
         if ($withCost) {
-            // Inside the lateral subquery the bare "start" resolves to the outer time entry (member_cost_rates
-            // has no such column), so the rate is the one in force on the entry's local start date.
-            $local = $this->timezoneService->getLocalDateTimeSqlExpression('start', $this->timezone());
-            $rate = DB::table('member_cost_rates')
-                ->select('member_cost_rates.hourly_cost_cents')
-                ->whereColumn('member_cost_rates.member_id', '=', 'time_entries.member_id')
-                ->whereColumn('member_cost_rates.organization_id', '=', 'time_entries.organization_id')
-                ->whereRaw('member_cost_rates.effective_from <= CAST('.$local['sql'].' AS date)', $local['bindings'])
-                ->orderByDesc('member_cost_rates.effective_from')
-                ->limit(1);
-
-            $query->leftJoinLateral($rate, 'rate')
+            $this->joinDatedRate($query)
                 ->selectRaw('coalesce(round(sum('.$duration.' * rate.hourly_cost_cents / 3600.0)), 0) as cost_cents', [$nowBinding])
                 ->selectRaw('coalesce(round(sum(case when rate.hourly_cost_cents is not null then '.$duration.' else 0 end)), 0) as priced_seconds', [$nowBinding])
                 ->selectRaw('coalesce(round(sum(case when rate.hourly_cost_cents is null then '.$duration.' else 0 end)), 0) as unpriced_seconds', [$nowBinding]);
@@ -158,20 +147,102 @@ class ConsumptionQuery
     }
 
     /**
-     * Work entries of the project whose start falls inside the local date range: from the start of
-     * $fromDate (inclusive) to the start of the day after $toDate (exclusive), as UTC bounds so the
-     * organization/start index serves the range scan.
+     * Consumption of several projects per local month in one statement (Clients view, BUDG-06), keyed by
+     * project id and the first day of the month (Y-m-01): all work seconds, the cost in cents and the
+     * seconds without a cost. The cost uses the same LEFT JOIN LATERAL on member_cost_rates as
+     * periodTotals (the hourly cost in force on each entry's local start date, D-08); each figure is the
+     * exact sum of its project and month, rounded once (never per entry). Projects and months without
+     * time are absent.
+     *
+     * Only callers with money for every listed project may call it (D-11): it always computes the cost.
+     *
+     * @param  list<string>  $projectIds
+     * @param  CarbonImmutable  $fromDate  first local date counted (inclusive)
+     * @param  CarbonImmutable  $toDate  last local date counted (inclusive)
+     * @return array<string, array<string, array{seconds: int, cost_cents: int, unpriced_seconds: int}>>
      */
-    private function baseQuery(string $organizationId, string $projectId, CarbonImmutable $fromDate, CarbonImmutable $toDate): Builder
+    public function byProjectMonth(
+        string $organizationId,
+        array $projectIds,
+        CarbonImmutable $fromDate,
+        CarbonImmutable $toDate,
+        CarbonImmutable $now,
+    ): array {
+        if ($projectIds === []) {
+            return [];
+        }
+
+        $duration = $this->durationSql();
+        $nowBinding = $this->nowBinding($now);
+        $local = $this->timezoneService->getLocalDateTimeSqlExpression('start', $this->timezone());
+
+        $query = $this->baseQuery($organizationId, $projectIds, $fromDate, $toDate)
+            ->select('time_entries.project_id')
+            ->selectRaw('to_char(date_trunc(\'month\', '.$local['sql'].'), \'YYYY-MM-DD\') as month', $local['bindings'])
+            ->selectRaw('coalesce(round(sum('.$duration.')), 0) as seconds', [$nowBinding]);
+        $rows = $this->joinDatedRate($query)
+            ->selectRaw('coalesce(round(sum('.$duration.' * rate.hourly_cost_cents / 3600.0)), 0) as cost_cents', [$nowBinding])
+            ->selectRaw('coalesce(round(sum(case when rate.hourly_cost_cents is null then '.$duration.' else 0 end)), 0) as unpriced_seconds', [$nowBinding])
+            ->groupByRaw('1, 2')
+            ->get();
+
+        $result = [];
+        foreach ($rows as $row) {
+            /** @var object{project_id: string, month: string, seconds: int|float|string|null, cost_cents: int|float|string|null, unpriced_seconds: int|float|string|null} $row */
+            $result[$row->project_id][$row->month] = [
+                'seconds' => max(0, (int) $row->seconds),
+                'cost_cents' => max(0, (int) $row->cost_cents),
+                'unpriced_seconds' => max(0, (int) $row->unpriced_seconds),
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Joins, per time entry, the hourly cost of its member in force on the entry's local start date (the
+     * member_cost_rates row with the greatest effective_from on or before it) as "rate"; entries without
+     * such a row keep a null rate.hourly_cost_cents (unpriced, never free).
+     */
+    private function joinDatedRate(Builder $query): Builder
+    {
+        // Inside the lateral subquery the bare "start" resolves to the outer time entry (member_cost_rates
+        // has no such column), so the rate is the one in force on the entry's local start date.
+        $local = $this->timezoneService->getLocalDateTimeSqlExpression('start', $this->timezone());
+        $rate = DB::table('member_cost_rates')
+            ->select('member_cost_rates.hourly_cost_cents')
+            ->whereColumn('member_cost_rates.member_id', '=', 'time_entries.member_id')
+            ->whereColumn('member_cost_rates.organization_id', '=', 'time_entries.organization_id')
+            ->whereRaw('member_cost_rates.effective_from <= CAST('.$local['sql'].' AS date)', $local['bindings'])
+            ->orderByDesc('member_cost_rates.effective_from')
+            ->limit(1);
+
+        return $query->leftJoinLateral($rate, 'rate');
+    }
+
+    /**
+     * Work entries of the project (or of any of the listed projects) whose start falls inside the local
+     * date range: from the start of $fromDate (inclusive) to the start of the day after $toDate
+     * (exclusive), as UTC bounds so the organization/start index serves the range scan.
+     *
+     * @param  string|list<string>  $projectIds
+     */
+    private function baseQuery(string $organizationId, string|array $projectIds, CarbonImmutable $fromDate, CarbonImmutable $toDate): Builder
     {
         $timezone = $this->timezone();
         $from = CarbonImmutable::parse($fromDate->format('Y-m-d'), $timezone)->startOfDay()->utc();
         $to = CarbonImmutable::parse($toDate->format('Y-m-d'), $timezone)->addDay()->startOfDay()->utc();
 
-        return TimeEntry::query()
+        $query = TimeEntry::query()
             ->toBase()
-            ->where('organization_id', '=', $organizationId)
-            ->where('project_id', '=', $projectId)
+            ->where('organization_id', '=', $organizationId);
+        if (is_array($projectIds)) {
+            $query->whereIn('project_id', $projectIds);
+        } else {
+            $query->where('project_id', '=', $projectIds);
+        }
+
+        return $query
             ->where('type', '=', TimeEntryType::Work->value)
             ->where('start', '>=', $from->format('Y-m-d H:i:s'))
             ->where('start', '<', $to->format('Y-m-d H:i:s'));
