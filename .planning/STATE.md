@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 current_phase: 08
 current_phase_name: Project Hour Budgets & Profitability
 status: ready_to_discuss
-stopped_at: Phase 7 executed, verified (human_needed: owner UAT) and released (sha-0ebd0f6); Entra spike cleanup done
-last_updated: "2026-11-27T13:00:00.000Z"
+stopped_at: Phase 8 planned (20 plans, 8 waves)
+last_updated: "2026-11-27T18:00:51.010Z"
 last_activity: 2026-11-27
 last_activity_desc: Phase 7 complete; owner UAT checklist pending
-state_head: cc783a4544c4c302e38ba35402c100e2b1a3f6eb
+state_head: 07b7378162a6dce026ce5b416e301a850a5a4422
 progress:
-  total_phases: 10
+  total_phases: 11
   completed_phases: 9
-  total_plans: 91
-  completed_plans: 91
-  percent: 90
+  total_plans: 118
+  completed_plans: 98
+  percent: 82
 ---
 
 Total Phases: 5
@@ -34,7 +34,7 @@ Plan: Not planned
 Status: Ready to discuss
 Last activity: 2026-11-27 — Phase 7 complete (7/7 plans, verification human_needed: 7 owner UAT items in 07-VERIFICATION.md); release sha-0ebd0f6 live; Entra spike URI and secret removed
 
-Progress: [█████████░] 90%
+Progress: [████████░░] 82%
 
 ## Performance Metrics
 
@@ -175,6 +175,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-24T13:13:32.000Z
-Stopped at: Phase 6 deployed (sha-8ec9a5a, 2026-11-24); Phase 6 owner UAT pending
-Resume file: .planning/phases/06-out-of-sync-detection/06-19-SUMMARY.md
+Last session: 2026-11-27T18:00:50.245Z
+Stopped at: Phase 8 planned (20 plans, 8 waves)
+Resume file: .planning/phases/08-project-hour-budgets-profitability/08-01-PLAN.md
