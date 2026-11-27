@@ -5,6 +5,14 @@ declare(strict_types=1);
 namespace Tests\Feature\Microsoft365;
 
 use App\Enums\Role;
+use App\Microsoft365\Graph\GraphAccessGuard;
+use App\Microsoft365\Graph\GraphCalendarClient;
+use App\Microsoft365\Graph\MicrosoftTokenService;
+use App\Microsoft365\Graph\OutlookMeetingEligibility;
+use App\Microsoft365\Graph\OutlookMeetingSyncService;
+use App\Microsoft365\Graph\SyncOutcome;
+use App\Microsoft365\Graph\SyncStatus;
+use App\Microsoft365\MicrosoftConfig;
 use App\Microsoft365\Models\MicrosoftAccount;
 use App\Microsoft365\Models\OutlookMeeting;
 use App\Microsoft365\Models\OutlookMeetingLink;
@@ -16,7 +24,14 @@ use App\Models\TimeEntry;
 use App\Models\User;
 use App\Service\DeletionService;
 use App\Service\MemberService;
+use Carbon\CarbonImmutable;
+use GuzzleHttp\Promise\PromiseInterface;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\Feature\Microsoft365\Support\InteractsWithGraphFixtures;
 use Tests\Feature\Microsoft365\Support\InteractsWithMicrosoft365;
@@ -31,7 +46,16 @@ use Tests\TestCaseWithDatabase;
  * belongs to the user, not to an organization (07-CONTEXT D-09): an organization deletion or a member
  * removal only takes the links of the entries core deletes, while the surviving user keeps the rest.
  * Fork code never deletes or changes a time entry here; entries follow core's own deletion rules.
+ * A disconnect that races a running sync leaves nothing behind either (Phase 3 D-21).
  */
+#[CoversClass(OutlookMeetingSyncService::class)]
+#[UsesClass(GraphCalendarClient::class)]
+#[UsesClass(MicrosoftTokenService::class)]
+#[UsesClass(GraphAccessGuard::class)]
+#[UsesClass(OutlookMeetingEligibility::class)]
+#[UsesClass(SyncOutcome::class)]
+#[UsesClass(SyncStatus::class)]
+#[UsesClass(MicrosoftConfig::class)]
 #[UsesClass(DeletionService::class)]
 #[UsesClass(MemberService::class)]
 #[UsesClass(MicrosoftAccount::class)]
@@ -265,5 +289,115 @@ class MicrosoftDataCleanupTest extends TestCaseWithDatabase
         $userLevel = array_merge($this->every(1), ['outlook_meeting_links' => 0]);
         $this->assertSame($userLevel, $this->rowsOf((string) $data->user->getKey()));
         $this->assertSame($userLevel, $this->rowsOf((string) $data->owner->getKey()));
+    }
+
+    /**
+     * Exactly what MicrosoftAccountController::destroy does, applied while the sync is between two
+     * Graph pages: under the account row lock the cached meetings and windows go, the tokens are
+     * cleared and disconnected_at is set.
+     */
+    private function disconnectMeanwhile(User $user): void
+    {
+        DB::transaction(function () use ($user): void {
+            $account = MicrosoftAccount::query()
+                ->where('user_id', '=', $user->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            OutlookMeeting::query()->where('user_id', '=', $user->getKey())->delete();
+            OutlookSyncWindow::query()->where('user_id', '=', $user->getKey())->delete();
+            $account->access_token = null;
+            $account->refresh_token = null;
+            $account->access_token_expires_at = null;
+            $account->scopes = null;
+            $account->reconnect_required_at = null;
+            $account->graph_backoff_until = null;
+            $account->disconnected_at = Carbon::now();
+            $account->save();
+        });
+    }
+
+    /**
+     * The Graph page whose request lands right after the disconnect. Page 2 of round A carries an
+     * eligible meeting and more pages follow (the next token check fails, the pages read so far would
+     * be stored); page 22 is the last one (the traversal completes and would also record a window).
+     *
+     * @return array<string, array{int}>
+     */
+    public static function disconnectMoments(): array
+    {
+        return [
+            'while more pages are to come' => [2],
+            'with the last page' => [22],
+        ];
+    }
+
+    #[DataProvider('disconnectMoments')]
+    public function test_disconnect_during_a_sync_leaves_no_cached_meeting(int $disconnectAtPage): void
+    {
+        // Arrange: a connected user (token not expired, so no token request) with a time entry that
+        // came from an earlier meeting outside the window; Graph answers round A page by page and the
+        // user disconnects while the chosen page is being fetched
+        $this->configureMicrosoft365();
+        $data = $this->createUserWithRole(Role::Owner);
+        $user = $data->user;
+        $account = $this->connectedAccount($user);
+        $entry = TimeEntry::factory()->forMember($data->member)->createOne();
+        OutlookMeetingLink::query()->create([
+            'user_id' => $user->getKey(),
+            'graph_id' => 'converted-before-the-window',
+            'time_entry_id' => $entry->getKey(),
+            'meeting_starts_at' => '2026-09-01 09:00:00',
+            'meeting_ends_at' => '2026-09-01 10:00:00',
+        ]);
+        $entryBefore = $this->entrySnapshot($entry);
+        $entriesBefore = TimeEntry::query()->count();
+        Config::set('microsoft365.graph.max_pages', 30);
+        $pages = $this->graphPages('A');
+        $this->assertCount(22, $pages);
+        $served = 0;
+        Http::fake([
+            'https://graph.microsoft.com/v1.0/me/calendarView*' => function () use (&$served, $pages, $disconnectAtPage, $user): PromiseInterface {
+                $served++;
+                if ($served === $disconnectAtPage) {
+                    $this->disconnectMeanwhile($user);
+                }
+
+                return Http::response($pages[$served - 1]);
+            },
+        ]);
+        $window = $this->fixtureWindow();
+
+        // Act
+        $outcome = app(OutlookMeetingSyncService::class)->sync(
+            $user,
+            CarbonImmutable::parse($window['start']),
+            CarbonImmutable::parse($window['end']),
+            true,
+        );
+
+        // Assert: the race happened where intended, and nothing the sync wrote outlived the disconnect
+        $this->assertSame($disconnectAtPage, $served);
+        $this->assertSame(SyncStatus::NotConnected, $outcome->status);
+        $this->assertSame(0, OutlookMeeting::query()->where('user_id', '=', $user->getKey())->count());
+        $this->assertSame(0, OutlookSyncWindow::query()->where('user_id', '=', $user->getKey())->count());
+        // The disconnect stands: no token came back
+        $account->refresh();
+        $this->assertNotNull($account->disconnected_at);
+        $this->assertNull($account->refresh_token);
+        $this->assertNull($account->access_token);
+        // No time entry changed, and the link survives a disconnect by design
+        $this->assertSame($entriesBefore, TimeEntry::query()->count());
+        $this->assertSame($entryBefore, $this->entrySnapshot($entry));
+        $this->assertSame(1, OutlookMeetingLink::query()->where('user_id', '=', $user->getKey())->count());
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function entrySnapshot(TimeEntry $entry): array
+    {
+        return (array) DB::table('time_entries')
+            ->where('id', '=', $entry->getKey())
+            ->first(['start', 'end', 'user_id', 'member_id', 'project_id', 'description', 'updated_at']);
     }
 }
