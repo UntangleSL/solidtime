@@ -89,6 +89,21 @@ calendars and days off) is a separate, large phase after this one (new Phase 9 i
   close), by client (account manager portfolio) and by person (chargeability). Plus a summary on
   each project's page. Labels in Spanish and English like the rest of the fork.
 
+### Added after research (2026-11-27)
+- **D-15:** A contract can start on any day. The first period is a stub from the start date to the
+  end of that month, with hours and amount prorated by default (start on the 15th → about half a
+  month) and editable. From then on periods start on the 1st of the month and last 1, 3 or 12
+  months. Months stay the unit of planning and reporting.
+- **D-16:** A core Manager who is neither project manager nor account manager sees nothing in the
+  profitability page. Per-person chargeability is Owner/Admin only. Only Owner/Admin assign project
+  managers, account managers and the absence projects.
+- **D-17 (orchestrator):** Labels follow the app locale like the rest of the fork (English UI with
+  Spanish prepared); the page is "Profitability" in English and "Rentabilidad" in Spanish.
+- **D-18 (orchestrator):** Archiving a project pauses renewal; un-archiving resumes from the current
+  month without back-filling the paused months.
+- **D-19 (orchestrator):** Money per month is the period amount spread evenly across the period's
+  months (straight-line); the period margin is the headline figure.
+
 ### Claude's Discretion
 - Exact page layout, charts and table columns (reuse existing reporting/chart components).
 - Where the Vacaciones/Festivo marker lives (a flag on the project is the likely shape).
