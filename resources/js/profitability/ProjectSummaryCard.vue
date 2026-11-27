@@ -6,6 +6,7 @@ import MainContainer from '@/packages/ui/src/MainContainer.vue';
 import CardTitle from '@/packages/ui/src/CardTitle.vue';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
 import Button from '@/packages/ui/src/Buttons/Button.vue';
+import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
 import {
     Select,
     SelectContent,
@@ -26,6 +27,7 @@ import { getOrganizationCurrencyString } from '@/utils/money';
 import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
 import BudgetMeter from './BudgetMeter.vue';
+import ContractEditor from './ContractEditor.vue';
 import PeriodMonthTable from './PeriodMonthTable.vue';
 import PlannedVsConsumedChart from './PlannedVsConsumedChart.vue';
 import StatusPill from './StatusPill.vue';
@@ -33,6 +35,8 @@ import { formatHours, formatHoursNumber, formatPercent, formatPeriod } from './f
 import { t, useProfitabilityProps } from './labels';
 import { monthDifference } from './plannedVsConsumedOption';
 import { isNotFound, useProjectSummaryQuery, type SummaryPeriodRef } from './summaryApi';
+import { projectNameFromCache } from './contractsApi';
+import { useQueryClient } from '@tanstack/vue-query';
 
 // Contract card on the project page (D-14, UI-SPEC "Project summary card"). It renders only what the
 // server allows: without `project.summary_url` in the shared prop there is no markup and no request,
@@ -266,6 +270,27 @@ const pillStatus = computed(() => {
     return period.value?.status ?? 'on_track';
 });
 
+// Editors (08-16). They exist only when the payload allows them (can_edit_terms / can_edit_plan) and
+// the shared prop carries the organization URL the writes go to; the server re-checks both.
+const organizationUrl = computed(() => profitability.value.organization_url ?? null);
+const queryClient = useQueryClient();
+const projectName = ref<string | null>(null);
+const editorOpen = ref(false);
+const editorMounted = ref(false);
+
+const canSetTerms = computed(
+    () =>
+        organizationUrl.value !== null &&
+        summary.value?.can_edit_terms === true &&
+        summary.value.contract === null
+);
+
+function openEditor() {
+    projectName.value = projectNameFromCache(queryClient, props.projectId);
+    editorMounted.value = true;
+    editorOpen.value = true;
+}
+
 const meterCaption = computed(() => {
     if (!period.value) return '';
     const sold = period.value.budget_seconds;
@@ -335,6 +360,14 @@ const meterCaption = computed(() => {
                             : label('summary.empty_body_pm')
                     }}
                 </p>
+                <PrimaryButton
+                    v-if="canSetTerms"
+                    type="button"
+                    class="mt-4"
+                    data-testid="profitability-summary-set-terms"
+                    @click="openEditor">
+                    {{ label('summary.set_terms') }}
+                </PrimaryButton>
             </div>
             <div v-else class="p-4 sm:p-6 space-y-6">
                 <p
@@ -436,5 +469,10 @@ const meterCaption = computed(() => {
                     :number-format="numberFormat" />
             </div>
         </Card>
+        <ContractEditor
+            v-if="editorMounted"
+            v-model:show="editorOpen"
+            :project-id="projectId"
+            :project-name="projectName" />
     </MainContainer>
 </template>
