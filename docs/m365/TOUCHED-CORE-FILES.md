@@ -397,3 +397,43 @@ new in 07-01). They do not exist upstream, so they never conflict.
 | `tests/Tools/m365-spike/` | Node spike tooling: Graph capture, sanitiser, fixture and docs validators, with their tests. |
 | `tests/Tools/m365-merge/` | `ledger-check.sh`, the ledger completeness check and merge preview (07-01). |
 | `tests/Unit/M365/` | Unit test over the Graph fixtures (`CalendarViewFixturesTest`). |
+
+### New files inside core directories
+
+| File | Content | Plan |
+| --- | --- | --- |
+| `e2e/outlook-off-switch.spec.ts` | Browser proof of the off switch (OPS-02): with the integration not configured, `/calendar` shows the user's time entry and no Outlook element (controls, lane, entry badge, selection bar, out-of-sync marker, sync button), and the page sends no request to `/m365/` or `/auth/microsoft/`. | 07-04 |
+
+### Fork changes (no core file)
+
+Phase 7 changes no core file after the merge. Its code and tests live in fork-owned paths:
+
+| Path | Change | Plan |
+| --- | --- | --- |
+| `app/Microsoft365/Http/Middleware/EnsureNotImpersonating.php` | New: answers 404 while an administrator impersonates (`GraphAccessGuard::blocked()`); last middleware of `DELETE /user/microsoft`. | 07-02 |
+| `app/Microsoft365/routes/microsoft365.php` | The Disconnect route gains `EnsureNotImpersonating`. | 07-02 |
+| `app/Microsoft365/Http/Controllers/MicrosoftAuthController.php` | Connect (`redirect()` connect branch) and `callback()` answer 404 while impersonating, before any session write or gateway call; guest sign-in unchanged. | 07-02 |
+| `app/Microsoft365/Http/Middleware/ShareMicrosoftInertiaData.php` | No `microsoft.account` on the profile while impersonating, so the Microsoft 365 card is hidden. | 07-02 |
+| `app/Microsoft365/Graph/OutlookMeetingSyncService.php` | `purgeIfDisconnected()`: after traversing, the sync re-checks the account under its row lock and deletes the meetings and sync windows it stored when the user disconnected meanwhile; the sync then answers `not_connected`. | 07-03 |
+| `tests/Feature/Microsoft365/MicrosoftImpersonationMatrixTest.php`, `MicrosoftDataCleanupTest.php`, `MicrosoftOffSwitchTest.php`, `tests/Unit/Microsoft365/ForkIsolationTest.php` | New test classes: the 14-route impersonation matrix with its route canary (07-02), the deletion matrix with the cascade guard and the disconnect-during-sync race (07-03), the off-switch sweep (07-04), and the static canaries (fork jobs dispatched only from fork console commands; every ledger path exists) (07-02). | 07-02, 07-03, 07-04 |
+| `docs/m365/UPSTREAM-MERGE.md`, `tests/Tools/m365-merge/ledger-check.sh` | Merge procedure and ledger check (07-01, rows above). | 07-01 |
+| `docs/deploy/MICROSOFT-SIGNIN.md`, `docs/deploy/dokploy-compose.fork.yml` | Operator doc brought in line with Phase 7; scheduler and queue run the image's own `healthcheck` script. | 07-05 |
+
+### Hot files deliberately not touched
+
+No Phase 7 commit after the merge edits these: `app/Service/DeletionService.php`,
+`app/Service/MemberService.php` (deletion cleanup is database cascades from `users` and
+`time_entries`, proven by `MicrosoftDataCleanupTest`), `app/Console/Kernel.php` (the daily check
+stays scheduled from the fork provider), `routes/web.php`, `openapi.json`, `docker/prod/Dockerfile`
+and `docker/prod/deployment/healthcheck` (the scheduler and queue health check lives in the fork
+compose, which calls the image's existing script).
+
+### Reconciliation (07-05)
+
+Checked against the real tree before the release:
+`git diff --name-only adcd05cb HEAD -- . ':!app/Microsoft365' ':!resources/js/m365' ':!tests/Feature/Microsoft365' ':!tests/Unit/Microsoft365' ':!docs' ':!.planning' ':!tests/Tools'`
+(base `adcd05cb`, the 07-01 merge commit) lists one path, `e2e/outlook-off-switch.spec.ts`
+(07-04, new file above). Before this section `sh tests/Tools/m365-merge/ledger-check.sh` printed
+`NOT COVERED: e2e/outlook-off-switch.spec.ts`; with it the check prints
+`ledger-check: OK (modified 40, added 580, conflicts 0)` against upstream `d0f5e745`. None of the
+hot files above appears in the diff.
