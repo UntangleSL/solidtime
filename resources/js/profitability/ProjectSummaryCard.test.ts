@@ -18,7 +18,12 @@ vi.mock('@/utils/useUser', () => ({ getCurrentOrganizationId: () => 'org-1' }));
 
 vi.mock('@/utils/useOrganizationQuery', () => ({
     useOrganizationQuery: () => ({
-        organization: computed(() => ({ number_format: 'comma-point' })),
+        organization: computed(() => ({
+            number_format: 'comma-point',
+            currency: 'EUR',
+            currency_format: 'symbol-before',
+            currency_symbol: '€',
+        })),
     }),
 }));
 
@@ -92,6 +97,18 @@ const labels = {
         empty_title: 'No contract terms yet',
         empty_body_editor: 'Set the hours and amount sold to follow this project’s budget.',
         empty_body_pm: 'The account manager sets the hours sold.',
+    },
+    money: {
+        kpi: {
+            amount_sold: 'Amount sold',
+            cost_to_date: 'Cost to date',
+            margin_to_date: 'Margin to date',
+            projected_margin: 'Projected margin',
+            final_margin: 'Final margin',
+        },
+        incomplete: 'Incomplete',
+        incomplete_tooltip: ':n h without an hourly cost. Set costs in Settings.',
+        incomplete_aria: 'Incomplete cost: :n h without an hourly cost',
     },
 };
 
@@ -170,7 +187,11 @@ function mountCard() {
     wrapper = mount(ProjectSummaryCard, {
         props: { projectId: 'p-1' },
         attachTo: document.body,
-        global: { plugins: [[VueQueryPlugin, { queryClient }]] },
+        global: {
+            plugins: [[VueQueryPlugin, { queryClient }]],
+            // The chart needs a canvas; its option is covered by plannedVsConsumedOption.test.ts.
+            stubs: { PlannedVsConsumedChart: true },
+        },
     });
     return wrapper;
 }
@@ -201,6 +222,7 @@ describe('ProjectSummaryCard', () => {
         wrapper?.unmount();
         wrapper = null;
         document.body.innerHTML = '';
+        vi.useRealTimers();
     });
 
     it('renders nothing and sends no request without a summary URL', async () => {
@@ -421,5 +443,217 @@ describe('ProjectSummaryCard', () => {
         wrapper!.findComponent(Select).vm.$emit('update:modelValue', 'period-0');
         await vi.waitFor(() => expect(axiosGet.mock.calls.length).toBe(calls + 1));
         expect(axiosGet).toHaveBeenLastCalledWith(SUMMARY_URL, { params: { period: 'period-0' } });
+    });
+    describe('money, chart and period states', () => {
+        const H = 3600;
+        const QUARTER = [
+            { month: '2026-10-01', planned_seconds: 40 * H, consumed_seconds: 40 * H },
+            { month: '2026-11-01', planned_seconds: 40 * H, consumed_seconds: 20 * H },
+            { month: '2026-12-01', planned_seconds: 40 * H, consumed_seconds: 0 },
+        ];
+        const QUARTER_PERIOD = {
+            starts_on: '2026-10-01',
+            ends_on: '2026-12-31',
+            budget_seconds: 120 * H,
+            consumed_seconds: 60 * H,
+            months: QUARTER,
+            still_to_consume_seconds: 60 * H,
+            remaining_plan_seconds: 120 * H,
+            run_rate_seconds: 110 * H,
+        };
+        const MONEY = {
+            amount_cents: 1240000,
+            revenue_to_date_cents: 826667,
+            cost_cents: 250000,
+            margin_cents: 370000,
+            projected_cost_cents: 800000,
+            projected_margin_cents: 440000,
+            unpriced_cost_seconds: 0,
+        };
+
+        beforeEach(() => {
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(new Date('2026-11-15T12:00:00'));
+        });
+
+        async function mountWith(periodOverrides: Record<string, unknown>) {
+            withSummaryUrl();
+            axiosGet.mockResolvedValue(summary({}, { ...QUARTER_PERIOD, ...periodOverrides }));
+            mountCard();
+            await vi.waitFor(() => expect(query('profitability-summary-hours')).not.toBeNull());
+        }
+
+        it('renders no money element for a project manager payload', async () => {
+            await mountWith({});
+            const card = text('profitability-summary-card');
+            expect(query('profitability-summary-money')).toBeNull();
+            expect(card).not.toContain('€');
+            expect(card).not.toContain('Incomplete');
+            expect(card).not.toContain('Amount sold');
+            expect(card).not.toContain('margin');
+        });
+
+        it('renders the four money tiles for an account manager payload', async () => {
+            await mountWith(MONEY);
+            const strip = query('profitability-summary-money');
+            expect(strip).not.toBeNull();
+            expect(strip?.querySelectorAll('dt')).toHaveLength(4);
+            expect(text('profitability-summary-money')).toContain('Amount sold');
+            expect(text('profitability-summary-money-amount')).toBe('€12,400.00');
+            expect(text('profitability-summary-money-cost')).toBe('€2,500.00');
+            expect(text('profitability-summary-money-margin')).toBe('€3,700.00');
+            expect(text('profitability-summary-money-projected_margin')).toBe('€4,400.00');
+            expect(query('profitability-summary-money-amount')?.className).toContain(
+                'tabular-nums'
+            );
+        });
+
+        it('writes a loss with a real minus in the loss colour', async () => {
+            await mountWith({ ...MONEY, margin_cents: -125000 });
+            expect(text('profitability-summary-money-margin')).toBe('−€1,250.00');
+            expect(query('profitability-summary-money-margin')?.className).toContain(
+                'text-red-700'
+            );
+        });
+
+        it('shows "--" for a projected margin that is not known yet', async () => {
+            await mountWith({ ...MONEY, projected_cost_cents: null, projected_margin_cents: null });
+            expect(text('profitability-summary-money-projected_margin')).toBe('--');
+        });
+
+        it('replaces the margin numbers with Incomplete while hours have no cost', async () => {
+            await mountWith({ ...MONEY, unpriced_cost_seconds: 7200 });
+            for (const key of ['margin', 'projected_margin']) {
+                const tile = query(`profitability-summary-money-${key}`);
+                expect(tile?.getAttribute('data-incomplete')).toBe('true');
+                expect(tile?.textContent?.trim()).toBe('Incomplete');
+                expect(tile?.getAttribute('aria-label')).toBe(
+                    'Incomplete cost: 2 h without an hourly cost'
+                );
+                expect(tile?.className).toContain('text-amber-800');
+                expect(tile?.querySelector('svg.lucide-triangle-alert')).not.toBeNull();
+            }
+            expect(text('profitability-summary-money')).not.toContain('€3,700.00');
+            // the cost to date stays a number
+            expect(text('profitability-summary-money-cost')).toBe('€2,500.00');
+        });
+
+        it('shows a closed period with its result and final margin only', async () => {
+            await mountWith({
+                ...MONEY,
+                state: 'closed',
+                starts_on: '2026-07-01',
+                ends_on: '2026-09-30',
+                months: [
+                    { month: '2026-07-01', planned_seconds: 40 * H, consumed_seconds: 40 * H },
+                    { month: '2026-08-01', planned_seconds: 40 * H, consumed_seconds: 40 * H },
+                    { month: '2026-09-01', planned_seconds: 40 * H, consumed_seconds: 34 * H },
+                ],
+                consumed_seconds: 114 * H,
+                still_to_consume_seconds: 6 * H,
+                remaining_plan_seconds: 114 * H,
+                status: 'closed',
+            });
+            const hoursStrip = text('profitability-summary-hours');
+            expect(hoursStrip).toContain('Hours sold');
+            expect(hoursStrip).toContain('Consumed');
+            expect(hoursStrip).toContain('Result');
+            expect(hoursStrip).not.toContain('Still to consume');
+            expect(hoursStrip).not.toContain('Projected at close');
+            expect(text('profitability-summary-result')).toBe('6 h unused');
+            expect(query('profitability-summary-projection-caption')).toBeNull();
+
+            const money = query('profitability-summary-money');
+            expect(money?.querySelectorAll('dt')).toHaveLength(1);
+            expect(text('profitability-summary-money')).toContain('Final margin');
+            expect(text('profitability-summary-money-final_margin')).toBe('€3,700.00');
+
+            expect(query('profitability-status')?.getAttribute('data-status')).toBe('closed');
+            expect(query('profitability-status')?.querySelector('svg.lucide-lock')).not.toBeNull();
+            expect(query('profitability-meter-projected')).toBeNull();
+            expect(text('profitability-summary-card')).not.toContain('(this month)');
+        });
+
+        it('writes "n h over" for a closed period over the hours sold', async () => {
+            await mountWith({
+                state: 'closed',
+                consumed_seconds: 126 * H,
+                still_to_consume_seconds: -6 * H,
+                status: 'closed',
+            });
+            expect(text('profitability-summary-result')).toBe('6 h over');
+            expect(query('profitability-summary-result')?.className).toContain('text-red-700');
+        });
+
+        it('shows an upcoming period with sold hours and amount and no consumption', async () => {
+            await mountWith({
+                ...MONEY,
+                state: 'upcoming',
+                starts_on: '2027-01-01',
+                ends_on: '2027-03-31',
+                consumed_seconds: 0,
+                months: [
+                    { month: '2027-01-01', planned_seconds: 40 * H, consumed_seconds: 0 },
+                    { month: '2027-02-01', planned_seconds: 40 * H, consumed_seconds: 0 },
+                    { month: '2027-03-01', planned_seconds: 40 * H, consumed_seconds: 0 },
+                ],
+                run_rate_seconds: null,
+                status: 'not_started',
+            });
+            expect(text('profitability-summary-sold')).toBe('120 h');
+            expect(text('profitability-summary-consumed')).toBe('--');
+            expect(text('profitability-summary-still')).toBe('--');
+            expect(text('profitability-summary-projected')).toBe('--');
+            expect(query('profitability-summary-projection-caption')).toBeNull();
+            expect(text('profitability-summary-money-amount')).toBe('€12,400.00');
+            expect(text('profitability-summary-money-cost')).toBe('--');
+            expect(text('profitability-summary-money-margin')).toBe('--');
+            expect(text('profitability-summary-money-projected_margin')).toBe('--');
+            expect(query('profitability-status')?.getAttribute('data-status')).toBe('not_started');
+            const consumed = [
+                ...document.body.querySelectorAll('[data-testid="profitability-month-consumed"]'),
+            ].map((cell) => cell.textContent?.trim());
+            expect(consumed).toEqual(['—', '—', '—']);
+        });
+
+        it('shows the chart and the month table for a period of several months', async () => {
+            await mountWith({});
+            const chart = wrapper!.findComponent({ name: 'PlannedVsConsumedChart' });
+            expect(chart.exists()).toBe(true);
+            expect(chart.props('months')).toHaveLength(3);
+            expect(chart.props('currentMonth')).toBe('2026-11-01');
+            expect(query('profitability-month-table')).not.toBeNull();
+            const current = document.body.querySelector('[data-current="true"]');
+            expect(current?.textContent?.replace(/\s+/g, ' ').trim()).toContain(
+                'Nov 2026 (this month)'
+            );
+        });
+
+        it('shows the meter and month table without a chart for a one-month period', async () => {
+            await mountWith({
+                starts_on: '2026-11-01',
+                ends_on: '2026-11-30',
+                months: [QUARTER[1]],
+            });
+            expect(wrapper!.findComponent({ name: 'PlannedVsConsumedChart' }).exists()).toBe(false);
+            expect(document.body.querySelector('[role="meter"]')).not.toBeNull();
+            expect(
+                document.body.querySelectorAll('[data-testid="profitability-month-row"]')
+            ).toHaveLength(1);
+        });
+
+        it('passes the twelve months of an annual period to the chart', async () => {
+            const months = Array.from({ length: 12 }, (_, index) => ({
+                month: `2026-${String(index + 1).padStart(2, '0')}-01`,
+                planned_seconds: 10 * H,
+                consumed_seconds: index < 10 ? 10 * H : 0,
+            }));
+            await mountWith({ starts_on: '2026-01-01', ends_on: '2026-12-31', months });
+            const chart = wrapper!.findComponent({ name: 'PlannedVsConsumedChart' });
+            expect(chart.props('months')).toHaveLength(12);
+            expect(
+                document.body.querySelectorAll('[data-testid="profitability-month-row"]')
+            ).toHaveLength(12);
+        });
     });
 });
