@@ -94,7 +94,7 @@ class MicrosoftDataCleanupTest extends TestCaseWithDatabase
             'ignored_at' => '2026-10-19 08:00:00',
         ]);
 
-        $entry = TimeEntry::factory()->forMember($member)->create();
+        $entry = TimeEntry::factory()->forMember($member)->createOne();
         OutlookMeetingLink::query()->create([
             'user_id' => $user->getKey(),
             'graph_id' => 'cleanup-meeting',
@@ -194,5 +194,76 @@ class MicrosoftDataCleanupTest extends TestCaseWithDatabase
         }
         $this->assertContains('time_entry_id->time_entries', $cascading['outlook_meeting_links'] ?? [],
             'outlook_meeting_links has no ON DELETE CASCADE foreign key to time_entries');
+    }
+
+    public function test_deleting_a_member_user_keeps_entries_under_the_placeholder_and_drops_microsoft_rows(): void
+    {
+        // Arrange: an employee and the organization's owner, both with Microsoft data
+        $data = $this->createUserWithRole(Role::Employee);
+        $data->user->save();
+        $employeeEntry = $this->seedMicrosoftData($data->user, $data->member, $data->organization);
+        $this->seedMicrosoftData($data->owner, $data->ownerMember, $data->organization);
+        $deletedId = (string) $data->user->getKey();
+
+        // Act: core turns the membership into a placeholder user, then deletes the user
+        app(DeletionService::class)->deleteUser($data->user);
+
+        // Assert: the entry survives under the placeholder (core rule, unchanged by the fork)
+        $placeholderId = (string) $data->member->refresh()->user_id;
+        $this->assertNotSame($deletedId, $placeholderId);
+        $this->assertTrue(User::query()->findOrFail($placeholderId)->is_placeholder);
+        $entry = TimeEntry::query()->whereKey($employeeEntry->getKey())->first();
+        $this->assertNotNull($entry);
+        $this->assertSame($placeholderId, (string) $entry->user_id);
+        // Every Microsoft row of the deleted user is gone, and the placeholder inherited none
+        $this->assertNull(User::query()->find($deletedId));
+        $this->assertSame($this->every(0), $this->rowsOf($deletedId));
+        $this->assertSame($this->every(0), $this->rowsOf($placeholderId));
+        $this->assertSame($this->every(1), $this->rowsOf((string) $data->owner->getKey()));
+    }
+
+    public function test_removing_a_member_with_their_data_drops_only_their_links(): void
+    {
+        // Arrange: an employee and the organization's owner, both with a converted meeting
+        $data = $this->createUserWithRole(Role::Employee);
+        $data->user->save();
+        $employeeEntry = $this->seedMicrosoftData($data->user, $data->member, $data->organization);
+        $ownerEntry = $this->seedMicrosoftData($data->owner, $data->ownerMember, $data->organization);
+
+        // Act: core member removal together with the member's time entries
+        app(MemberService::class)->removeMember($data->member, $data->organization, true);
+
+        // Assert: core deleted the employee's entry and the cascade took its link; the owner's stays
+        $this->assertNull(TimeEntry::query()->find($employeeEntry->getKey()));
+        $this->assertSame(0, OutlookMeetingLink::query()->where('time_entry_id', '=', $employeeEntry->getKey())->count());
+        $this->assertSame(1, OutlookMeetingLink::query()->where('time_entry_id', '=', $ownerEntry->getKey())->count());
+        // The employee still exists and keeps their own Microsoft connection and data (D-09)
+        $this->assertNotNull(User::query()->find($data->user->getKey()));
+        $this->assertSame(
+            array_merge($this->every(1), ['outlook_meeting_links' => 0]),
+            $this->rowsOf((string) $data->user->getKey()),
+        );
+        $this->assertSame($this->every(1), $this->rowsOf((string) $data->owner->getKey()));
+    }
+
+    public function test_deleting_an_organization_drops_its_links_and_keeps_user_level_rows(): void
+    {
+        // Arrange: an employee and the organization's owner, both with a converted meeting
+        $data = $this->createUserWithRole(Role::Employee);
+        $data->user->save();
+        $employeeEntry = $this->seedMicrosoftData($data->user, $data->member, $data->organization);
+        $ownerEntry = $this->seedMicrosoftData($data->owner, $data->ownerMember, $data->organization);
+
+        // Act: core bulk-deletes the organization's entries without Eloquent events
+        app(DeletionService::class)->deleteOrganization($data->organization);
+
+        // Assert: the entries went with the organization and the time_entry_id cascade took the links
+        $this->assertNull(TimeEntry::query()->find($employeeEntry->getKey()));
+        $this->assertNull(TimeEntry::query()->find($ownerEntry->getKey()));
+        $this->assertSame(0, OutlookMeetingLink::query()->count());
+        // Both users still exist and keep their account, cached meetings, windows and series rules (D-09)
+        $userLevel = array_merge($this->every(1), ['outlook_meeting_links' => 0]);
+        $this->assertSame($userLevel, $this->rowsOf((string) $data->user->getKey()));
+        $this->assertSame($userLevel, $this->rowsOf((string) $data->owner->getKey()));
     }
 }
