@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace App\Profitability;
 
 use App\Profitability\Access\ProfitabilityAccess;
+use App\Profitability\Http\Middleware\ShareProfitabilityInertiaData;
 use App\Profitability\Reporting\ConsumptionQuery;
 use App\Service\PermissionStore;
 use App\Service\TimezoneService;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 
 /**
@@ -17,6 +19,7 @@ use Illuminate\Support\ServiceProvider;
  * from this directory.
  *
  * Inertia data is deliberately not shared from boot(): Octane flushes shared props on every request.
+ * boot() only pushes the web-group middleware that shares the `profitability` prop per request.
  */
 class ProfitabilityServiceProvider extends ServiceProvider
 {
@@ -32,8 +35,11 @@ class ProfitabilityServiceProvider extends ServiceProvider
         ));
     }
 
-    public function boot(): void
+    public function boot(Router $router): void
     {
+        // The profitability prop is shared per request from this middleware (see its docblock for why).
+        $router->pushMiddlewareToGroup('web', ShareProfitabilityInertiaData::class);
+
         // Every route file of the module, in a stable order: later plans add their own file here
         // without editing this provider.
         $routeFiles = glob(__DIR__.'/routes/*.php');
