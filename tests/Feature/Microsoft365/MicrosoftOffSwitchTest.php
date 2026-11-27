@@ -219,7 +219,10 @@ class MicrosoftOffSwitchTest extends TestCaseWithDatabase
 
                 $response = $this->json($method, route($name, $parameters, false));
 
-                $this->assertSame(404, $response->getStatusCode(), $name.' ('.$method.') answered '.$response->getStatusCode().' to a '.$caller);
+                // A guest on an authenticated route is stopped by `auth` (401) before the switch runs;
+                // that answer reveals nothing either. A signed-in user must always get the switch's 404.
+                $allowed = $caller === 'guest' ? [401, 404] : [404];
+                $this->assertContains($response->getStatusCode(), $allowed, $name.' ('.$method.') answered '.$response->getStatusCode().' to a '.$caller);
             }
         }
         Http::assertNothingSent();
