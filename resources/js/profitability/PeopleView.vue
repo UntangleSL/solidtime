@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { Link } from '@inertiajs/vue3';
-import { CircleAlert, CircleCheck, OctagonAlert } from '@lucide/vue';
+import { CircleAlert, CircleCheck, OctagonAlert, Users } from '@lucide/vue';
 import Card from '@/Components/Common/Card.vue';
 import StatCard from '@/Components/Common/StatCard.vue';
 import TableHeading from '@/Components/Common/TableHeading.vue';
 import { Badge } from '@/packages/ui/src';
+import CardTitle from '@/packages/ui/src/CardTitle.vue';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
 import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
 import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
+import ChargeabilityChart from './ChargeabilityChart.vue';
 import RangeSelect from './RangeSelect.vue';
+import { plottedPeople } from './chargeabilityOption';
 import { formatHours, formatPercent, formatPp } from './format';
 import {
     initialRange,
@@ -76,6 +79,8 @@ const kpi = computed(() => {
 
 // Nobody has a working week (or nobody is listed): chargeability cannot be calculated at all.
 const isEmpty = computed(() => hasData.value && !rows.value.some(hasWorkingWeek));
+
+const showChart = computed(() => plottedPeople(rows.value).length > 0);
 
 /**
  * The Settings tab with that person's dialog (`?view=settings&member=`). An Inertia visit to the same
@@ -208,6 +213,19 @@ const teleportTo = computed(() => toolbarTarget?.value ?? null);
             </Card>
 
             <template v-else>
+                <section v-if="showChart" data-testid="profitability-people-chart">
+                    <CardTitle :title="label('admin.people.chart_title')" :icon="Users" />
+                    <Card>
+                        <div class="p-4">
+                            <ChargeabilityChart
+                                :people="rows"
+                                :range-label="label(`ranges.${range}`)"
+                                :labels="labels"
+                                :number-format="numberFormat" />
+                        </div>
+                    </Card>
+                </section>
+
                 <Card>
                     <div class="overflow-x-auto">
                         <div

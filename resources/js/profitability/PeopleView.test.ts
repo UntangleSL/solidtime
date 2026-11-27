@@ -337,6 +337,22 @@ describe('PeopleView', () => {
         expect(badges[0]?.closest('[data-member-id]')?.getAttribute('data-member-id')).toBe('m-9');
     });
 
+    it('shows the chart card with people to plot and hides it in the empty state', async () => {
+        share();
+        respond([person()]);
+        mountView();
+        await settle();
+        expect(text('profitability-people-chart')).toContain('Chargeability vs target');
+        expect(query('stub-chart')).not.toBeNull();
+
+        wrapper?.unmount();
+        document.body.innerHTML = '';
+        respond([person({ ...NO_WEEK })]);
+        mountView();
+        await settle();
+        expect(query('profitability-people-chart')).toBeNull();
+    });
+
     it('shows the load error with Try again', async () => {
         share();
         axiosGet.mockRejectedValue(new Error('network'));
