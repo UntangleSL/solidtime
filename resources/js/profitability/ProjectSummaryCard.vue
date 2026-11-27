@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import dayjs from 'dayjs';
-import { Briefcase, TriangleAlert } from '@lucide/vue';
+import { Briefcase, CalendarRange, TriangleAlert } from '@lucide/vue';
 import MainContainer from '@/packages/ui/src/MainContainer.vue';
 import CardTitle from '@/packages/ui/src/CardTitle.vue';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
 import Button from '@/packages/ui/src/Buttons/Button.vue';
 import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
+import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
 import {
     Select,
     SelectContent,
@@ -28,6 +29,7 @@ import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
 import BudgetMeter from './BudgetMeter.vue';
 import ContractEditor from './ContractEditor.vue';
+import PlanGrid from './PlanGrid.vue';
 import PeriodMonthTable from './PeriodMonthTable.vue';
 import PlannedVsConsumedChart from './PlannedVsConsumedChart.vue';
 import StatusPill from './StatusPill.vue';
@@ -285,6 +287,24 @@ const canSetTerms = computed(
         summary.value.contract === null
 );
 
+// "Plan months" for the selected period, never for a closed one (D-03)
+const canPlan = computed(
+    () =>
+        organizationUrl.value !== null &&
+        summary.value?.can_edit_plan === true &&
+        period.value !== null &&
+        period.value.state !== 'closed'
+);
+const planOpen = ref(false);
+const planPeriodId = ref<string | null>(null);
+
+function openPlan() {
+    if (!period.value) return;
+    projectName.value = projectNameFromCache(queryClient, props.projectId);
+    planPeriodId.value = period.value.id;
+    planOpen.value = true;
+}
+
 function openEditor() {
     projectName.value = projectNameFromCache(queryClient, props.projectId);
     editorMounted.value = true;
@@ -306,9 +326,12 @@ const meterCaption = computed(() => {
 <template>
     <MainContainer v-if="visible" class="pt-6" data-testid="profitability-summary-card">
         <CardTitle :title="label('summary.title')" :icon="Briefcase">
-            <template v-if="periodOptions.length > 0" #actions>
+            <template v-if="periodOptions.length > 0 || canPlan" #actions>
                 <div class="flex flex-wrap items-center justify-end gap-2">
-                    <Select :model-value="periodModel" @update:model-value="onPeriodChange">
+                    <Select
+                        v-if="periodOptions.length > 0"
+                        :model-value="periodModel"
+                        @update:model-value="onPeriodChange">
                         <SelectTrigger
                             size="sm"
                             class="min-w-0 max-w-full"
@@ -326,6 +349,13 @@ const meterCaption = computed(() => {
                             </SelectItem>
                         </SelectContent>
                     </Select>
+                    <SecondaryButton
+                        v-if="canPlan"
+                        :icon="CalendarRange"
+                        data-testid="profitability-summary-plan-months"
+                        @click="openPlan">
+                        {{ label('summary.plan_months') }}
+                    </SecondaryButton>
                 </div>
             </template>
         </CardTitle>
@@ -473,6 +503,12 @@ const meterCaption = computed(() => {
             v-if="editorMounted"
             v-model:show="editorOpen"
             :project-id="projectId"
+            :project-name="projectName" />
+        <PlanGrid
+            v-if="planPeriodId !== null"
+            v-model:show="planOpen"
+            :project-id="projectId"
+            :period-id="planPeriodId"
             :project-name="projectName" />
     </MainContainer>
 </template>
