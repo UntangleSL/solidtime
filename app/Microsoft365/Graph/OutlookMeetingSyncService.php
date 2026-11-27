@@ -15,6 +15,7 @@ use App\Microsoft365\OutOfSync\OutOfSyncScope;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -82,10 +83,49 @@ final class OutlookMeetingSyncService
             }
             assert($account !== null);
 
-            return $this->traverse($user, $account, $start, $end);
+            $outcome = $this->traverse($user, $account, $start, $end);
+            if ($this->purgeIfDisconnected($user)) {
+                return new SyncOutcome(SyncStatus::NotConnected);
+            }
+
+            return $outcome;
         } finally {
             $lock->release();
         }
+    }
+
+    /**
+     * Nothing may outlive the connection (Phase 3 D-21): a Disconnect that lands while this sync is
+     * traversing deletes the cached meetings and windows, and the traversal could write fresh ones after
+     * it. Re-checked under the account row lock, which Disconnect takes first as well, so the two are
+     * serialised: whichever commits first, no meeting or window this sync wrote survives a disconnect.
+     * A missing account counts as disconnected; an account that only needs a reconnect is not purged.
+     * It never touches time entries or meeting links (links survive a disconnect by design, D-15).
+     *
+     * @return bool true when the user is no longer connected and the cache was purged
+     */
+    private function purgeIfDisconnected(User $user): bool
+    {
+        $purged = DB::transaction(function () use ($user): bool {
+            $account = MicrosoftAccount::query()
+                ->where('user_id', '=', $user->getKey())
+                ->lockForUpdate()
+                ->first();
+            if ($account !== null && $account->disconnected_at === null) {
+                return false;
+            }
+
+            OutlookMeeting::query()->where('user_id', '=', $user->getKey())->delete();
+            OutlookSyncWindow::query()->where('user_id', '=', $user->getKey())->delete();
+
+            return true;
+        });
+
+        if ($purged) {
+            Log::info('Outlook sync: disconnected during sync');
+        }
+
+        return $purged;
     }
 
     /**
