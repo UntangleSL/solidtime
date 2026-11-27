@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\Profitability;
 
+use App\Models\TimeEntry;
 use App\Profitability\Access\ProfitabilityAccess;
+use App\Profitability\Console\ReportNonBillableCommand;
 use App\Profitability\Http\Middleware\ShareProfitabilityInertiaData;
 use App\Profitability\Reporting\ConsumptionQuery;
+use App\Profitability\TimeEntries\EnforceBillableOnBillableProject;
 use App\Service\PermissionStore;
 use App\Service\TimezoneService;
 use Illuminate\Contracts\Foundation\Application;
@@ -40,6 +43,12 @@ class ProfitabilityServiceProvider extends ServiceProvider
         // The profitability prop is shared per request from this middleware (see its docblock for why).
         $router->pushMiddlewareToGroup('web', ShareProfitabilityInertiaData::class);
 
+        // D-05: one saving listener covers the API, the importers and the Outlook conversion, because all
+        // of them end in TimeEntry::save(). Resolved per event so no state outlives an Octane request.
+        TimeEntry::saving(static function (TimeEntry $entry): void {
+            app(EnforceBillableOnBillableProject::class)->handle($entry);
+        });
+
         // Every route file of the module, in a stable order: later plans add their own file here
         // without editing this provider.
         $routeFiles = glob(__DIR__.'/routes/*.php');
@@ -51,5 +60,10 @@ class ProfitabilityServiceProvider extends ServiceProvider
         }
 
         $this->loadMigrationsFrom(__DIR__.'/database/migrations');
+
+        if ($this->app->runningInConsole()) {
+            // Fork commands (08-09 adds the period renewal command to this list).
+            $this->commands([ReportNonBillableCommand::class]);
+        }
     }
 }

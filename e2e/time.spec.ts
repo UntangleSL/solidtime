@@ -1814,7 +1814,8 @@ test('test that changing project in edit modal from non-billable to billable upd
     expect(responseBody.data.billable).toBe(true);
 });
 
-test('test that opening edit modal for a time entry with manually overridden billable status preserves that status', async ({
+// Fork seam (profitability, Phase 8, D-05): billable projects only take billable time; upstream asserted the override was kept.
+test('test that opening edit modal for a time entry with a manually chosen Non Billable on a billable project is saved as billable (fork D-05)', async ({
     page,
     ctx,
 }) => {
@@ -1858,19 +1859,22 @@ test('test that opening edit modal for a time entry with manually overridden bil
         page.getByRole('button', { name: 'Update Time Entry' }).click(),
     ]);
     const firstBody = await firstSaveResponse.json();
-    expect(firstBody.data.billable).toBe(false);
+    expect(firstBody.data.billable).toBe(true);
 
-    // Re-open the edit modal — the project_id watcher should NOT override billable back to true
+    // Re-open the edit modal: the server stored the entry as billable
     await timeEntryRow.getByRole('button', { name: 'Actions for the time entry' }).first().click();
     await page.getByRole('menuitem', { name: 'Edit' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
-    // The billable dropdown should still show Non-Billable
+    // The billable dropdown shows Billable
     await expect(
         page.getByRole('dialog').getByRole('combobox').filter({ hasText: 'Non-Billable' })
+    ).toHaveCount(0);
+    await expect(
+        page.getByRole('dialog').getByRole('combobox').filter({ hasText: 'Billable' })
     ).toBeVisible();
 
-    // Save without changes and verify the response still has billable=false
+    // Save without changes and verify the response still has billable=true
     const [updateResponse] = await Promise.all([
         page.waitForResponse(
             (response) =>
@@ -1881,7 +1885,7 @@ test('test that opening edit modal for a time entry with manually overridden bil
         page.getByRole('button', { name: 'Update Time Entry' }).click(),
     ]);
     const responseBody = await updateResponse.json();
-    expect(responseBody.data.billable).toBe(false);
+    expect(responseBody.data.billable).toBe(true);
 });
 
 test('test that changing project in edit modal from billable to non-billable updates billable status', async ({
