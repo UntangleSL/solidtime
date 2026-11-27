@@ -9,8 +9,13 @@ use App\Models\Project;
 use App\Models\User;
 use App\Profitability\Access\ProfitabilityAccess;
 use App\Profitability\Models\ContractPeriod;
+use App\Profitability\Models\ContractPeriodMonth;
 use App\Profitability\Models\ProjectContract;
+use App\Profitability\Periods\PeriodBounds;
+use App\Profitability\Periods\PeriodCalendar;
+use App\Profitability\Periods\PeriodMaterializer;
 use App\Profitability\Reporting\ConsumptionQuery;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,7 +23,8 @@ use Illuminate\Routing\Controller;
 
 /**
  * The profitability summary of one project for the project page (BUDG-03, D-14): its contract terms
- * and the hours sold and consumed of the current period.
+ * and the hours sold and consumed of the current period, with its months planned and consumed (BUDG-04).
+ * Reading materializes the periods the contract needs up to today and the next one (BUDG-02, D-04).
  *
  * The scope is resolved before any data is read. A project of another organization, an unknown id, a
  * project outside the caller's scope and a non-billable project without contract terms are all the same
@@ -32,6 +38,8 @@ class ProjectSummaryController extends Controller
     public function __construct(
         private readonly ProfitabilityAccess $access,
         private readonly ConsumptionQuery $consumption,
+        private readonly PeriodMaterializer $materializer,
+        private readonly PeriodCalendar $calendar,
     ) {}
 
     public function show(Request $request, Organization $organization, string $project): JsonResponse
@@ -63,7 +71,11 @@ class ProjectSummaryController extends Controller
         }
 
         $now = now()->toImmutable();
-        $today = $now->setTimezone($this->consumption->timezone())->format('Y-m-d');
+        $localToday = $now->setTimezone($this->consumption->timezone())->startOfDay();
+        $today = $localToday->format('Y-m-d');
+        if ($contract !== null) {
+            $this->materializer->ensureThrough($contract, $localToday);
+        }
 
         /** @var ContractPeriod|null $period */
         $period = $contract === null ? null : ContractPeriod::query()
@@ -80,7 +92,7 @@ class ProjectSummaryController extends Controller
                 'can_edit_plan' => $scope->canEditPlan($model),
                 'contract' => $contract === null ? null : [
                     'service' => $contract->service,
-                    'schedule' => $contract->schedule,
+                    'schedule' => $contract->schedule->value,
                     'starts_on' => $contract->starts_on->format('Y-m-d'),
                     'ends_on' => $contract->ends_on?->format('Y-m-d'),
                     'archived' => $model->archived_at !== null,
@@ -98,8 +110,45 @@ class ProjectSummaryController extends Controller
                         $period->ends_on,
                         $now,
                     ),
+                    'months' => $this->months($organization, $model, $period, $now),
                 ],
             ],
         ]);
+    }
+
+    /**
+     * Every month of the period with its planned hours (0 when it has no plan row) and the hours consumed
+     * in it (0 for a month without time).
+     *
+     * @return list<array{month: string, planned_seconds: int, consumed_seconds: int}>
+     */
+    private function months(Organization $organization, Project $project, ContractPeriod $period, CarbonImmutable $now): array
+    {
+        $planned = [];
+        $rows = ContractPeriodMonth::query()
+            ->where('period_id', '=', $period->getKey())
+            ->get();
+        foreach ($rows as $row) {
+            $planned[$row->month->format('Y-m-d')] = $row->planned_seconds;
+        }
+        $consumed = $this->consumption->secondsByMonth(
+            $organization->getKey(),
+            $project->getKey(),
+            $period->starts_on,
+            $period->ends_on,
+            $now,
+        );
+
+        $months = [];
+        foreach ($this->calendar->months(new PeriodBounds($period->starts_on, $period->ends_on, false)) as $month) {
+            $key = $month->format('Y-m-d');
+            $months[] = [
+                'month' => $key,
+                'planned_seconds' => $planned[$key] ?? 0,
+                'consumed_seconds' => $consumed[$key] ?? 0,
+            ];
+        }
+
+        return $months;
     }
 }
