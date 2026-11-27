@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace App\Profitability\Models;
 
 use App\Models\Concerns\HasUuids;
+use App\Profitability\Periods\PeriodCalendar;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
 
 /**
@@ -30,6 +33,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read ProjectContract $contract
+ * @property-read Collection<int, ContractPeriodMonth> $months
  */
 class ContractPeriod extends Model
 {
@@ -69,5 +73,24 @@ class ContractPeriod extends Model
     public function contract(): BelongsTo
     {
         return $this->belongsTo(ProjectContract::class, 'contract_id');
+    }
+
+    /**
+     * The planned hours of each month of the period, in month order (D-02).
+     *
+     * @return HasMany<ContractPeriodMonth, $this>
+     */
+    public function months(): HasMany
+    {
+        return $this->hasMany(ContractPeriodMonth::class, 'period_id')->orderBy('month');
+    }
+
+    /**
+     * current while $today (a local date in the profitability timezone) is inside the period, upcoming
+     * before it, closed after it (D-03). One of the PeriodCalendar::STATE_* values.
+     */
+    public function stateOn(CarbonImmutable $today): string
+    {
+        return (new PeriodCalendar)->stateOn($this->starts_on, $this->ends_on, $today);
     }
 }
