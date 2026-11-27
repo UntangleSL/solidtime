@@ -1,4 +1,4 @@
-# Touched core files (Phase 2: Sign in with Microsoft, Phase 3: Outlook meetings, Phase 3.1: calendar UX polish, Phase 3.2: appearance, Phase 7: upstream merge and hardening)
+# Touched core files (Phase 2: Sign in with Microsoft, Phase 3: Outlook meetings, Phase 3.1: calendar UX polish, Phase 3.2: appearance, Phase 7: upstream merge and hardening, Phase 8: project hour budgets and profitability)
 
 Ledger for upstream merges. The Phase 7 merge rehearsal (and every later `git merge upstream/main`)
 checks these files first. Everything else the fork adds lives in fork-owned paths (second table).
@@ -437,3 +437,69 @@ Checked against the real tree before the release:
 `NOT COVERED: e2e/outlook-off-switch.spec.ts`; with it the check prints
 `ledger-check: OK (modified 40, added 580, conflicts 0)` against upstream `d0f5e745`. None of the
 hot files above appears in the diff.
+
+## Phase 8 (Project hour budgets and profitability)
+
+Phase 8 lives in its own module, `app/Profitability/`, loaded by one provider. Core knows it through
+two lines in `config/app.php`, one card on the project page and one sidebar item. Its routes are web
+routes in the module (session and CSRF, never under `api/`), so `routes/web.php`, `routes/api.php` and
+`openapi.json` are untouched. Project and account managers are fork tables, not core roles. Billable
+enforcement (D-05) is a `TimeEntry::saving` listener and the renewal pause (D-18) a `Project::updated`
+listener, both registered from the fork provider. The daily renewal is scheduled from the provider
+too, never from `app/Console/Kernel.php`. `tests/Unit/Profitability/ProfitabilityIsolationTest.php`
+checks these rules on every CI run.
+
+### Core files edited
+
+| File | Change | Plan | Re-apply after an upstream merge |
+| --- | --- | --- | --- |
+| `config/app.php` | One `use App\Profitability\ProfitabilityServiceProvider;` line and one `ProfitabilityServiceProvider::class` entry in the `providers` array, after `AppearanceServiceProvider::class`. | 08-01 | Re-add both lines next to the Microsoft 365 and appearance providers. |
+| `resources/js/Pages/ProjectShow.vue` | One import (`ProjectSummaryCard` from `@/profitability/ProjectSummaryCard.vue`) and one `<ProjectSummaryCard :project-id="projectId" />` between the header `MainContainer` and the next `MainContainer`. The card renders nothing unless the shared `profitability` prop carries the project's summary URL. | 08-06 | Take upstream's file, then re-add the import and the element after the header container. |
+| `resources/js/Layouts/AppLayout.vue` | One import (`useProfitabilityNav` from `@/profitability/labels`), `const profitabilityNav = useProfitabilityNav();`, and one `NavigationSidebarItem v-if="profitabilityNav.visible"` (title, icon, current and href from it) right after the Goals item. | 08-12 | Take upstream's file, then re-add the import, the const and the item after Goals. |
+| `e2e/time.spec.ts` | One test (near line 1817) renamed to "...with a manually chosen Non Billable on a billable project is saved as billable (fork D-05)", with a "Fork seam (profitability, Phase 8, D-05)" comment: it now expects `billable: true` after both saves and the Billable option in the reopened modal. Upstream asserted the manual override was kept. | 08-07 | Keep upstream's file and re-apply the rename, the comment and the `true` assertions to that one test. If upstream changes the test, re-derive it from D-05: time on a billable project is always billable. |
+| `e2e/calendar.spec.ts` | The same D-05 change to the calendar edit-modal test (near line 166): renamed, commented, expects `billable: true` and the Billable option. | 08-07 | As for `e2e/time.spec.ts`. The file also carries the weekends seam of the first table. |
+| `tests/Unit/Endpoint/Api/V1/TimeEntryEndpointTest.php` | In `test_update_multiple_refreshes_billable_rate_on_updates_time_entries`, the second entry (created not billable on a billable project) is asserted `billable: true` with the project's `billable_rate`, under a "Fork seam (profitability, Phase 8, D-05)" comment. | orchestrator `80b2670e` (08) | Keep upstream's file and re-apply the two expected values and the comment to that one assertion. |
+
+### New files inside core directories
+
+| File | Content | Plan |
+| --- | --- | --- |
+| `config/profitability.php` | Fork config: the profitability timezone (Europe/Madrid), the daily renewal time and the module defaults. Plain values, no `env()` call. | 08-02 |
+| `lang/en/profitability.php`, `lang/es/profitability.php` | The module's copy (UI-SPEC copywriting contract), with the same keys in both files (`ProfitabilityLangTest`). Money copy sits under `money`, admin copy under `admin`. | 08-02 |
+| `resources/js/Pages/Profitability.vue` | The Inertia page entry: a thin wrapper that renders `resources/js/profitability/ProfitabilityPage.vue`. | 08-12 |
+| `e2e/profitability-contract.spec.ts` | Browser proof of the contract workflow: monthly terms from the project card (hours sold and consumed), an uneven quarter planned in the plan grid, the project in the Profitability Projects tab. | 08-19 |
+| `e2e/profitability-access.spec.ts` | Browser proof of access and money redaction: an unassigned employee sees no item and gets a 404; made project manager in Settings, they see only the Projects tab and no money text. | 08-19 |
+
+### Fork-owned paths
+
+| Path | Content |
+| --- | --- |
+| `app/Profitability/` | The module: provider, routes (contracts, plan, views, settings, assignments), migrations (contract, assignment and people tables), models, access scope, period calendar and materializer, reporting (consumption, balances, projection, client rollup, chargeability), billable enforcement and the two console commands. |
+| `resources/js/profitability/` | The frontend: project summary card, Profitability page and its Projects, Clients, People and Settings views, contract editor, plan grid, charts, API clients and formatting, each with its Vitest spec. |
+| `tests/Feature/Profitability/` | Feature tests of the module, including `AuthorizationMatrixTest` (every route against every scope, route canary, money-key scans, 08-19). |
+| `tests/Unit/Profitability/` | Unit tests of the module, including `ProfitabilityIsolationTest` (static isolation canaries, 08-19). |
+
+### Hot files deliberately not touched
+
+No Phase 8 commit edits these: `routes/web.php`, `routes/api.php`, `openapi.json`,
+`app/Service/PermissionStore.php`, `app/Enums/Role.php`, `app/Models/TimeEntry.php`,
+`app/Models/Project.php`, `app/Http/Controllers/Api/V1/TimeEntryController.php` and
+`app/Console/Kernel.php`. Billable enforcement and the renewal pause are model listeners registered
+from the fork provider. Core roles and permissions stay as upstream ships them.
+
+### Reconciliation (08-19)
+
+Checked against the real tree before the release:
+`git diff --name-only 5971ab1a HEAD -- . ':!app/Profitability' ':!resources/js/profitability' ':!tests/Feature/Profitability' ':!tests/Unit/Profitability' ':!docs' ':!.planning'`
+(base `5971ab1a`, the parent of the first Phase 8 commit `832fa661`) lists twelve paths. Each one has a
+row above. The core files edited are `config/app.php` (08-01), `resources/js/Pages/ProjectShow.vue`
+(08-06), `e2e/time.spec.ts` and `e2e/calendar.spec.ts` (08-07), `resources/js/Layouts/AppLayout.vue`
+(08-12) and `tests/Unit/Endpoint/Api/V1/TimeEntryEndpointTest.php` (orchestrator `80b2670e`). The new
+files are `config/profitability.php`, `lang/en/profitability.php` and `lang/es/profitability.php` (08-02),
+`resources/js/Pages/Profitability.vue` (08-12), and `e2e/profitability-contract.spec.ts` and
+`e2e/profitability-access.spec.ts` (08-19). None of the hot files above appears in the diff. Before this
+section, `sh tests/Tools/m365-merge/ledger-check.sh` reported `e2e/time.spec.ts`,
+`resources/js/Pages/ProjectShow.vue` and `tests/Unit/Endpoint/Api/V1/TimeEntryEndpointTest.php` as not in
+the ledger. It also reported `config/profitability.php`, `resources/js/Pages/Profitability.vue` and every
+file of the four fork-owned directories as not covered. With this section the check prints
+`ledger-check: OK (modified 43, added 725, conflicts 0)` against upstream `d0f5e745`.
