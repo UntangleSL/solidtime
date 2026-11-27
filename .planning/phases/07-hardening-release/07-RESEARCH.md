@@ -442,20 +442,23 @@ Line numbers are those of the files read this session (guide lines 66-67, 138, 2
 | A5 | The Dokploy MCP can read container health and trigger a manual Postgres backup for the compose database (CONTEXT D-03 assumes it). | Environment Availability | Backup must then be taken by the owner in the Dokploy UI before the deploy. |
 | A6 | The Playwright CI job really runs with `SOLIDTIME_MICROSOFT_*` unset (stated in an e2e spec comment; `.env.ci` is protected and was not read, and no `MICROSOFT` string appears in `.github`, `phpunit.xml`, `playwright.config.ts` or `docker-compose.yml`). | Pattern 3 | The new off-switch e2e would run with the integration on; set it explicitly in the spec or fixture. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Gate registration of the 05:30 job on `isConfigured()` as well?**
    - Known: the event is registered but its `->when()` filter blocks it (tested).
    - Unclear: whether the owner reads "nothing is scheduled" as "not listed in `schedule:list`".
    - Recommendation: keep the filter (no behaviour change, config changes apply live). Ask only if the owner objects; the extra gate is a two-line change plus test.
+   - RESOLVED (orchestrator, 2026-11-27): keep the `->when(isConfigured)` filter; plan 07-04 proves it.
 
 2. **Should the Microsoft routes also carry core's new `check-organization-member` middleware?**
    - Known: upstream added it to the API group; the fork's `m365/organizations/{organization}/...` routes use `check-organization-blocked` and membership checks inside the controllers (conversion/move-entry controllers read the user's own organization).
    - Unclear: whether adding it is worth the diff.
    - Recommendation: not in Phase 7 scope; optionally note as hardening if the controllers do not already reject non-members (the Phase 4 tests cover foreign organizations).
+   - RESOLVED (orchestrator, 2026-11-27): out of Phase 7 scope; no task.
 
 3. **Does the owner want the drag fix called out as the probable resolution of the deferred report?**
    - Recommendation: mention it in the D-02 summary; do not reopen the deferred item unless it recurs after deploy.
+   - RESOLVED (orchestrator, 2026-11-27): named in the D-02 summary (07-05 Task 3); the deferred item stays closed unless it recurs.
 
 ## Environment Availability
 

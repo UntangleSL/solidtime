@@ -52,6 +52,16 @@ healthchecks carried over from Phase 6. No new user-facing features.
   session and must never be triggered by an impersonated request) and adds a test matrix proving no
   Graph call and no meeting data leaves while impersonating.
 
+### Deletion scope (SEC-03)
+- **D-09:** Microsoft data belongs to the user, not to an organization. Deleting a user removes all of it
+  (identity, tokens, cached meetings, sync windows, links, series settings) through FK cascades.
+  Deleting an organization or removing a member removes the meeting links of that organization (their
+  time entries go with core), while the user's own Microsoft account, cached meetings, sync windows and
+  series settings stay as long as the user exists, because the user can still sign in with Microsoft and
+  belongs to the Untangle tenant (orchestrator decision under the owner's standing autonomy, 2026-11-27;
+  Untangle runs a single organization, so this case does not arise in practice). ROADMAP criterion 1's
+  "their" reads as the deleted user's data and the deleted organization's links.
+
 ### Claude's Discretion
 - Deletion cleanup details: which tables are removed on user deletion, organization deletion and member
   removal (identity, tokens, cached meetings, sync windows, meeting links, series settings, out-of-sync
