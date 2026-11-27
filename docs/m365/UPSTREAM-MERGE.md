@@ -178,10 +178,12 @@ steps (D-03):
 2. Restore the pre-deploy database backup:
    - Dokploy backup: stop `app`, `scheduler` and `queue`; in the compose's database backups,
      restore the backup taken in section 7 step 2 into the compose database; start the services.
-   - A `pg_dump -Fc` file: stop `app`, `scheduler` and `queue`, copy the file into the database
-     container and run
-     `pg_restore --clean --if-exists --no-owner -U "$DB_USERNAME" -d "$DB_DATABASE" /tmp/<backup-file>.dump`
-     inside it (the names come from the Dokploy Environment), then start the services.
+   - A `pg_dump -Fc` file: stop `app`, `scheduler` and `queue`; in the Terminal of the compose's
+     `database` service run
+     `pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB" <path-to-backup>.dump`
+     (the database container only has the `POSTGRES_*` variables, filled from the Dokploy
+     Environment; a dump written to `/var/lib/postgresql/data/` already lives in the database
+     volume and needs no copy), then start the services.
 3. Check the login page and one calendar week, and record the rollback in the history below.
 
 Revert the merge on `feature/m365-integration` with `git revert -m 1 <merge sha>` only if the fork
@@ -192,4 +194,14 @@ require reverting the revert first.
 
 | Date | Upstream sha | Merge base | Conflicts | Release image |
 | --- | --- | --- | --- | --- |
-| 2026-11-26 | `d0f5e745` | `b46f0157` | `composer.json`, `composer.lock`, `resources/js/Pages/Auth/Login.vue`, `resources/js/Pages/Profile/Show.vue` | filled in by 07-06 |
+| 2026-11-26 | `d0f5e745` | `b46f0157` | `composer.json`, `composer.lock`, `resources/js/Pages/Auth/Login.vue`, `resources/js/Pages/Profile/Show.vue` | `sha-0ebd0f6` (deployed 2026-11-27) |
+
+Release of the 2026-11-26 merge (plan 07-06): release commit `0ebd0f6f`, all ten workflows green,
+image `ghcr.io/untanglesl/solidtime:sha-0ebd0f6` on `app`, `scheduler` and `queue`, deployed on
+2026-11-27. Scheduler and queue report healthy with the image healthcheck script (no fallback).
+Pre-deploy backup: Dokploy has no backup job for this compose, so the owner took a `pg_dump -Fc`
+in the `database` service Terminal: `/var/lib/postgresql/data/pre-fase7-2026-11-27.dump`
+(135735 bytes, 2026-11-27 11:27 server time, inside the `database-storage-m365` volume). The
+migration log was not readable from Dokploy, so the three upstream migrations are not confirmed
+from the log; the app started healthy with `AUTO_DB_MIGRATE`. Rollback: section 8 with
+`sha-d379903` and that dump file.
