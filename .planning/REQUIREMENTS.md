@@ -25,8 +25,8 @@
 
 - [x] **SEC-01**: Microsoft access and refresh tokens are stored encrypted at rest in a dedicated table, never in `users`, the session, cache, logs, audits, API responses or Inertia props
 - [x] **SEC-02**: Tokens are refreshed automatically before expiry; if refresh fails (revoked, expired, conditional access), the user sees a "reconnect Microsoft" prompt instead of an error
-- [ ] **SEC-03**: Deleting a user (or organization) removes their Microsoft identity, tokens, cached meetings, links and rules
-- [ ] **SEC-04**: An admin impersonating a user cannot trigger Graph calls with that user's Microsoft token
+- [x] **SEC-03**: Deleting a user (or organization) removes their Microsoft identity, tokens, cached meetings, links and rules
+- [x] **SEC-04**: An admin impersonating a user cannot trigger Graph calls with that user's Microsoft token
 
 ### Outlook Sync (SYNC)
 
@@ -75,8 +75,8 @@ Revised 2026-11-17 (owner): instead of rules the user must create, assignments a
 ### Operations (OPS)
 
 - [x] **OPS-01**: The M365 integration is configured entirely via environment variables (tenant, client id/secret, redirect URI, allowed domains list, target organization) and documented for the Dokploy deployment (HTTPS redirect URI behind proxy, trusted proxies)
-- [ ] **OPS-02**: The integration is disabled cleanly (no login button, no calendar overlay) when M365 env vars are not set
-- [ ] **OPS-03**: Fork code is isolated in its own module with a documented list of touched core files, and an upstream solidtime merge can be performed without conflicts beyond that list
+- [x] **OPS-02**: The integration is disabled cleanly (no login button, no calendar overlay) when M365 env vars are not set
+- [x] **OPS-03**: Fork code is isolated in its own module with a documented list of touched core files, and an upstream solidtime merge can be performed without conflicts beyond that list
 
 ### Calendar UX (UX)
 
@@ -154,8 +154,8 @@ High level, added by the owner 2026-11-05; details to be refined in Phase 8 disc
 | AUTH-07 | Phase 2 | Complete |
 | SEC-01 | Phase 2 | Complete |
 | SEC-02 | Phase 3 | Complete |
-| SEC-03 | Phase 7 | Pending |
-| SEC-04 | Phase 7 | Pending |
+| SEC-03 | Phase 7 | Complete |
+| SEC-04 | Phase 7 | Complete |
 | SYNC-01 | Phase 3 | Complete |
 | SYNC-02 | Phase 3 | Complete |
 | SYNC-03 | Phase 3 | Complete |
@@ -179,8 +179,8 @@ High level, added by the owner 2026-11-05; details to be refined in Phase 8 disc
 | OSYNC-02 | Phase 6 | Complete |
 | OSYNC-03 | Phase 6 | Complete |
 | OPS-01 | Phase 2 | Complete |
-| OPS-02 | Phase 7 | Pending |
-| OPS-03 | Phase 7 | Pending |
+| OPS-02 | Phase 7 | Complete |
+| OPS-03 | Phase 7 | Complete |
 | UX-01 | Phase 3.1 | Complete |
 | UX-02 | Phase 3.1 | Complete |
 | UX-03 | Phase 3.1 | Complete |

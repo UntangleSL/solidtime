@@ -1,19 +1,19 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 07
-current_phase_name: Hardening & Release
-status: ready_to_plan
-stopped_at: Phases 4, 5 and 6 accepted by the owner (UAT); Phase 6 UAT fix deployed (sha-d379903, 2026-11-25); next Phase 7
-last_updated: "2026-11-25T12:30:00.000Z"
-last_activity: 2026-11-25
-last_activity_desc: Phases 4-6 complete (owner UAT); moved meeting shows Already logged and stays out of Confirm
+current_phase: 08
+current_phase_name: Project & Contract Budgets
+status: ready_to_discuss
+stopped_at: Phase 7 executed, verified (human_needed: owner UAT) and released (sha-0ebd0f6); Entra spike cleanup done
+last_updated: "2026-11-27T13:00:00.000Z"
+last_activity: 2026-11-27
+last_activity_desc: Phase 7 complete; owner UAT checklist pending
 state_head: cc783a4544c4c302e38ba35402c100e2b1a3f6eb
 progress:
   total_phases: 10
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 91
   completed_plans: 91
-  percent: 80
+  percent: 90
 ---
 
 Total Phases: 5
@@ -25,16 +25,16 @@ Total Phases: 5
 See: .planning/PROJECT.md (updated 2026-10-19)
 
 **Core value:** A user opens the solidtime calendar and their Outlook meetings are already there, so logging meeting time to the right project takes one click instead of re-typing it from Outlook.
-**Current focus:** Phase 7 — Hardening & Release
+**Current focus:** Phase 8 — budgets (Phase 7 owner UAT pending)
 
 ## Current Position
 
-Phase: 07 — Hardening & Release
+Phase: 08 — budgets (not started)
 Plan: Not planned
-Status: Ready to plan
-Last activity: 2026-11-25 — Phases 4, 5 and 6 accepted by the owner; Phase 6 UAT fix deployed (sha-d379903). A drag-to-wrong-hour report (12:00 -> 4:00) could not be reproduced and no longer happens
+Status: Ready to discuss
+Last activity: 2026-11-27 — Phase 7 complete (7/7 plans, verification human_needed: 7 owner UAT items in 07-VERIFICATION.md); release sha-0ebd0f6 live; Entra spike URI and secret removed
 
-Progress: [████████░░] 80%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 

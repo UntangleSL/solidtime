@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Assign Meetings to Projects** - Single and bulk conversion of meeting suggestions into real time entries using core rules, with no duplicates (completed 2026-11-24, owner UAT)
 - [x] **Phase 5: Smart Meeting Suggestions** - Recurring meetings come pre-assigned from series history, other meetings get a project suggested from past conversions (organizer, attendees, subject), one-click or bulk confirm, "always ignore this series" (completed 2026-11-24, owner UAT)
 - [x] **Phase 6: Out-of-Sync Detection** - Entries of meetings not yet started follow Outlook moves unless edited; edited or cancelled ones are flagged (keep, adjust or delete); started meetings are never changed (completed 2026-11-25, owner UAT)
-- [ ] **Phase 7: Hardening & Release** - Complete deletion cleanup, impersonation guard, clean off switch, documented fork seams and upstream merge rehearsal
+- [x] **Phase 7: Hardening & Release** - Complete deletion cleanup, impersonation guard, clean off switch, documented fork seams and upstream merge rehearsal
 - [ ] **Phase 8: Project Hour Budgets & Profitability** - Projects and contracts carry scheduled, renewing hour budgets; reported time counts against them; profitability per month and contract
 
 ## Phase Details
@@ -388,21 +388,21 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 07-01-PLAN.md — Real upstream merge of solidtime main d0f5e745 (conflicts only in the ledger), ledger in the merged state, ledger-check.sh and docs/m365/UPSTREAM-MERGE.md (OPS-03; D-01, D-03, D-04)
+- [x] 07-01-PLAN.md — Real upstream merge of solidtime main d0f5e745 (conflicts only in the ledger), ledger in the merged state, ledger-check.sh and docs/m365/UPSTREAM-MERGE.md (OPS-03; D-01, D-03, D-04)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 07-02-PLAN.md — Impersonation: Disconnect, Connect, callback and profile card inert; route matrix with canary; fork isolation canaries (SEC-04; D-07, D-08)
-- [ ] 07-03-PLAN.md — Deletion cleanup proof on every core path, schema cascade guard, no residue when a disconnect races a sync (SEC-03)
-- [ ] 07-04-PLAN.md — Off switch proof: calendar e2e with nothing Outlook-related, every fork route 404, job filtered, data kept and restored (OPS-02)
+- [x] 07-02-PLAN.md — Impersonation: Disconnect, Connect, callback and profile card inert; route matrix with canary; fork isolation canaries (SEC-04; D-07, D-08)
+- [x] 07-03-PLAN.md — Deletion cleanup proof on every core path, schema cascade guard, no residue when a disconnect races a sync (SEC-03)
+- [x] 07-04-PLAN.md — Off switch proof: calendar e2e with nothing Outlook-related, every fork route 404, job filtered, data kept and restored (OPS-02)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 07-05-PLAN.md — Release prep: ledger reconciled, operator doc, scheduler/queue healthchecks, Spanish owner summary (D-02)
+- [x] 07-05-PLAN.md — Release prep: ledger reconciled, operator doc, scheduler/queue healthchecks, Spanish owner summary (D-02)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 07-06-PLAN.md — Release: pin the green image, owner summary, database backup, Dokploy deploy, health and public checks (D-01, D-02, D-03; checkpoint)
+- [x] 07-06-PLAN.md — Release: pin the green image, owner summary, database backup, Dokploy deploy, health and public checks (D-01, D-02, D-03; checkpoint)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 07-07-PLAN.md — Entra spike cleanup by the owner, sign-in and Sync rechecked, guide RETIRADO and runbook updated (criterion 5; D-05, D-06; owner checkpoint)
+- [x] 07-07-PLAN.md — Entra spike cleanup by the owner, sign-in and Sync rechecked, guide RETIRADO and runbook updated (criterion 5; D-05, D-06; owner checkpoint)
 
 ### Phase 8: Project Hour Budgets & Profitability
 
@@ -432,5 +432,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 and 3.2 (parallel, both d
 | 4. Assign Meetings to Projects | 0/9 | Planned | - |
 | 5. Smart Meeting Suggestions | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |
-| 7. Hardening & Release | 0/7 | Planned | - |
+| 7. Hardening & Release | 7/7 | Complete (owner UAT pending) | 2026-11-27 |
 | 8. Project Hour Budgets & Profitability | 0/TBD | Not started | - |
