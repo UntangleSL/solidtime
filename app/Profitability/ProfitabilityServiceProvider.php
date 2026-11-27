@@ -6,6 +6,7 @@ namespace App\Profitability;
 
 use App\Models\TimeEntry;
 use App\Profitability\Access\ProfitabilityAccess;
+use App\Profitability\Console\ReportNonBillableCommand;
 use App\Profitability\Http\Middleware\ShareProfitabilityInertiaData;
 use App\Profitability\Reporting\ConsumptionQuery;
 use App\Profitability\TimeEntries\EnforceBillableOnBillableProject;
@@ -59,5 +60,10 @@ class ProfitabilityServiceProvider extends ServiceProvider
         }
 
         $this->loadMigrationsFrom(__DIR__.'/database/migrations');
+
+        if ($this->app->runningInConsole()) {
+            // Fork commands (08-09 adds the period renewal command to this list).
+            $this->commands([ReportNonBillableCommand::class]);
+        }
     }
 }
