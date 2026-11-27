@@ -141,6 +141,15 @@ services:
     depends_on:
       database:
         condition: service_healthy
+    # The image's own healthcheck script is mode-aware (supervisorctl); the inherited FrankenPHP probe only works in http mode.
+    healthcheck:
+      test:
+        - CMD
+        - healthcheck
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
   queue:
     image: ghcr.io/untanglesl/solidtime:sha-d379903
     restart: unless-stopped
@@ -197,6 +206,15 @@ services:
     depends_on:
       database:
         condition: service_healthy
+    # The image's own healthcheck script is mode-aware (supervisorctl); the inherited FrankenPHP probe only works in http mode.
+    healthcheck:
+      test:
+        - CMD
+        - healthcheck
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
   database:
     image: postgres:15
     restart: unless-stopped
