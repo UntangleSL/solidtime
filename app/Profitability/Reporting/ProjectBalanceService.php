@@ -104,6 +104,68 @@ class ProjectBalanceService
     }
 
     /**
+     * One row of the Projects view (D-14): the project, its schedule, the period it is shown with (the
+     * current one, else the latest started, else the first upcoming one; null without contract terms), the
+     * hours and projection of that period (zeros and nulls without one), the edit flags, and the money
+     * part of the period only when the caller has money for the project and a period exists.
+     *
+     * @param  Collection<int, ContractPeriod>|null  $periods  the contract's periods newest first, when the caller already loaded them
+     * @return array<string, mixed>
+     */
+    public function projectRow(
+        Project $project,
+        ?ProjectContract $contract,
+        AccessScope $scope,
+        CarbonImmutable $today,
+        CarbonImmutable $now,
+        ?Collection $periods = null,
+    ): array {
+        $row = [
+            'project_id' => $project->getKey(),
+            'name' => $project->name,
+            'color' => $project->color,
+            'client_id' => $project->client_id,
+            'client_name' => $project->client?->name,
+            'archived' => $project->archived_at !== null,
+            'schedule' => $contract?->schedule->value,
+            'period' => null,
+            'budget_seconds' => 0,
+            'consumed_seconds' => 0,
+            'still_to_consume_seconds' => 0,
+            'remaining_plan_seconds' => 0,
+            'run_rate_seconds' => null,
+            'status' => null,
+            'can_edit_terms' => $scope->canEditTerms($project),
+            'can_edit_plan' => $scope->canEditPlan($project),
+        ];
+        if ($contract === null) {
+            return $row;
+        }
+
+        $periods ??= ContractPeriod::query()
+            ->where('contract_id', '=', $contract->getKey())
+            ->orderByDesc('starts_on')
+            ->get();
+        $period = $this->defaultPeriod($periods, $today);
+        if ($period === null) {
+            return $row;
+        }
+
+        $balance = $this->periodBalance($project, $contract, $period, $scope, $today, $now);
+        unset($balance['months']);
+        $row['period'] = [
+            'id' => $balance['id'],
+            'starts_on' => $balance['starts_on'],
+            'ends_on' => $balance['ends_on'],
+            'state' => $balance['state'],
+        ];
+        unset($balance['id'], $balance['starts_on'], $balance['ends_on'], $balance['state']);
+
+        // The remaining keys are the hours and projection fields and, for money scopes only, the money part
+        return array_merge($row, $balance);
+    }
+
+    /**
      * The period a project is shown with: the current one, else the latest one that has started (the
      * contract ended or is paused), else the first upcoming one (the contract has not started yet).
      *
