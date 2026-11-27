@@ -6,12 +6,14 @@ namespace App\Profitability;
 
 use App\Models\TimeEntry;
 use App\Profitability\Access\ProfitabilityAccess;
+use App\Profitability\Console\RenewPeriodsCommand;
 use App\Profitability\Console\ReportNonBillableCommand;
 use App\Profitability\Http\Middleware\ShareProfitabilityInertiaData;
 use App\Profitability\Reporting\ConsumptionQuery;
 use App\Profitability\TimeEntries\EnforceBillableOnBillableProject;
 use App\Service\PermissionStore;
 use App\Service\TimezoneService;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
@@ -62,8 +64,26 @@ class ProfitabilityServiceProvider extends ServiceProvider
         $this->loadMigrationsFrom(__DIR__.'/database/migrations');
 
         if ($this->app->runningInConsole()) {
-            // Fork commands (08-09 adds the period renewal command to this list).
-            $this->commands([ReportNonBillableCommand::class]);
+            // Fork commands
+            $this->commands([ReportNonBillableCommand::class, RenewPeriodsCommand::class]);
+
+            // D-04: the daily renewal safety net is scheduled from here, not from core's Console\Kernel, so
+            // the fork stays out of core files. Schedule is a singleton the console kernel builds; the
+            // callback also runs at once when it already exists. Reads materialize periods too, so a
+            // missed run changes nothing (BUDG-02).
+            $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+                $schedule->command('profitability:renew-periods')
+                    ->dailyAt($this->configString('profitability.renew_daily_at', '04:30'))
+                    ->timezone($this->configString('profitability.timezone', 'Europe/Madrid'))
+                    ->withoutOverlapping();
+            });
         }
+    }
+
+    private function configString(string $key, string $default): string
+    {
+        $value = config($key);
+
+        return is_string($value) && $value !== '' ? $value : $default;
     }
 }
