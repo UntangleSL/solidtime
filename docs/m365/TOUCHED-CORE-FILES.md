@@ -1,4 +1,4 @@
-# Touched core files (Phase 2: Sign in with Microsoft, Phase 3: Outlook meetings, Phase 3.1: calendar UX polish, Phase 3.2: appearance)
+# Touched core files (Phase 2: Sign in with Microsoft, Phase 3: Outlook meetings, Phase 3.1: calendar UX polish, Phase 3.2: appearance, Phase 7: upstream merge and hardening)
 
 Ledger for upstream merges. The Phase 7 merge rehearsal (and every later `git merge upstream/main`)
 checks these files first. Everything else the fork adds lives in fork-owned paths (second table).
@@ -7,13 +7,13 @@ checks these files first. Everything else the fork adds lives in fork-owned path
 
 | File | Change | Plan | Merge note |
 | --- | --- | --- | --- |
-| `composer.json` | Adds the `laravel/socialite` and `socialiteproviders/microsoft` requirements. | 02-04 | On a conflict take upstream's file, re-add the requirement, then regenerate the lock file. |
-| `composer.lock` | Lock entries for the added packages. | 02-04 | Never hand-merge: take upstream's file and run `composer update` for the added packages to regenerate it. |
+| `composer.json` | Adds the `laravel/socialite` and `socialiteproviders/microsoft` requirements. Since the 2026-11-26 merge upstream requires laravel/passport ^13.10.0; the socialite line follows it. | 02-04, 07-01 | On a conflict take upstream's file, re-add the requirement, then regenerate the lock file. |
+| `composer.lock` | Lock entries for the added packages. | 02-04, 07-01 | Never hand-merge: take upstream's file and run `composer update` for the added packages to regenerate it. Name only the fork packages (laravel/socialite socialiteproviders/microsoft) in the update command, never laravel/passport. |
 | `config/app.php` | One `use` line and one entry in the `providers` array for `Microsoft365ServiceProvider`. | 02-01 | Re-apply the two lines after the merge. |
-| `resources/js/Pages/Auth/Login.vue` | One import and one element after the login form (the Microsoft button). | 02-03 | Re-apply the import and the element; keep the rest of upstream's template. |
+| `resources/js/Pages/Auth/Login.vue` | One import (`MicrosoftSignInButton`); `canRegister?: boolean` (default `false`) in upstream's typed `withDefaults(defineProps<...>())` with `v-if="canRegister"` on the register link (fed by the `FortifyServiceProvider` row); `<MicrosoftSignInButton />` immediately after upstream's `<slot name="alternatives" />`, inside `AuthenticationCard`. | 02-03, post-02 (2026-11-04), 07-01 | Take upstream's file and re-apply the import, the `canRegister` prop with its default, the `v-if` on the register link and the button element right after the alternatives slot; keep the rest of upstream's template. |
 | `app/Providers/FortifyServiceProvider.php` | `loginView` passes `canRegister` (true only when APP_ENABLE_REGISTRATION=on) so the login page hides "Register here!" when registration is off/invite-only. | post-02 (2026-11-04) | Re-apply the `canRegister` line and the `RegistrationMode` import. |
 | `tests/Feature/AuthenticationTest.php` | Two tests for the `canRegister` login prop (register link hidden unless registration is on). | post-02 (2026-11-04) | Keep upstream's file and re-add the two test methods. |
-| `resources/js/Pages/Profile/Show.vue` | One import and one element after the two-factor section (the Microsoft account card). | 02-10 | Re-apply the import and the element after upstream's two-factor section. |
+| `resources/js/Pages/Profile/Show.vue` | One import (`MicrosoftConnectionForm`) and `<MicrosoftConnectionForm />` immediately before `<LogoutOtherBrowserSessionsForm ...>`, after upstream's `v-if="confirmsWithPassword"` (password and two-factor) / `v-else-if="user"` (managed externally) block. | 02-10, 07-01 | Take upstream's file, add the import after upstream's imports and the element right before the browser sessions form, with one blank line on each side. |
 | `.env.example` | Appended block with the seven `SOLIDTIME_MICROSOFT_*` names. | 02-09 | Keep the block at the end of the file. |
 | `resources/js/packages/ui/src/FullCalendar/CalendarDayColumn.vue` | A named `overlay` slot rendered as the first child of the column root and an optional `overlayLaneWidth` prop that, only when set, insets the events container on the right by the lane width plus 4px (layout decision D-23). Days without overlay content render exactly as upstream. | 03-05 | Re-apply the slot, the optional prop and the conditional right inset after taking upstream's file. |
 | `resources/js/packages/ui/src/FullCalendar/TimeEntryCalendar.vue` | An optional `dayOverlayLane(dayStr, isDayView)` prop forwarded to each day column as `overlayLaneWidth`, and a `day-overlay` slot forwarded as the column's `overlay` slot (with `minutesToPixels` and `settings`). `CalendarToolbar` became an open tag that forwards an optional `toolbar-extra` slot into the toolbar `extra` slot (`<template v-if="$slots['toolbar-extra']" #extra>`). 03-10 adds the matching `settings-extra` forwarding (`<template v-if="$slots['settings-extra']" #settings-extra>`) inside that same open tag. 03.1-01: the settings `useLocalStorage` uses `{ ...DEFAULT_CALENDAR_SETTINGS }` as defaults and the function form of `mergeDefaults` calling `sanitizeCalendarSettings`, and `useCalendarNavigation` receives a `showWeekends` getter (owner UAT 2026-11-17: `=== true`, so weekends are hidden unless chosen; `migrateWeekendsHiddenDefault(() => window.localStorage)` runs once before the `useLocalStorage` read, which now uses `CALENDAR_SETTINGS_STORAGE_KEY`). 03.1-04: `contextMenuOverlayElement` taken from `useContextMenu`; a `context-menu-overlay` scoped slot (`{ element }`) as the first `ContextMenuContent` branch, rendered only when the element is set and the slot is provided (the entry branch became `v-else-if`, items unchanged); `contextMenuOpen` and `interacting` (`isDragging \|\| isResizing \|\| isSelecting`) added to the `day-overlay` slot props; an optional `day-header-extra` scoped slot (`{ dayStr, isDayView }`) after `FullCalendarDayHeader` in each header cell. 03.1-06: `useWheelZoom({ rootRef, scrollerRef, calendarSettings, isInteracting, pixelsToMinutesFromMidnight })` called after the selection composable with the `isDragging \|\| isResizing \|\| isSelecting` guard; `CalendarZoomControls` rendered in the (formerly empty) header corner cell above the time axis; `relative` on the `.fc` root plus a `headerRef` on `.fc-header-scroll` (`useElementSize`, border-box) positioning the persistent zoom pill (`role="status"`, `data-testid="calendar-zoom-indicator"`) under the sticky header; the deep `watch(calendarSettings, ...)` narrowed to `watch(() => datesAffectingSettingsKey(calendarSettings.value), ...)` so a zoom step (slotMinutes only) never emits dates-change. | 03-05, 03-07, 03-10, 03.1-01, 03.1-04, 03.1-06 | Re-apply the prop, the `overlay-lane-width` binding, the forwarded slot template and the `toolbar-extra` and `settings-extra` forwardings after taking upstream's file; re-apply the settings import, the sanitised `mergeDefaults`, the weekends migration call and the `showWeekends` getter; re-add the `context-menu-overlay` branch before upstream's menu branches, the two extra `day-overlay` slot props and the `day-header-extra` slot in the header cell; re-add the `useWheelZoom` call, the corner `CalendarZoomControls`, the `headerRef`/`useElementSize` pill and the narrowed settings watch (if upstream adds its own zoom, prefer theirs and drop the 03.1-06 files). |
@@ -356,3 +356,44 @@ above, and `e2e/outlook-convert.spec.ts`, which no Phase 6 plan explains: one ad
 create-project test (`6d8a5ccf`, "test(e2e)", an orchestrator CI-stability follow-up to the Phase 5
 browser proofs, shipped in `sha-6d8a5cc`; fork test file, no application behaviour). None of the hot
 files listed above appears in the diff (nor `TimeEntryStoreRequest.php` or `app/Models/TimeEntry.php`).
+
+## Phase 7 (Hardening & release)
+
+### Upstream merge (07-01)
+
+On 2026-11-26 the fork merged upstream solidtime-io/solidtime `main` at `d0f5e745`
+(merge base `b46f0157`, 67 upstream commits) with a two-parent merge commit, never a rebase or a
+squash (procedure: `docs/m365/UPSTREAM-MERGE.md`). The merge preview and the merge itself
+conflicted in exactly four files, all ledgered in the first table:
+
+| File | Resolution |
+| --- | --- |
+| `composer.json` | Upstream's `"laravel/passport": "^13.10.0"` followed by the fork's `"laravel/socialite": "^5.31"`; `socialiteproviders/microsoft` merged as is. |
+| `composer.lock` | Upstream's lock (`git checkout --theirs composer.lock`), then `composer update laravel/socialite socialiteproviders/microsoft --no-scripts --no-install --ignore-platform-reqs`: 4 installs (laravel/socialite, league/oauth1-client, socialiteproviders/manager, socialiteproviders/microsoft), 0 updates; laravel/passport stays at upstream's v13.10.0. |
+| `resources/js/Pages/Auth/Login.vue` | Upstream's file (typed props, `error` and `alternatives` slots) plus the import, `canRegister?: boolean` with default `false`, `v-if="canRegister"` on the register link and `<MicrosoftSignInButton />` right after the alternatives slot. |
+| `resources/js/Pages/Profile/Show.vue` | Upstream's file (`confirmsWithPassword` block, managed-externally card) plus the import and `<MicrosoftConnectionForm />` right before the browser sessions form. |
+
+Five files changed on both sides and merged cleanly with their fork seams intact: `.env.example`,
+`app/Providers/FortifyServiceProvider.php`, `e2e/calendar-settings.spec.ts`, `e2e/profile.spec.ts`
+and `tests/Feature/AuthenticationTest.php`. No conflict outside the ledger. Upstream added no
+workflow file.
+
+Check before and after every merge: `sh tests/Tools/m365-merge/ledger-check.sh` (every fork-modified
+path is a row, every fork-added path is a row or sits under a ledgered directory, and the merge
+preview conflicts only inside the ledger).
+
+### Fork-owned paths
+
+These paths were added before Phase 7 but not ledgered until now (except `tests/Tools/m365-merge/`,
+new in 07-01). They do not exist upstream, so they never conflict.
+
+| Path | Content |
+| --- | --- |
+| `docs/m365/` | Entra administrator guide, Entra app runbook, Graph decisions, this ledger and the upstream merge procedure (`UPSTREAM-MERGE.md`). |
+| `docs/deploy/MICROSOFT-SIGNIN.md` | Operator notes for Microsoft sign-in on the Dokploy deployment. |
+| `docs/deploy/backup-2026-10-19/` | Snapshot of the Dokploy compose taken on 2026-10-19 before the fork deploy, with its README. |
+| `docs/deploy/github-support-ticket.md` | Draft of the GitHub support ticket about the fork's Actions. |
+| `tests/Fixtures/M365/` | Sanitised Microsoft Graph captures (calendar view pages, lookups, scenarios, series, token response shape) used by the PHP tests. |
+| `tests/Tools/m365-spike/` | Node spike tooling: Graph capture, sanitiser, fixture and docs validators, with their tests. |
+| `tests/Tools/m365-merge/` | `ledger-check.sh`, the ledger completeness check and merge preview (07-01). |
+| `tests/Unit/M365/` | Unit test over the Graph fixtures (`CalendarViewFixturesTest`). |
