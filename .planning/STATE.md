@@ -1,16 +1,16 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 08
-current_phase_name: Project Hour Budgets & Profitability
+current_phase: 09
+current_phase_name: People Assignment & Occupancy
 status: ready_to_discuss
-stopped_at: Phase 8 planned (20 plans, 8 waves)
+stopped_at: Phase 8 executed (20 plans), verified (human_needed: owner UAT) and released (sha-d81587b)
 last_updated: "2026-11-27T18:00:51.010Z"
 last_activity: 2026-11-27
-last_activity_desc: Phase 7 complete; owner UAT checklist pending
+last_activity_desc: Phase 8 complete; owner UAT checklist pending
 state_head: 07b7378162a6dce026ce5b416e301a850a5a4422
 progress:
   total_phases: 11
-  completed_phases: 9
+  completed_phases: 10
   total_plans: 118
   completed_plans: 98
   percent: 82
@@ -25,14 +25,14 @@ Total Phases: 5
 See: .planning/PROJECT.md (updated 2026-10-19)
 
 **Core value:** A user opens the solidtime calendar and their Outlook meetings are already there, so logging meeting time to the right project takes one click instead of re-typing it from Outlook.
-**Current focus:** Phase 8 — budgets (Phase 7 owner UAT pending)
+**Current focus:** Phase 9 — people assignment (Phase 7 and 8 owner UAT pending)
 
 ## Current Position
 
-Phase: 08 — budgets (not started)
+Phase: 09 — People Assignment & Occupancy (not started)
 Plan: Not planned
 Status: Ready to discuss
-Last activity: 2026-11-27 — Phase 7 complete (7/7 plans, verification human_needed: 7 owner UAT items in 07-VERIFICATION.md); release sha-0ebd0f6 live; Entra spike URI and secret removed
+Last activity: 2026-11-27 — Phase 8 complete (20/20 plans, verification human_needed: owner UAT in 08-VERIFICATION.md); release sha-d81587b live
 
 Progress: [████████░░] 82%
 

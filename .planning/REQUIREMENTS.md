@@ -102,21 +102,21 @@ Added by the owner 2026-11-10; refined in Phase 3.2 discuss-phase.
 
 Added by the owner 2026-11-05; refined in Phase 8 discuss-phase 2026-11-27 (see 08-CONTEXT.md).
 
-- [ ] **BUDG-01**: An account manager (or Owner/Admin) can set a project's contract terms: service, amount sold (EUR) and hours per period, one-off or renewing monthly, quarterly or annually, with start date and optional end date
-- [ ] **BUDG-02**: A renewing project starts a new period automatically with the same terms until an end date is set or the project is archived; each period starts clean (no carry-over) and future-period terms can be changed
-- [ ] **BUDG-03**: Time entries on the project count against the period they fall into with no extra step; on a billable project every entry is billable
-- [ ] **BUDG-04**: A project manager can distribute a period's hours across its months (uneven allowed) and see planned vs consumed per month and the projection to the period close
-- [ ] **BUDG-05**: An Admin can set each person's hourly cost with an effective date; margins of past months keep the cost that applied then
-- [ ] **BUDG-06**: Account managers see, per client, money sold, cost, margin and hours of their clients' projects; Owner/Admin see all; employees see nothing new
-- [ ] **BUDG-07**: Project managers and account managers are assignments on projects and clients, without new core roles
+- [x] **BUDG-01**: An account manager (or Owner/Admin) can set a project's contract terms: service, amount sold (EUR) and hours per period, one-off or renewing monthly, quarterly or annually, with start date and optional end date
+- [x] **BUDG-02**: A renewing project starts a new period automatically with the same terms until an end date is set or the project is archived; each period starts clean (no carry-over) and future-period terms can be changed
+- [x] **BUDG-03**: Time entries on the project count against the period they fall into with no extra step; on a billable project every entry is billable
+- [x] **BUDG-04**: A project manager can distribute a period's hours across its months (uneven allowed) and see planned vs consumed per month and the projection to the period close
+- [x] **BUDG-05**: An Admin can set each person's hourly cost with an effective date; margins of past months keep the cost that applied then
+- [x] **BUDG-06**: Account managers see, per client, money sold, cost, margin and hours of their clients' projects; Owner/Admin see all; employees see nothing new
+- [x] **BUDG-07**: Project managers and account managers are assignments on projects and clients, without new core roles
 
 ### Chargeability (CHRG)
 
 Added 2026-11-27 (owner merged it into Phase 8).
 
-- [ ] **CHRG-01**: An Admin can set each person's working week (hours) and chargeability target with an effective date
-- [ ] **CHRG-02**: Chargeability per person and period = billable hours / available hours, where time on the "Vacaciones" and "Festivo" projects reduces available hours
-- [ ] **CHRG-03**: A "Rentabilidad" page shows views by project, by client and by person (chargeability vs target), plus a summary on each project page
+- [x] **CHRG-01**: An Admin can set each person's working week (hours) and chargeability target with an effective date
+- [x] **CHRG-02**: Chargeability per person and period = billable hours / available hours, where time on the "Vacaciones" and "Festivo" projects reduces available hours
+- [x] **CHRG-03**: A "Rentabilidad" page shows views by project, by client and by person (chargeability vs target), plus a summary on each project page
 
 ## v2 Requirements
 
@@ -202,16 +202,16 @@ Added 2026-11-27 (owner merged it into Phase 8).
 | BRAND-02 | Phase 3.2 | Complete |
 | BRAND-03 | Phase 3.2 | Complete |
 | BRAND-04 | Phase 3.2 | Complete |
-| BUDG-01 | Phase 8 | Pending |
-| BUDG-02 | Phase 8 | Pending |
-| BUDG-03 | Phase 8 | Pending |
-| BUDG-04 | Phase 8 | Pending |
-| BUDG-05 | Phase 8 | Pending |
-| BUDG-06 | Phase 8 | Pending |
-| BUDG-07 | Phase 8 | Pending |
-| CHRG-01 | Phase 8 | Pending |
-| CHRG-02 | Phase 8 | Pending |
-| CHRG-03 | Phase 8 | Pending |
+| BUDG-01 | Phase 8 | Complete |
+| BUDG-02 | Phase 8 | Complete |
+| BUDG-03 | Phase 8 | Complete |
+| BUDG-04 | Phase 8 | Complete |
+| BUDG-05 | Phase 8 | Complete |
+| BUDG-06 | Phase 8 | Complete |
+| BUDG-07 | Phase 8 | Complete |
+| CHRG-01 | Phase 8 | Complete |
+| CHRG-02 | Phase 8 | Complete |
+| CHRG-03 | Phase 8 | Complete |
 
 **Coverage:**
 - v1 requirements: 45 total
