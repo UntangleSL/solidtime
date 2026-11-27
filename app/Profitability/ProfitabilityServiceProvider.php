@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Profitability;
 
+use App\Models\Project;
 use App\Models\TimeEntry;
 use App\Profitability\Access\ProfitabilityAccess;
 use App\Profitability\Console\RenewPeriodsCommand;
 use App\Profitability\Console\ReportNonBillableCommand;
 use App\Profitability\Http\Middleware\ShareProfitabilityInertiaData;
+use App\Profitability\Periods\RecordRenewalPause;
 use App\Profitability\Reporting\ConsumptionQuery;
 use App\Profitability\TimeEntries\EnforceBillableOnBillableProject;
 use App\Service\PermissionStore;
@@ -49,6 +51,12 @@ class ProfitabilityServiceProvider extends ServiceProvider
         // of them end in TimeEntry::save(). Resolved per event so no state outlives an Octane request.
         TimeEntry::saving(static function (TimeEntry $entry): void {
             app(EnforceBillableOnBillableProject::class)->handle($entry);
+        });
+
+        // D-18: archiving a project pauses its contract's renewal, un-archiving resumes it from the current
+        // month. Core archives through a model save, so one listener covers it without touching core.
+        Project::updated(static function (Project $project): void {
+            app(RecordRenewalPause::class)->handle($project);
         });
 
         // Every route file of the module, in a stable order: later plans add their own file here

@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Profitability;
 
+use App\Enums\Role;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\User;
+use App\Profitability\Access\AccessScope;
+use App\Profitability\Access\ProfitabilityAccess;
 use App\Profitability\Console\RenewPeriodsCommand;
 use App\Profitability\Enums\ContractSchedule;
+use App\Profitability\Http\Controllers\ProjectSummaryController;
 use App\Profitability\Models\ContractPeriod;
 use App\Profitability\Models\ContractPeriodMonth;
 use App\Profitability\Models\ProjectContract;
@@ -15,22 +20,30 @@ use App\Profitability\Periods\PeriodBounds;
 use App\Profitability\Periods\PeriodCalendar;
 use App\Profitability\Periods\PeriodMaterializer;
 use App\Profitability\Periods\PlanDistributor;
+use App\Profitability\Periods\RecordRenewalPause;
 use App\Profitability\ProfitabilityServiceProvider;
 use App\Profitability\Reporting\ConsumptionQuery;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Carbon;
+use Illuminate\Testing\TestResponse;
+use Laravel\Passport\Passport;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\TestCaseWithDatabase;
 
 /**
  * The renewal lifecycle (BUDG-02, D-04, D-18): a daily safety-net command scheduled from the fork
- * provider creates the periods that became due, idempotently, and skips archived projects.
+ * provider creates the periods that became due, idempotently, and skips archived projects; archiving a
+ * project pauses renewal and un-archiving resumes it from the current month without back-filling.
  */
 #[CoversClass(RenewPeriodsCommand::class)]
 #[CoversClass(ProfitabilityServiceProvider::class)]
+#[CoversClass(RecordRenewalPause::class)]
+#[UsesClass(ProjectSummaryController::class)]
+#[UsesClass(ProfitabilityAccess::class)]
+#[UsesClass(AccessScope::class)]
 #[UsesClass(PeriodMaterializer::class)]
 #[UsesClass(PeriodCalendar::class)]
 #[UsesClass(PeriodBounds::class)]
@@ -64,9 +77,9 @@ class RenewalLifecycleTest extends TestCaseWithDatabase
     }
 
     /**
-     * A monthly contract from 2026-11-01, without any period yet.
+     * A monthly contract from 2026-11-01 (or $startsOn), without any period yet.
      */
-    private function monthlyContract(Project $project): ProjectContract
+    private function monthlyContract(Project $project, string $startsOn = '2026-11-01'): ProjectContract
     {
         /** @var ProjectContract $contract */
         $contract = ProjectContract::query()->create([
@@ -74,7 +87,7 @@ class RenewalLifecycleTest extends TestCaseWithDatabase
             'project_id' => $project->getKey(),
             'service' => 'SEO retainer',
             'schedule' => 'monthly',
-            'starts_on' => '2026-11-01',
+            'starts_on' => $startsOn,
             'ends_on' => null,
             'amount_cents' => 300000,
             'budget_seconds' => self::FORTY_HOURS,
@@ -117,6 +130,50 @@ class RenewalLifecycleTest extends TestCaseWithDatabase
         );
 
         return array_values($events);
+    }
+
+    /**
+     * Archives or un-archives the project the way the app does: core's API project update.
+     */
+    private function setArchived(User $user, Project $project, bool $archived): TestResponse
+    {
+        Passport::actingAs($user);
+
+        return $this->putJson(route('api.v1.projects.update', [$project->organization_id, $project->getKey()]), [
+            'name' => $project->name,
+            'color' => $project->color,
+            'client_id' => null,
+            'is_billable' => true,
+            'is_archived' => $archived,
+        ]);
+    }
+
+    private function readSummary(User $user, Project $project): TestResponse
+    {
+        $this->actingAs($user, 'web');
+
+        return $this->getJson(route('profitability.projects.summary', [
+            'organization' => $project->organization_id,
+            'project' => $project->getKey(),
+        ], false));
+    }
+
+    private function fresh(ProjectContract $contract): ProjectContract
+    {
+        /** @var ProjectContract $fresh */
+        $fresh = ProjectContract::query()->whereKey($contract->getKey())->firstOrFail();
+
+        return $fresh;
+    }
+
+    private function plannedIn(ProjectContract $contract, string $month): ?int
+    {
+        $value = ContractPeriodMonth::query()
+            ->whereIn('period_id', ContractPeriod::query()->where('contract_id', '=', $contract->getKey())->select('id'))
+            ->where('month', '=', $month)
+            ->value('planned_seconds');
+
+        return is_numeric($value) ? (int) $value : null;
     }
 
     // --- Daily safety net (D-04) ---
@@ -223,5 +280,92 @@ class RenewalLifecycleTest extends TestCaseWithDatabase
         // Assert
         $this->assertSame(['2026-11-01', '2026-12-01'], $this->startsOf($active));
         $this->assertSame([], $this->startsOf($archived));
+    }
+
+    // --- Archive pauses, un-archive resumes (D-18) ---
+
+    public function test_archiving_pauses_and_removes_not_started_periods(): void
+    {
+        // Arrange: October and November have started, December is upcoming
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $contract = $this->monthlyContract($project, '2026-10-01');
+        $this->materialize($contract, '2026-11-18');
+        $this->assertSame(['2026-10-01', '2026-11-01', '2026-12-01'], $this->startsOf($contract));
+
+        // Act
+        $response = $this->setArchived($data->user, $project, true);
+        $summary = $this->readSummary($data->user, $project);
+
+        // Assert: December is gone, the started periods and their plans stay, and a read creates nothing
+        $response->assertOk();
+        $this->assertSame(['2026-10-01', '2026-11-01'], $this->startsOf($contract));
+        $this->assertSame('2026-11-18', $this->fresh($contract)->paused_on?->format('Y-m-d'));
+        $this->assertNull($this->fresh($contract)->resume_on);
+        $this->assertSame(self::FORTY_HOURS, $this->plannedIn($contract, '2026-11-01'));
+        $this->assertNull($this->plannedIn($contract, '2026-12-01'));
+        $summary->assertOk();
+        $summary->assertJsonPath('data.contract.archived', true);
+        $summary->assertJsonPath('data.periods.*.starts_on', ['2026-11-01', '2026-10-01']);
+        $this->assertSame(['2026-10-01', '2026-11-01'], $this->startsOf($contract));
+
+        // Act: archiving an archived project again (a new timestamp) changes nothing
+        Carbon::setTestNow('2026-12-10 10:00:00');
+        $again = $this->setArchived($data->user, $project, true);
+
+        // Assert
+        $again->assertOk();
+        $this->assertSame('2026-11-18', $this->fresh($contract)->paused_on?->format('Y-m-d'));
+        $this->assertSame(['2026-10-01', '2026-11-01'], $this->startsOf($contract));
+    }
+
+    public function test_unarchiving_resumes_from_the_current_month_without_back_filling(): void
+    {
+        // Arrange: archived on 2026-11-18 (December removed)
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $contract = $this->monthlyContract($project, '2026-10-01');
+        $this->materialize($contract, '2026-11-18');
+        $this->setArchived($data->user, $project, true)->assertOk();
+        // 2027-02-10 11:00 in Europe/Madrid
+        Carbon::setTestNow('2027-02-10 10:00:00');
+
+        // Act
+        $response = $this->setArchived($data->user, $project, false);
+        $resumed = $this->fresh($contract);
+        $summary = $this->readSummary($data->user, $project);
+
+        // Assert: resume from February; December and January are never back-filled
+        $response->assertOk();
+        $this->assertSame('2027-02-01', $resumed->resume_on?->format('Y-m-d'));
+        $this->assertNull($resumed->paused_on);
+        $summary->assertOk();
+        $summary->assertJsonPath('data.contract.archived', false);
+        $summary->assertJsonPath('data.period.starts_on', '2027-02-01');
+        $summary->assertJsonPath('data.period.state', 'current');
+        $this->assertSame(['2026-10-01', '2026-11-01', '2027-02-01', '2027-03-01'], $this->startsOf($contract));
+    }
+
+    public function test_project_without_contract_is_ignored(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $other = $this->billableProject($data->organization);
+        $otherContract = $this->monthlyContract($other, '2026-10-01');
+        $this->materialize($otherContract, '2026-11-18');
+
+        // Act
+        $archive = $this->setArchived($data->user, $project, true);
+        Carbon::setTestNow('2027-02-10 10:00:00');
+        $unarchive = $this->setArchived($data->user, $project, false);
+
+        // Assert: no contract appears and the other project's contract is untouched
+        $archive->assertOk();
+        $unarchive->assertOk();
+        $this->assertSame(0, ProjectContract::query()->where('project_id', '=', $project->getKey())->count());
+        $this->assertNull($this->fresh($otherContract)->paused_on);
+        $this->assertNull($this->fresh($otherContract)->resume_on);
+        $this->assertSame(['2026-10-01', '2026-11-01', '2026-12-01'], $this->startsOf($otherContract));
     }
 }
