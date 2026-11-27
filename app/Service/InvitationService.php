@@ -8,6 +8,7 @@ use App\Enums\Role;
 use App\Events\OrganizationInvitationAdding;
 use App\Exceptions\Api\InvitationForTheEmailAlreadyExistsApiException;
 use App\Exceptions\Api\UserIsAlreadyMemberOfOrganizationApiException;
+use App\Exceptions\MemberCanNotBeAddedException;
 use App\Mail\OrganizationInvitationMail;
 use App\Models\Organization;
 use App\Models\OrganizationInvitation;
@@ -15,13 +16,14 @@ use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 
 class InvitationService
 {
     public function hasAcceptedInvitationForEmail(string $email): bool
     {
         return OrganizationInvitation::query()
-            ->whereRaw('lower(email) = ?', [strtolower($email)])
+            ->whereRaw('lower(email) = ?', [Str::lower($email)])
             ->whereNotNull('accepted_at')
             ->exists();
     }
@@ -29,7 +31,7 @@ class InvitationService
     public function hasPendingInvitationForEmail(string $email): bool
     {
         return OrganizationInvitation::query()
-            ->whereRaw('lower(email) = ?', [strtolower($email)])
+            ->whereRaw('lower(email) = ?', [Str::lower($email)])
             ->whereNull('accepted_at')
             ->exists();
     }
@@ -41,14 +43,14 @@ class InvitationService
     {
         // Normalize the email so it matches how user emails are stored (see UserService::createUser),
         // otherwise a mixed-case invite silently fails to link on registration.
-        $email = strtolower($email);
+        $email = Str::lower($email);
 
         if (app(MemberService::class)->isEmailAlreadyMember($organization, $email)) {
             throw new UserIsAlreadyMemberOfOrganizationApiException;
         }
 
         if (OrganizationInvitation::query()
-            ->where('email', $email)
+            ->whereRaw('lower(email) = ?', [$email])
             ->whereBelongsTo($organization, 'organization')
             ->exists()) {
             throw new InvitationForTheEmailAlreadyExistsApiException;
@@ -75,8 +77,9 @@ class InvitationService
         $organizations = new Collection;
 
         $invitations = OrganizationInvitation::query()
-            ->whereRaw('lower(email) = ?', [strtolower($user->email)])
+            ->whereRaw('lower(email) = ?', [Str::lower($user->email)])
             ->whereNotNull('accepted_at')
+            ->with('organization')
             ->get();
 
         foreach ($invitations as $invitation) {
@@ -90,7 +93,17 @@ class InvitationService
 
                 continue;
             }
-            app(MemberService::class)->addMember($user, $organization, $role);
+            try {
+                app(MemberService::class)->addMember($user, $organization, $role);
+            } catch (MemberCanNotBeAddedException $exception) {
+                Log::warning('Accepted invitation could not be processed', [
+                    'invitation' => $invitation->getKey(),
+                    'organization' => $organization->getKey(),
+                    'exception' => $exception::class,
+                ]);
+
+                continue;
+            }
 
             $invitation->delete();
 

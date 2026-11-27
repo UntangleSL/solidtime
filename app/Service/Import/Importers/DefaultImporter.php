@@ -18,6 +18,8 @@ use App\Service\ColorService;
 use App\Service\Import\ImportDatabaseHelper;
 use App\Service\TimezoneService;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Override;
 
 abstract class DefaultImporter implements ImporterContract
@@ -88,6 +90,12 @@ abstract class DefaultImporter implements ImporterContract
             /** @var Builder<User> $builder */
             return $builder->belongsToOrganization($this->organization);
         }, null, validate: [
+            'email' => [
+                'required',
+                'string',
+                'max:255',
+                'email:rfc,strict',
+            ],
             'name' => [
                 'required',
                 'max:255',
@@ -199,6 +207,22 @@ abstract class DefaultImporter implements ImporterContract
         $this->timeEntriesCreated = 0;
         $this->colorService = app(ColorService::class);
         $this->timezoneService = app(TimezoneService::class);
+    }
+
+    /**
+     * Uses the same rule as registration and invitations, so every email the app accepts can be re-imported.
+     * The value is lowercased (not trimmed), so it matches existing users exactly as stored.
+     *
+     * @throws ImportException
+     */
+    protected function validateEmail(mixed $email, string $field): string
+    {
+        $email = is_string($email) ? Str::lower($email) : '';
+        if (Validator::make(['email' => $email], ['email' => ['required', 'email:rfc,strict']])->fails()) {
+            throw new ImportException('Value of '.$field.' ("'.$email.'") is not a valid email address');
+        }
+
+        return $email;
     }
 
     /**

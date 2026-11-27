@@ -6,7 +6,19 @@ Contributions are greatly apprecited, please make sure to read the rules and vis
 
 ### Issues for Bugs, Discussions for Feature requests
 
-In order to keep the issues of the repository clean we decided to only use them for bugs. Feature Requests and enhancement are handled in discussions. This also helps us to see which feature requests are popular as they can be upvoted. 
+In order to keep the issues of the repository clean we decided to only use them for bugs. Feature Requests and enhancements are handled in discussions. This also helps us to see which feature requests are popular as they can be upvoted. 
+
+### Do not use AI-generated text in issues, discussions and PR descriptions
+
+We are human, so please write in natural language in your issues, discussions, and PR descriptions. 
+Don't be a meatproxy. We will ban people who repeatedly violate this rule from further communication on our repositories. 
+
+### Before you contribute, ask yourself what value you add
+
+We much prefer reading your thoughts on features or issues you encountered than reading through hundreds of lines of code changes produced by your agent. 
+Consider that the maintainers of this project have the same access to LLMs and more knowledge about the project itself. 
+Prompting a feature into existence without further consideration or discussion is mostly a burden for maintainers. 
+If we want to, we can burn the tokens ourselves. 
 
 ### Only work on approved issues
 

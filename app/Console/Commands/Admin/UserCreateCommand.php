@@ -10,6 +10,8 @@ use App\Models\User;
 use App\Service\UserService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use LogicException;
 
 class UserCreateCommand extends Command
@@ -38,9 +40,17 @@ class UserCreateCommand extends Command
     public function handle(): int
     {
         $name = $this->argument('name');
-        $email = $this->argument('email');
+        // Lowercased like UserService::createUser() stores it, so the existence check below finds any casing.
+        $email = Str::lower((string) $this->argument('email'));
         $askForPassword = (bool) $this->option('ask-for-password');
         $verifyEmail = (bool) $this->option('verify-email');
+
+        // Same rule as registration
+        if (Validator::make(['email' => $email], ['email' => ['required', 'email:rfc,strict']])->fails()) {
+            $this->error('"'.$email.'" is not a valid email address.');
+
+            return self::FAILURE;
+        }
 
         if (User::query()->where('email', $email)->where('is_placeholder', '=', false)->exists()) {
             $this->error('User with email "'.$email.'" already exists.');
@@ -59,13 +69,13 @@ class UserCreateCommand extends Command
         $user = null;
         DB::transaction(function () use (&$user, $name, $email, $password, $verifyEmail): void {
             $user = app(UserService::class)->createUser(
-                $name,
-                $email,
-                $password,
-                'UTC',
-                Weekday::Monday,
-                null,
-                verifyEmail: $verifyEmail
+                name: $name,
+                email: $email,
+                password: $password,
+                timezone: 'UTC',
+                weekStart: Weekday::Monday,
+                currency: null,
+                verifyEmail: $verifyEmail,
             );
         });
         /** @var Organization|null $organization */

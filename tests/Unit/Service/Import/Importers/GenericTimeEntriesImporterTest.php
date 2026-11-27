@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Service\Import\Importers;
 
+use App\Models\Member;
 use App\Models\Organization;
 use App\Models\TimeEntry;
+use App\Models\User;
 use App\Service\Import\Importers\DefaultImporter;
 use App\Service\Import\Importers\GenericTimeEntriesImporter;
 use App\Service\Import\Importers\ImportException;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 #[CoversClass(GenericTimeEntriesImporter::class)]
 #[CoversClass(ImportException::class)]
@@ -91,6 +94,80 @@ class GenericTimeEntriesImporterTest extends ImporterTestAbstract
         $this->fail();
     }
 
+    public static function invalidUserEmailProvider(): array
+    {
+        return [
+            'empty' => ['', ''],
+            'whitespace' => ['   ', '   '],
+            'surrounding whitespace' => [' ivanna@example.com ', ' ivanna@example.com '],
+            'invalid' => ['not-an-email', 'not-an-email'],
+        ];
+    }
+
+    public function test_import_accepts_unicode_user_email(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $timezone = 'Europe/Vienna';
+        $importer = new GenericTimeEntriesImporter;
+        $importer->init($organization);
+        $data = "description,billable,client,project,tags,start,end,task,user_name,user_email\n".
+            '"Working hard","true","","","","2024-03-04T09:23:00Z","2024-03-04T10:23:00Z","","Jörg","jörg@example.com"';
+
+        // Act
+        $importer->importData($data, $timezone);
+
+        // Assert
+        $this->assertSame(1, User::query()->where('email', '=', 'jörg@example.com')->count());
+        $this->assertSame(1, TimeEntry::query()->count());
+    }
+
+    #[DataProvider('invalidUserEmailProvider')]
+    public function test_import_fails_if_user_email_is_invalid(string $userEmail, string $expectedValue): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $timezone = 'Europe/Vienna';
+        $importer = new GenericTimeEntriesImporter;
+        $importer->init($organization);
+        $data = "description,billable,client,project,tags,start,end,task,user_name,user_email\n".
+            '"Working hard","true","","","","2024-03-04T09:23:00Z","2024-03-04T10:23:00Z","","Ivanna","'.$userEmail.'"';
+
+        // Act
+        try {
+            $importer->importData($data, $timezone);
+        } catch (ImportException $e) {
+            // Assert
+            $this->assertSame('Value of user_email ("'.$expectedValue.'") is not a valid email address', $e->getMessage());
+            $this->assertSame(0, User::query()->where('name', '=', 'Ivanna')->count());
+
+            return;
+        }
+        $this->fail();
+    }
+
+    public function test_import_fails_if_user_email_is_missing_in_row(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $timezone = 'Europe/Vienna';
+        $importer = new GenericTimeEntriesImporter;
+        $importer->init($organization);
+        $data = "description,billable,client,project,tags,start,end,task,user_name,user_email\n".
+            '"Working hard","true","","","","2024-03-04T09:23:00Z","2024-03-04T10:23:00Z","","Ivanna"';
+
+        // Act
+        try {
+            $importer->importData($data, $timezone);
+        } catch (ImportException $e) {
+            // Assert
+            $this->assertSame('Value of user_email ("") is not a valid email address', $e->getMessage());
+
+            return;
+        }
+        $this->fail();
+    }
+
     public function test_import_fails_if_end_is_before_start(): void
     {
         // Arrange
@@ -114,6 +191,25 @@ class GenericTimeEntriesImporterTest extends ImporterTestAbstract
         $this->fail();
     }
 
+    public function test_import_does_not_set_client_on_time_entry_without_project(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $timezone = 'Europe/Vienna';
+        $importer = new GenericTimeEntriesImporter;
+        $importer->init($organization);
+        $data = "description,billable,client,project,tags,start,end,task,user_name,user_email\n".
+            '"Working hard","false","Big Company","","","2024-03-04T09:23:00Z","2024-03-04T10:23:00Z","","Peter Tester","peter.test@email.test"';
+
+        // Act
+        $importer->importData($data, $timezone);
+
+        // Assert
+        $timeEntry = TimeEntry::query()->sole();
+        $this->assertNull($timeEntry->project_id);
+        $this->assertNull($timeEntry->client_id);
+    }
+
     public function test_import_drops_billable_flags_and_rates_if_organization_can_not_use_billable_rates(): void
     {
         // Arrange
@@ -134,5 +230,26 @@ class GenericTimeEntriesImporterTest extends ImporterTestAbstract
             $this->assertFalse($timeEntry->billable);
             $this->assertNull($timeEntry->billable_rate);
         }
+    }
+
+    public function test_import_lowercases_user_email_and_matches_existing_user(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create(['email' => 'ivanna@example.com']);
+        Member::factory()->forOrganization($organization)->forUser($user)->create();
+        $timezone = 'Europe/Vienna';
+        $importer = new GenericTimeEntriesImporter;
+        $importer->init($organization);
+        $data = "description,billable,client,project,tags,start,end,task,user_name,user_email\n".
+            '"Working hard","true","","","","2024-03-04T09:23:00Z","2024-03-04T10:23:00Z","","Ivanna","Ivanna@Example.com"';
+
+        // Act
+        $importer->importData($data, $timezone);
+
+        // Assert
+        $this->assertSame(1, User::query()->whereRaw('lower(email) = ?', ['ivanna@example.com'])->count());
+        $this->assertSame(0, User::query()->where('email', '=', 'Ivanna@Example.com')->count());
+        $this->assertSame(1, TimeEntry::query()->where('user_id', '=', $user->getKey())->count());
     }
 }

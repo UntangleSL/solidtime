@@ -16,6 +16,7 @@ use App\Models\Tag;
 use App\Models\Task;
 use App\Models\TimeEntry;
 use App\Models\User;
+use App\Service\AuthenticationContract;
 use App\Service\BillingContract;
 use App\Service\GoalsContract;
 use App\Service\IpLookup\IpLookupServiceContract;
@@ -32,6 +33,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
+use Illuminate\Mail\Markdown;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
@@ -78,6 +80,9 @@ class AppServiceProvider extends ServiceProvider
         ]);
         Model::unguard();
 
+        // Mail: render user-provided values (e.g. names) as plain text instead of Markdown
+        Markdown::withSecuredEncoding();
+
         // Filament
         Section::configureUsing(function (Section $section): void {
             $section->columns(1);
@@ -105,6 +110,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(IpLookupServiceContract::class, NoIpLookupService::class);
         $this->app->bind(BillingContract::class);
         $this->app->bind(GoalsContract::class);
+        $this->app->bind(AuthenticationContract::class);
 
         // Storage
         // The local driver ignores the ResponseContentDisposition option of temporaryUrl,

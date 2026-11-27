@@ -105,6 +105,8 @@ jobs:
             echo "invoicing_ref=$(jq -r '.Invoicing.ref' extensions/manifest.json)"
             echo "auditing_repository=$(jq -r '.Auditing.repository' extensions/manifest.json)"
             echo "auditing_ref=$(jq -r '.Auditing.ref' extensions/manifest.json)"
+            echo "sso_repository=$(jq -r '.SSO.repository' extensions/manifest.json)"
+            echo "sso_ref=$(jq -r '.SSO.ref' extensions/manifest.json)"
           } >> "$GITHUB_OUTPUT"
 
       - name: "Checkout invoicing extension"
@@ -135,11 +137,25 @@ jobs:
       - name: "Install npm dependencies in auditing extension"
         run: cd extensions/Auditing && npm ci
 
+      - name: "Checkout SSO extension"
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.extension-manifest.outputs.sso_repository }}
+          ref: ${{ steps.extension-manifest.outputs.sso_ref }}
+          path: extensions/SSO
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY_SSO_EXTENSION }}
+
+      - name: "Install composer dependencies in SSO extension"
+        run: cd extensions/SSO && composer install --no-dev --no-ansi --no-interaction --prefer-dist --ignore-platform-reqs --classmap-authoritative
+
       - name: "Activate invoicing extension"
         run: php artisan module:enable Invoicing
 
       - name: "Activate auditing extension"
         run: php artisan module:enable Auditing
+
+      - name: "Activate SSO extension"
+        run: php artisan module:enable SSO
 
       - name: "Install npm dependencies"
         run: npm ci
@@ -160,7 +176,7 @@ jobs:
             ${{ env.DOCKER_REPO }}
 
       - name: "Login to solidtime OnPremise Registry"
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.8.0
         with:
           registry: registry.on-premise.solidtime.io
           username: ${{ secrets.ONPREMISE_USERNAME }}
@@ -183,6 +199,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,"name=${{ env.DOCKER_REPO }}",push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -214,7 +232,7 @@ jobs:
           merge-multiple: true
 
       - name: "Login to solidtime OnPremise Registry"
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.8.0
         with:
           registry: registry.on-premise.solidtime.io
           username: ${{ secrets.ONPREMISE_USERNAME }}
@@ -244,3 +262,17 @@ jobs:
       - name: "Inspect image"
         run: |
           docker buildx imagetools inspect ${{ env.DOCKER_REPO }}:${{ steps.meta.outputs.version }}
+
+      - name: "Install cosign"
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # Keyless signing via GitHub OIDC; the signature is recorded in the public Sigstore transparency log.
+      - name: "Sign image"
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          digest=$(docker buildx imagetools inspect "${{ env.DOCKER_REPO }}:${VERSION}" --format '{{json .Manifest}}' | jq -r '.digest')
+          echo "Signing ${{ env.DOCKER_REPO }}@${digest}"
+          cosign sign --yes "${{ env.DOCKER_REPO }}@${digest}"

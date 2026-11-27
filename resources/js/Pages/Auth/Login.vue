@@ -8,11 +8,18 @@ import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
 import TextInput from '@/packages/ui/src/Input/TextInput.vue';
 import MicrosoftSignInButton from '@/m365/components/MicrosoftSignInButton.vue';
 
-defineProps({
-    canResetPassword: Boolean,
-    canRegister: Boolean,
-    status: String,
-});
+withDefaults(
+    defineProps<{
+        canResetPassword?: boolean;
+        canRegister?: boolean;
+        status?: string;
+    }>(),
+    {
+        canResetPassword: false,
+        canRegister: false,
+        status: '',
+    }
+);
 
 const form = useForm({
     email: '',
@@ -30,8 +37,8 @@ const submit = () => {
 };
 
 const page = usePage<{
-    flash: {
-        message: string;
+    flash?: {
+        message?: string;
     };
 }>();
 </script>
@@ -63,6 +70,9 @@ const page = usePage<{
             class="bg-red-400 text-black text-center w-full px-3 py-1 mb-4 rounded-lg">
             {{ page.props.flash?.message }}
         </div>
+
+        <!-- Extension seam: alternative-auth errors (e.g. SSO callback failures) -->
+        <slot name="error" />
 
         <form @submit.prevent="submit">
             <Field>
@@ -106,6 +116,9 @@ const page = usePage<{
                 </PrimaryButton>
             </div>
         </form>
+
+        <!-- Extension seam: alternative auth methods (e.g. SSO providers) -->
+        <slot name="alternatives" />
         <MicrosoftSignInButton />
     </AuthenticationCard>
 </template>

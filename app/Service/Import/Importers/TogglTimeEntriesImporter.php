@@ -58,7 +58,7 @@ class TogglTimeEntriesImporter extends DefaultImporter
             $records = $reader->getRecords();
             foreach ($records as $record) {
                 $userId = $this->userImportHelper->getKey([
-                    'email' => $record['Email'],
+                    'email' => $this->validateEmail($record['Email'], 'Email'),
                 ], [
                     'name' => $record['User'],
                     'timezone' => 'UTC',
@@ -112,7 +112,7 @@ class TogglTimeEntriesImporter extends DefaultImporter
                 $timeEntry->member_id = $memberId;
                 $timeEntry->task_id = $taskId;
                 $timeEntry->project_id = $projectId;
-                $timeEntry->client_id = $clientId;
+                $timeEntry->client_id = $project?->client_id;
                 $timeEntry->organization_id = $this->organization->id;
                 $timeEntry->description = $record['Description'];
                 if (! in_array($record['Billable'], ['Yes', 'No'], true)) {

@@ -9,6 +9,7 @@ use App\Models\Passport\AuthCode;
 use App\Models\Passport\Client;
 use App\Models\Passport\RefreshToken;
 use App\Models\Passport\Token;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
 use Illuminate\Support\Facades\Auth;
@@ -24,6 +25,15 @@ class AuthServiceProvider extends ServiceProvider
     protected $policies = [
     ];
 
+    public function register(): void
+    {
+        parent::register();
+
+        // The device authorization grant is not used and has no views. Passport registers its routes
+        // while booting, so the grant has to be disabled before that, during registration.
+        Passport::$deviceCodeGrantEnabled = false;
+    }
+
     /**
      * Register any authentication / authorization services.
      */
@@ -35,6 +45,11 @@ class AuthServiceProvider extends ServiceProvider
         Auth::provider('eloquent', function (Application $app, array $config): ActiveUserProvider {
             return new ActiveUserProvider($app->make('hash'), $config['model']);
         });
+
+        // Passport's authorization endpoint prompts guests to log in by throwing an
+        // AuthenticationException without a redirect target. Since Laravel 13 such an
+        // exception renders as an empty 401 instead of falling back to the login route.
+        AuthenticationException::redirectUsing(fn (): string => route('login'));
 
         // define scopes for passport tokens
         Passport::tokensCan([

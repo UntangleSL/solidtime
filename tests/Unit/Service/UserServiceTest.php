@@ -5,14 +5,19 @@ declare(strict_types=1);
 namespace Tests\Unit\Service;
 
 use App\Enums\Role;
+use App\Enums\Weekday;
 use App\Models\Member;
 use App\Models\Organization;
+use App\Models\OrganizationInvitation;
 use App\Models\Project;
 use App\Models\ProjectMember;
 use App\Models\TimeEntry;
 use App\Models\User;
 use App\Service\UserService;
+use Illuminate\Auth\Events\Verified;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Hash;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Tests\TestCase;
 
@@ -27,6 +32,42 @@ class UserServiceTest extends TestCase
     {
         parent::setUp();
         $this->userService = app(UserService::class);
+    }
+
+    public function test_create_user_with_verified_email_dispatches_verified_event(): void
+    {
+        // Arrange
+        Event::fake([Verified::class]);
+
+        // Act
+        $user = $this->userService->createUser('Test User', 'Test@Example.test', 'password', 'Europe/Vienna', Weekday::Monday, 'EUR', verifyEmail: true);
+
+        // Assert
+        $this->assertNotNull($user->email_verified_at);
+        $this->assertSame('test@example.test', $user->email);
+        Event::assertDispatched(fn (Verified $event): bool => $event->user->is($user));
+    }
+
+    public function test_create_user_without_verified_email_does_not_dispatch_verified_event(): void
+    {
+        // Arrange
+        Event::fake([Verified::class]);
+
+        // Act
+        $user = $this->userService->createUser('Test User', 'test@example.test', 'password', 'Europe/Vienna', Weekday::Monday, 'EUR');
+
+        // Assert
+        $this->assertNull($user->email_verified_at);
+        Event::assertNotDispatched(Verified::class);
+    }
+
+    public function test_create_user_lowercases_non_ascii_characters_in_email(): void
+    {
+        // Act
+        $user = $this->userService->createUser('Test User', 'Ünal@Example.test', 'password', 'Europe/Vienna', Weekday::Monday, 'EUR');
+
+        // Assert
+        $this->assertSame('ünal@example.test', $user->email);
     }
 
     public function test_assign_organization_entities_to_different_user(): void
@@ -134,5 +175,140 @@ class UserServiceTest extends TestCase
         $newMember = Member::whereBelongsTo($user)->whereBelongsTo($newOrganization)->firstOrFail();
         $this->assertSame(Role::Owner->value, $newMember->role);
         $this->assertSame($newOrganization->getKey(), $user->currentOrganization->getKey());
+    }
+
+    public function test_create_user_hashes_the_password_and_creates_own_organization(): void
+    {
+        // Act
+        $user = $this->userService->createUser(
+            name: 'Solo User',
+            email: 'solo@example.com',
+            password: 'secret-password-123',
+            timezone: 'UTC',
+            weekStart: Weekday::Monday,
+            currency: null,
+        );
+
+        // Assert
+        $user->refresh();
+        $this->assertTrue(Hash::check('secret-password-123', $user->password));
+        $this->assertSame(1, $user->organizations()->count());
+        $this->assertSame($user->getKey(), $user->currentOrganization->user_id);
+    }
+
+    public function test_create_user_without_password_joins_accepted_invitation_organization_instead_of_creating_own_one(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+        OrganizationInvitation::factory()
+            ->forOrganization($organization)
+            ->role(Role::Employee)
+            ->accepted()
+            ->create([
+                'email' => 'invitee@example.com',
+            ]);
+
+        // Act
+        $user = $this->userService->createUser(
+            name: 'Invitee',
+            email: 'Invitee@Example.com',
+            password: null,
+            timezone: 'UTC',
+            weekStart: Weekday::Monday,
+            currency: null,
+        );
+
+        // Assert
+        $this->assertNull($user->password);
+        $this->assertDatabaseMissing(OrganizationInvitation::class, [
+            'email' => 'invitee@example.com',
+        ]);
+        $user->refresh();
+        $this->assertSame(1, $user->organizations()->count());
+        $this->assertSame($organization->getKey(), $user->organizations()->first()->getKey());
+        $member = Member::whereBelongsTo($user)->whereBelongsTo($organization)->firstOrFail();
+        $this->assertSame(Role::Employee->value, $member->role);
+    }
+
+    public function test_create_user_without_password_creates_own_organization_when_no_invitation_exists(): void
+    {
+        // Act
+        $user = $this->userService->createUser(
+            name: 'Solo User',
+            email: 'solo@example.com',
+            password: null,
+            timezone: 'UTC',
+            weekStart: Weekday::Monday,
+            currency: null,
+        );
+
+        // Assert
+        $user->refresh();
+        $this->assertNull($user->password);
+        $this->assertSame(1, $user->organizations()->count());
+        $organization = $user->organizations()->first();
+        $this->assertTrue($organization->personal_team);
+        $this->assertSame($user->getKey(), $organization->user_id);
+        $this->assertSame($organization->getKey(), $user->currentOrganization->getKey());
+    }
+
+    public function test_create_user_joins_the_given_organization_instead_of_creating_own_one(): void
+    {
+        // Arrange
+        $organization = Organization::factory()->create();
+
+        // Act
+        $user = $this->userService->createUser(
+            name: 'SSO User',
+            email: 'sso@example.com',
+            password: null,
+            timezone: 'UTC',
+            weekStart: Weekday::Monday,
+            currency: null,
+            organization: $organization,
+            role: Role::Manager,
+        );
+
+        // Assert
+        $user->refresh();
+        $this->assertSame(1, $user->organizations()->count());
+        $this->assertSame($organization->getKey(), $user->currentOrganization->getKey());
+        $member = Member::whereBelongsTo($user)->whereBelongsTo($organization)->firstOrFail();
+        $this->assertSame(Role::Manager->value, $member->role);
+    }
+
+    public function test_create_user_keeps_the_invited_role_when_the_given_organization_also_invited_them(): void
+    {
+        // Arrange
+        $invitedOrganization = Organization::factory()->create();
+        $organization = Organization::factory()->create();
+        foreach ([$invitedOrganization, $organization] as $inviting) {
+            OrganizationInvitation::factory()
+                ->forOrganization($inviting)
+                ->role(Role::Admin)
+                ->accepted()
+                ->create([
+                    'email' => 'sso@example.com',
+                ]);
+        }
+
+        // Act
+        $user = $this->userService->createUser(
+            name: 'SSO User',
+            email: 'sso@example.com',
+            password: null,
+            timezone: 'UTC',
+            weekStart: Weekday::Monday,
+            currency: null,
+            organization: $organization,
+            role: Role::Employee,
+        );
+
+        // Assert
+        $user->refresh();
+        $this->assertSame(2, $user->organizations()->count());
+        $this->assertSame($organization->getKey(), $user->currentOrganization->getKey());
+        $member = Member::whereBelongsTo($user)->whereBelongsTo($organization)->firstOrFail();
+        $this->assertSame(Role::Admin->value, $member->role);
     }
 }
