@@ -6,6 +6,7 @@ namespace App\Profitability\Models;
 
 use App\Models\Concerns\HasUuids;
 use App\Models\Project;
+use App\Profitability\Enums\ContractSchedule;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
@@ -27,7 +28,7 @@ use Illuminate\Support\Carbon;
  * @property string $organization_id
  * @property string $project_id
  * @property string|null $service
- * @property string $schedule
+ * @property ContractSchedule $schedule
  * @property CarbonImmutable $starts_on
  * @property CarbonImmutable|null $ends_on
  * @property int $amount_cents
@@ -69,6 +70,7 @@ class ProjectContract extends Model
      * @var array<string, string>
      */
     protected $casts = [
+        'schedule' => ContractSchedule::class,
         'starts_on' => 'immutable_date',
         'ends_on' => 'immutable_date',
         'paused_on' => 'immutable_date',
