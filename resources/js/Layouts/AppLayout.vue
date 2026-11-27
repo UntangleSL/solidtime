@@ -59,8 +59,10 @@ import { Button } from '@/packages/ui/src/Buttons';
 import { openFeedback } from '@/utils/feedback';
 import { CommandPaletteProvider } from '@/Components/CommandPalette';
 import { useCommandPalette } from '@/utils/useCommandPalette';
+import { useProfitabilityNav } from '@/profitability/labels';
 
 const { openPalette } = useCommandPalette();
+const profitabilityNav = useProfitabilityNav();
 
 defineProps({
     title: String,
@@ -244,6 +246,12 @@ const page = usePage<{
                                 :icon="Target"
                                 :current="route().current('goals')"
                                 :href="route('goals')"></NavigationSidebarItem>
+                            <NavigationSidebarItem
+                                v-if="profitabilityNav.visible"
+                                :title="profitabilityNav.title"
+                                :icon="profitabilityNav.icon"
+                                :current="profitabilityNav.current"
+                                :href="profitabilityNav.href"></NavigationSidebarItem>
                         </ul>
                     </nav>
 
