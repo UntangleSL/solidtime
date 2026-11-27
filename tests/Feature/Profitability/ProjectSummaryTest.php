@@ -9,6 +9,7 @@ use App\Models\Member;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\TimeEntry;
+use App\Models\User;
 use App\Profitability\Access\AccessScope;
 use App\Profitability\Access\ProfitabilityAccess;
 use App\Profitability\Http\Controllers\ProjectSummaryController;
@@ -84,6 +85,15 @@ class ProjectSummaryTest extends TestCaseWithDatabase
             ->create(['description' => '']);
     }
 
+    /**
+     * createUserWithRole associates the current organization of a non-owner without saving it.
+     */
+    private function actAs(User $user): void
+    {
+        $user->save();
+        $this->actingAs($user);
+    }
+
     private function getSummary(Organization $organization, string $projectId): TestResponse
     {
         return $this->getJson(route('profitability.projects.summary', [
@@ -103,7 +113,7 @@ class ProjectSummaryTest extends TestCaseWithDatabase
         $this->workEntry($data->member, $project, '2026-11-10 14:00:00', 5400);
         // 2026-10-31 23:30 local: the day before the period
         $this->workEntry($data->member, $project, '2026-10-31 22:30:00', 1800);
-        $this->actingAs($data->user);
+        $this->actAs($data->user);
 
         // Act
         $response = $this->getSummary($data->organization, $project->getKey());
@@ -124,5 +134,148 @@ class ProjectSummaryTest extends TestCaseWithDatabase
         $response->assertJsonPath('data.period.state', 'current');
         $response->assertJsonPath('data.period.budget_seconds', 72000);
         $response->assertJsonPath('data.period.consumed_seconds', 9000);
+    }
+
+    public function test_admin_sees_the_summary(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Admin);
+        $project = $this->billableProject($data->organization);
+        $this->contractWithNovemberPeriod($project, 36000);
+        $this->workEntry($data->ownerMember, $project, '2026-11-05 09:00:00', 7200);
+        $this->actAs($data->user);
+
+        // Act
+        $response = $this->getSummary($data->organization, $project->getKey());
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('data.project_id', $project->getKey());
+        $response->assertJsonPath('data.can_edit_terms', true);
+        $response->assertJsonPath('data.can_edit_plan', true);
+        $response->assertJsonPath('data.period.budget_seconds', 36000);
+        $response->assertJsonPath('data.period.consumed_seconds', 7200);
+    }
+
+    public function test_employee_and_manager_get_404(): void
+    {
+        foreach ([Role::Employee, Role::Manager] as $role) {
+            // Arrange
+            $data = $this->createUserWithRole($role);
+            $project = $this->billableProject($data->organization);
+            $this->contractWithNovemberPeriod($project);
+            $this->actAs($data->user);
+
+            // Act
+            $response = $this->getSummary($data->organization, $project->getKey());
+
+            // Assert
+            $response->assertNotFound();
+            $this->assertNull($response->json('data'), $role->value.' must not receive summary data');
+        }
+    }
+
+    public function test_placeholder_member_gets_404(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Placeholder);
+        $project = $this->billableProject($data->organization);
+        $this->contractWithNovemberPeriod($project);
+        $this->actAs($data->user);
+
+        // Act
+        $response = $this->getSummary($data->organization, $project->getKey());
+
+        // Assert
+        $response->assertNotFound();
+    }
+
+    public function test_foreign_organization_and_unknown_project_get_404(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $foreign = $this->createUserWithRole(Role::Owner);
+        $foreignProject = $this->billableProject($foreign->organization);
+        $this->contractWithNovemberPeriod($foreignProject);
+        $this->actAs($data->user);
+
+        // Act
+        $foreignProjectThroughOwnOrganization = $this->getSummary($data->organization, $foreignProject->getKey());
+        $unknownProject = $this->getSummary($data->organization, '7b4c5d3e-1f2a-4b6c-8d9e-0a1b2c3d4e5f');
+        $organizationNotAMemberOf = $this->getSummary($foreign->organization, $foreignProject->getKey());
+
+        // Assert
+        $foreignProjectThroughOwnOrganization->assertNotFound();
+        $unknownProject->assertNotFound();
+        $organizationNotAMemberOf->assertNotFound();
+    }
+
+    public function test_non_billable_project_without_contract_gets_404(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = Project::factory()->forOrganization($data->organization)->create(['is_billable' => false]);
+        $this->actAs($data->user);
+
+        // Act
+        $response = $this->getSummary($data->organization, $project->getKey());
+
+        // Assert
+        $response->assertNotFound();
+    }
+
+    public function test_billable_project_without_contract_answers_with_null_contract(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->workEntry($data->member, $project, '2026-11-05 09:00:00', 3600);
+        $this->actAs($data->user);
+
+        // Act
+        $response = $this->getSummary($data->organization, $project->getKey());
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('data.project_id', $project->getKey());
+        $response->assertJsonPath('data.can_edit_terms', true);
+        $response->assertJsonPath('data.contract', null);
+        $response->assertJsonPath('data.period', null);
+    }
+
+    public function test_response_has_no_money_key(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->contractWithNovemberPeriod($project);
+        $this->workEntry($data->member, $project, '2026-11-05 09:00:00', 3600);
+        $this->actAs($data->user);
+
+        // Act
+        $response = $this->getSummary($data->organization, $project->getKey());
+
+        // Assert
+        $response->assertOk();
+        $json = $response->json();
+        $this->assertIsArray($json);
+        $this->assertNotNull($response->json('data.period'));
+        $this->assertNoKeyMatches($json, '/(amount|cost|margin|revenue|cents)/i');
+    }
+
+    /**
+     * Fails when any key at any depth of the JSON matches the pattern: money must be absent, not null.
+     *
+     * @param  array<array-key, mixed>  $json
+     */
+    private function assertNoKeyMatches(array $json, string $pattern, string $path = ''): void
+    {
+        foreach ($json as $key => $value) {
+            $keyPath = $path === '' ? (string) $key : $path.'.'.$key;
+            $this->assertDoesNotMatchRegularExpression($pattern, (string) $key, 'Forbidden key at '.$keyPath);
+            if (is_array($value)) {
+                $this->assertNoKeyMatches($value, $pattern, $keyPath);
+            }
+        }
     }
 }
