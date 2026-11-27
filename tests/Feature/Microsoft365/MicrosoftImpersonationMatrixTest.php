@@ -6,8 +6,10 @@ namespace Tests\Feature\Microsoft365;
 
 use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Microsoft365\Http\Controllers\MicrosoftAccountController;
+use App\Microsoft365\Http\Controllers\MicrosoftAuthController;
 use App\Microsoft365\Http\Middleware\EnsureMicrosoftIsEnabled;
 use App\Microsoft365\Http\Middleware\EnsureNotImpersonating;
+use App\Microsoft365\Http\Middleware\ShareMicrosoftInertiaData;
 use App\Microsoft365\Microsoft365ServiceProvider;
 use App\Microsoft365\MicrosoftConfig;
 use App\Microsoft365\Models\MicrosoftAccount;
@@ -16,6 +18,7 @@ use App\Microsoft365\Models\OutlookSyncWindow;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Inertia\Testing\AssertableInertia;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use STS\FilamentImpersonate\ImpersonateManager;
@@ -31,6 +34,8 @@ use Tests\TestCaseWithDatabase;
 #[CoversClass(EnsureNotImpersonating::class)]
 #[UsesClass(GraphAccessGuard::class)]
 #[UsesClass(MicrosoftAccountController::class)]
+#[UsesClass(MicrosoftAuthController::class)]
+#[UsesClass(ShareMicrosoftInertiaData::class)]
 #[UsesClass(EnsureMicrosoftIsEnabled::class)]
 #[UsesClass(MicrosoftConfig::class)]
 #[UsesClass(Microsoft365ServiceProvider::class)]
@@ -41,6 +46,9 @@ class MicrosoftImpersonationMatrixTest extends TestCaseWithDatabase
 {
     use InteractsWithGraphFixtures;
     use InteractsWithMicrosoft365;
+
+    /** The Microsoft object id the admin's own identity would carry: no microsoft_accounts row has it. */
+    private const string ADMIN_OBJECT_ID = '00000000-0000-4000-8000-0000000007a1';
 
     /** Every table a Microsoft 365 route could write, plus core's time entries. All have an `id` key. */
     private const array SNAPSHOT_TABLES = [
@@ -129,5 +137,89 @@ class MicrosoftImpersonationMatrixTest extends TestCaseWithDatabase
         $this->assertSame($before, $this->forkRows());
         $this->assertNotNull($account->refresh()->refresh_token);
         Http::assertNothingSent();
+    }
+
+    public function test_connect_redirect_is_a_404_while_impersonating(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $gateway = $this->fakeMicrosoftGateway();
+        Http::fake();
+        $this->actingAs($user, 'web');
+        $this->startImpersonation();
+
+        // Act
+        $response = $this->get(route('microsoft.redirect', ['intent' => 'connect', 'return' => 'calendar'], false));
+
+        // Assert: refused before any session write
+        $response->assertNotFound();
+        $response->assertSessionMissing('microsoft.intent');
+        $response->assertSessionMissing('microsoft.connect_user_id');
+        $response->assertSessionMissing('microsoft.return');
+        $this->assertSame(0, $gateway->authenticateCalls());
+        Http::assertNothingSent();
+    }
+
+    public function test_connect_callback_is_a_404_and_links_nothing_while_impersonating(): void
+    {
+        // Arrange: a password user without a Microsoft link, and a Connect pending in the session as if
+        // the admin had started it; the gateway would hand back the admin's own identity
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $this->assertNotNull($user->password);
+        $gateway = $this->fakeMicrosoftGateway()->willReturn($this->microsoftIdentity([
+            'objectId' => self::ADMIN_OBJECT_ID,
+            'graphId' => self::ADMIN_OBJECT_ID,
+            'mail' => 'admin@example.test',
+            'userPrincipalName' => 'admin@example.test',
+        ]));
+        Http::fake();
+        $this->actingAs($user, 'web');
+        session()->put('microsoft.intent', 'connect');
+        session()->put('microsoft.connect_user_id', (string) $user->getKey());
+        session()->put('microsoft.return', 'calendar');
+        $this->startImpersonation();
+        $before = $this->forkRows();
+
+        // Act
+        $response = $this->get(route('microsoft.callback', ['code' => 'fake-code', 'state' => 'fake-state'], false));
+
+        // Assert
+        $response->assertNotFound();
+        $this->assertSame(0, $gateway->authenticateCalls());
+        $this->assertSame(0, MicrosoftAccount::query()->where('user_id', '=', $user->getKey())->count());
+        $this->assertSame($before, $this->forkRows());
+        $response->assertSessionMissing('microsoft.intent');
+        $response->assertSessionMissing('microsoft.connect_user_id');
+        $response->assertSessionMissing('microsoft.return');
+        $this->assertAuthenticatedAs($user, 'web');
+        Http::assertNothingSent();
+    }
+
+    public function test_profile_carries_no_microsoft_account_while_impersonating(): void
+    {
+        // Arrange
+        $this->configureMicrosoft365();
+        $user = $this->createUser();
+        $this->connectedAccount($user);
+        $this->actingAs($user, 'web');
+
+        // Act
+        $control = $this->get(route('profile.show', [], false));
+        $this->startImpersonation();
+        $impersonated = $this->get(route('profile.show', [], false));
+
+        // Assert
+        $control->assertOk();
+        $control->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.enabled', true)
+            ->where('microsoft.account.linked', true)
+            ->etc());
+        $impersonated->assertOk();
+        $impersonated->assertInertia(fn (AssertableInertia $page) => $page
+            ->where('microsoft.enabled', true)
+            ->missing('microsoft.account')
+            ->etc());
     }
 }

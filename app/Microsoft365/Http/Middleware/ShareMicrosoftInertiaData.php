@@ -50,8 +50,9 @@ class ShareMicrosoftInertiaData
                 ],
             ];
 
-            // Computed on the profile page only: every other page runs no extra query.
-            if ($request->routeIs('profile.show')) {
+            // Computed on the profile page only: every other page runs no extra query. Never while an admin
+            // impersonates the user: no account state, URLs or Microsoft email (the card renders nothing).
+            if ($request->routeIs('profile.show') && ! $this->access->blocked()) {
                 $user = Auth::guard('web')->user();
                 if ($user instanceof User) {
                     $data['account'] = $this->account($request, $user);

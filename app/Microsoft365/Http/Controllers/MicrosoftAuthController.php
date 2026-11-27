@@ -9,6 +9,7 @@ use App\Microsoft365\Auth\MicrosoftIdentityResolver;
 use App\Microsoft365\Auth\MicrosoftOAuthGateway;
 use App\Microsoft365\Auth\MicrosoftSignInException;
 use App\Microsoft365\Auth\MicrosoftSignInFailure;
+use App\Microsoft365\Graph\GraphAccessGuard;
 use App\Service\TimezoneService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -19,8 +20,8 @@ use Symfony\Component\HttpFoundation\RedirectResponse as SymfonyRedirectResponse
 use Throwable;
 
 /**
- * Both actions receive the gateway by method injection so a later gate can answer 404 before the
- * container resolves it.
+ * Both actions receive the gateway by method injection so a gate (the disabled-install middleware, or
+ * the impersonation check below) can answer 404 before the container resolves it.
  */
 class MicrosoftAuthController extends Controller
 {
@@ -48,6 +49,8 @@ class MicrosoftAuthController extends Controller
 
     private const string NOTICE_LEVEL_FLASH_KEY = 'microsoft365.notice_level';
 
+    public function __construct(private readonly GraphAccessGuard $access) {}
+
     public function redirect(Request $request, MicrosoftOAuthGateway $gateway, TimezoneService $timezoneService): SymfonyRedirectResponse
     {
         $isAuthenticated = Auth::guard('web')->check();
@@ -56,6 +59,13 @@ class MicrosoftAuthController extends Controller
         // The branch order is binding: connect is decided before the authenticated dashboard shortcut.
         if ($connect && ! $isAuthenticated) {
             return redirect()->route('login');
+        }
+
+        // A Connect started while an admin impersonates the user would link the admin's own Microsoft
+        // identity to the user, a lasting way to sign in as them (D-07, D-08). A plain 404, before any
+        // session write and before the gateway runs.
+        if ($connect && $this->access->blocked()) {
+            abort(404);
         }
 
         if ($connect) {
@@ -98,6 +108,13 @@ class MicrosoftAuthController extends Controller
         $intent = $request->session()->pull(self::INTENT_SESSION_KEY);
         $connectUserId = $request->session()->pull(self::CONNECT_USER_SESSION_KEY);
         $returnTarget = $request->session()->pull(self::RETURN_SESSION_KEY);
+
+        // Nothing finishes while an admin impersonates the user: no gateway, no identity check, no link,
+        // no login (D-07, D-08). The keys above are already gone; the timezone goes too.
+        if ($this->access->blocked()) {
+            $request->session()->forget(self::TIMEZONE_SESSION_KEY);
+            abort(404);
+        }
 
         // Evaluated BEFORE the authenticated-user shortcut below, otherwise a signed-in user could
         // never complete a connect (the callback would answer with the dashboard redirect).
