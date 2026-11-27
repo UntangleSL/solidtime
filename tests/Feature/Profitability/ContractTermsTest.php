@@ -317,14 +317,14 @@ class ContractTermsTest extends TestCaseWithDatabase
         $this->actAs($data->user);
         $this->putTerms($data->organization, $project->getKey(), $this->terms())->assertNoContent();
 
-        // Act
+        // Act: the contract has started, so an edit must say which periods it changes (08-08)
         $response = $this->putTerms($data->organization, $project->getKey(), $this->terms([
             'budget_seconds' => 36000,
         ]));
 
         // Assert
         $response->assertUnprocessable();
-        $response->assertJsonValidationErrors(['schedule']);
+        $response->assertJsonValidationErrors(['apply_to']);
         $this->assertSame(77400, $this->periodsOf($project)[0]['budget_seconds']);
     }
 

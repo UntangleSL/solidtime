@@ -338,4 +338,238 @@ class PeriodMaterializerTest extends TestCaseWithDatabase
         $this->getSummary($data->organization, $withoutContract->getKey(), $siblingPeriod->getKey())->assertNotFound();
         $this->getSummary($data->organization, $project->getKey())->assertOk();
     }
+
+    // --- Editing contracts (BUDG-01; D-03, D-04, UI-D9) ---
+
+    public function test_editing_before_start_replaces_the_schedule(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->actAs($data->user);
+        $this->putTerms($data->organization, $project->getKey(), $this->terms(['starts_on' => '2027-01-01']))
+            ->assertNoContent();
+        $contract = $this->contractOf($project);
+        $this->assertSame(['2027-01-01'], $this->startsOf($contract));
+
+        // Act: nothing has started, so no apply_to is needed and the schedule may change
+        $response = $this->putTerms($data->organization, $project->getKey(), $this->terms([
+            'service' => 'Content retainer',
+            'schedule' => 'quarterly',
+            'starts_on' => '2027-02-01',
+            'budget_seconds' => 432000,
+            'amount_cents' => 900000,
+        ]));
+
+        // Assert
+        $response->assertNoContent();
+        $contract->refresh();
+        $this->assertSame(ContractSchedule::Quarterly, $contract->schedule);
+        $this->assertSame('2027-02-01', $contract->starts_on->format('Y-m-d'));
+        $this->assertSame('Content retainer', $contract->service);
+        $this->assertSame([
+            ['starts_on' => '2027-02-01', 'ends_on' => '2027-04-30', 'budget_seconds' => 432000, 'amount_cents' => 900000],
+        ], $this->periodsOf($contract));
+        $this->assertSame(
+            ['2027-02-01' => 144000, '2027-03-01' => 144000, '2027-04-01' => 144000],
+            $this->planOf($this->periodStarting($contract, '2027-02-01')),
+        );
+        // The January period's plan row went with it
+        $this->assertSame(3, ContractPeriodMonth::query()->where('organization_id', '=', $data->organization->getKey())->count());
+    }
+
+    public function test_apply_to_current_rescales_the_current_plan_and_keeps_closed_periods(): void
+    {
+        // Arrange: quarterly from July, 120 h per quarter
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->actAs($data->user);
+        $quarterly = ['schedule' => 'quarterly', 'starts_on' => '2026-07-01'];
+        $this->putTerms($data->organization, $project->getKey(), $this->terms($quarterly + [
+            'budget_seconds' => 432000,
+            'amount_cents' => 900000,
+        ]))->assertNoContent();
+        $contract = $this->contractOf($project);
+        $current = $this->periodStarting($contract, '2026-10-01');
+        // The project manager front-loaded the current quarter: 60 h, 40 h, 20 h
+        foreach (['2026-10-01' => 216000, '2026-11-01' => 144000, '2026-12-01' => 72000] as $month => $seconds) {
+            ContractPeriodMonth::query()
+                ->where('period_id', '=', $current->getKey())
+                ->where('month', '=', $month)
+                ->update(['planned_seconds' => $seconds]);
+        }
+
+        // Act: 60 h per quarter from this period on
+        $response = $this->putTerms($data->organization, $project->getKey(), $this->terms($quarterly + [
+            'budget_seconds' => 216000,
+            'amount_cents' => 450000,
+            'apply_to' => 'current_and_following',
+        ]));
+
+        // Assert
+        $response->assertNoContent();
+        $this->assertSame([
+            ['starts_on' => '2026-07-01', 'ends_on' => '2026-09-30', 'budget_seconds' => 432000, 'amount_cents' => 900000],
+            ['starts_on' => '2026-10-01', 'ends_on' => '2026-12-31', 'budget_seconds' => 216000, 'amount_cents' => 450000],
+            ['starts_on' => '2027-01-01', 'ends_on' => '2027-03-31', 'budget_seconds' => 216000, 'amount_cents' => 450000],
+        ], $this->periodsOf($contract));
+        // Closed: untouched
+        $this->assertSame(
+            ['2026-07-01' => 144000, '2026-08-01' => 144000, '2026-09-01' => 144000],
+            $this->planOf($this->periodStarting($contract, '2026-07-01')),
+        );
+        // Current: the same 3:2:1 shape, rescaled to 60 h
+        $this->assertSame(
+            ['2026-10-01' => 108000, '2026-11-01' => 72000, '2026-12-01' => 36000],
+            $this->planOf($this->periodStarting($contract, '2026-10-01')),
+        );
+        // Upcoming: a fresh even plan
+        $this->assertSame(
+            ['2027-01-01' => 72000, '2027-02-01' => 72000, '2027-03-01' => 72000],
+            $this->planOf($this->periodStarting($contract, '2027-01-01')),
+        );
+        $contract->refresh();
+        $this->assertSame(216000, $contract->budget_seconds);
+        $this->assertSame(450000, $contract->amount_cents);
+    }
+
+    public function test_apply_to_next_period_leaves_the_current_period(): void
+    {
+        // Arrange: monthly from October: October closed, November current, December upcoming
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->actAs($data->user);
+        $this->putTerms($data->organization, $project->getKey(), $this->terms())->assertNoContent();
+        $contract = $this->contractOf($project);
+
+        // Act: 20 h per month from December on
+        $response = $this->putTerms($data->organization, $project->getKey(), $this->terms([
+            'budget_seconds' => 72000,
+            'amount_cents' => 150000,
+            'apply_to' => 'next_period',
+        ]));
+
+        // Assert
+        $response->assertNoContent();
+        $this->assertSame([
+            ['starts_on' => '2026-10-01', 'ends_on' => '2026-10-31', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+            ['starts_on' => '2026-11-01', 'ends_on' => '2026-11-30', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+            ['starts_on' => '2026-12-01', 'ends_on' => '2026-12-31', 'budget_seconds' => 72000, 'amount_cents' => 150000],
+        ], $this->periodsOf($contract));
+        $this->assertSame(['2026-11-01' => self::FORTY_HOURS], $this->planOf($this->periodStarting($contract, '2026-11-01')));
+        $this->assertSame(['2026-12-01' => 72000], $this->planOf($this->periodStarting($contract, '2026-12-01')));
+        $contract->refresh();
+        $this->assertSame(72000, $contract->budget_seconds);
+    }
+
+    public function test_apply_to_is_required_once_started(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->actAs($data->user);
+        $this->putTerms($data->organization, $project->getKey(), $this->terms())->assertNoContent();
+        $contract = $this->contractOf($project);
+        $before = $this->periodsOf($contract);
+
+        // Act
+        $response = $this->putTerms($data->organization, $project->getKey(), $this->terms([
+            'budget_seconds' => 72000,
+        ]));
+
+        // Assert
+        $response->assertUnprocessable();
+        $response->assertJsonValidationErrors(['apply_to']);
+        $this->assertSame($before, $this->periodsOf($contract));
+        $contract->refresh();
+        $this->assertSame(self::FORTY_HOURS, $contract->budget_seconds);
+    }
+
+    public function test_schedule_change_after_start_is_rejected(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->actAs($data->user);
+        $this->putTerms($data->organization, $project->getKey(), $this->terms())->assertNoContent();
+        $contract = $this->contractOf($project);
+        $before = $this->periodsOf($contract);
+
+        // Act
+        $schedule = $this->putTerms($data->organization, $project->getKey(), $this->terms([
+            'schedule' => 'quarterly',
+            'apply_to' => 'current_and_following',
+        ]));
+        $start = $this->putTerms($data->organization, $project->getKey(), $this->terms([
+            'starts_on' => '2026-10-15',
+            'apply_to' => 'current_and_following',
+        ]));
+
+        // Assert
+        $schedule->assertUnprocessable();
+        $schedule->assertJsonValidationErrors([
+            'schedule' => 'The schedule and start date can\'t change once a period has started.',
+        ]);
+        $start->assertUnprocessable();
+        $start->assertJsonValidationErrors(['starts_on']);
+        $contract->refresh();
+        $this->assertSame(ContractSchedule::Monthly, $contract->schedule);
+        $this->assertSame('2026-10-01', $contract->starts_on->format('Y-m-d'));
+        $this->assertSame($before, $this->periodsOf($contract));
+    }
+
+    public function test_end_date_trims_upcoming_periods(): void
+    {
+        // Arrange: October closed, November current, December upcoming
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->actAs($data->user);
+        $this->putTerms($data->organization, $project->getKey(), $this->terms())->assertNoContent();
+        $contract = $this->contractOf($project);
+
+        // Act
+        $response = $this->putTerms($data->organization, $project->getKey(), $this->terms([
+            'ends_on' => '2026-11-30',
+            'apply_to' => 'current_and_following',
+        ]));
+        $summary = $this->getSummary($data->organization, $project->getKey());
+
+        // Assert
+        $response->assertNoContent();
+        $this->assertSame([
+            ['starts_on' => '2026-10-01', 'ends_on' => '2026-10-31', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+            ['starts_on' => '2026-11-01', 'ends_on' => '2026-11-30', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+        ], $this->periodsOf($contract));
+        // December's plan row went with it, and a read does not bring the period back
+        $this->assertSame(2, ContractPeriodMonth::query()->where('organization_id', '=', $data->organization->getKey())->count());
+        $summary->assertOk();
+        $summary->assertJsonPath('data.contract.ends_on', '2026-11-30');
+        $summary->assertJsonPath('data.periods.*.starts_on', ['2026-11-01', '2026-10-01']);
+    }
+
+    public function test_end_date_before_the_current_period_is_rejected(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->actAs($data->user);
+        $this->putTerms($data->organization, $project->getKey(), $this->terms())->assertNoContent();
+        $contract = $this->contractOf($project);
+        $before = $this->periodsOf($contract);
+
+        // Act: the current period starts on 1 November
+        $response = $this->putTerms($data->organization, $project->getKey(), $this->terms([
+            'ends_on' => '2026-10-31',
+            'apply_to' => 'current_and_following',
+        ]));
+
+        // Assert
+        $response->assertUnprocessable();
+        $response->assertJsonValidationErrors([
+            'ends_on' => 'The end date can\'t be before the start of the current period.',
+        ]);
+        $contract->refresh();
+        $this->assertNull($contract->ends_on);
+        $this->assertSame($before, $this->periodsOf($contract));
+    }
 }
