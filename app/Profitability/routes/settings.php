@@ -20,9 +20,18 @@ Route::middleware(['web', 'auth:web', 'auth.session', 'verified'])
         Route::post('/people/{member}/cost-rates', [PeopleSettingsController::class, 'storeCostRate'])
             ->whereUuid(['organization', 'member'])
             ->middleware(['check-organization-blocked', 'throttle:60,1,profitability-write:'])
-            ->name('profitability.settings.people.cost-rates.store');
+            ->name('profitability.settings.people.cost_rates.store');
         Route::delete('/people/{member}/cost-rates/{rate}', [PeopleSettingsController::class, 'destroyCostRate'])
             ->whereUuid(['organization', 'member', 'rate'])
             ->middleware(['check-organization-blocked', 'throttle:60,1,profitability-write:'])
-            ->name('profitability.settings.people.cost-rates.destroy');
+            ->name('profitability.settings.people.cost_rates.destroy');
+
+        Route::post('/people/{member}/work-weeks', [PeopleSettingsController::class, 'storeWorkWeek'])
+            ->whereUuid(['organization', 'member'])
+            ->middleware(['check-organization-blocked', 'throttle:60,1,profitability-write:'])
+            ->name('profitability.settings.people.work_weeks.store');
+        Route::delete('/people/{member}/work-weeks/{week}', [PeopleSettingsController::class, 'destroyWorkWeek'])
+            ->whereUuid(['organization', 'member', 'week'])
+            ->middleware(['check-organization-blocked', 'throttle:60,1,profitability-write:'])
+            ->name('profitability.settings.people.work_weeks.destroy');
     });

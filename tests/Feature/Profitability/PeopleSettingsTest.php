@@ -12,7 +12,9 @@ use App\Profitability\Access\AccessScope;
 use App\Profitability\Access\ProfitabilityAccess;
 use App\Profitability\Http\Controllers\PeopleSettingsController;
 use App\Profitability\Http\Requests\CostRateRequest;
+use App\Profitability\Http\Requests\WorkWeekRequest;
 use App\Profitability\Models\MemberCostRate;
+use App\Profitability\Models\MemberWorkWeek;
 use App\Profitability\ProfitabilityServiceProvider;
 use App\Profitability\Reporting\ConsumptionQuery;
 use Illuminate\Support\Carbon;
@@ -23,7 +25,9 @@ use Tests\TestCaseWithDatabase;
 
 #[CoversClass(PeopleSettingsController::class)]
 #[CoversClass(CostRateRequest::class)]
+#[CoversClass(WorkWeekRequest::class)]
 #[UsesClass(MemberCostRate::class)]
+#[UsesClass(MemberWorkWeek::class)]
 #[UsesClass(ProfitabilityAccess::class)]
 #[UsesClass(AccessScope::class)]
 #[UsesClass(ConsumptionQuery::class)]
@@ -63,7 +67,7 @@ class PeopleSettingsTest extends TestCaseWithDatabase
      */
     private function postCostRate(Organization $organization, string $memberId, array $body): TestResponse
     {
-        return $this->postJson(route('profitability.settings.people.cost-rates.store', [
+        return $this->postJson(route('profitability.settings.people.cost_rates.store', [
             'organization' => $organization->getKey(),
             'member' => $memberId,
         ], false), $body);
@@ -71,11 +75,42 @@ class PeopleSettingsTest extends TestCaseWithDatabase
 
     private function deleteCostRate(Organization $organization, string $memberId, string $rateId): TestResponse
     {
-        return $this->deleteJson(route('profitability.settings.people.cost-rates.destroy', [
+        return $this->deleteJson(route('profitability.settings.people.cost_rates.destroy', [
             'organization' => $organization->getKey(),
             'member' => $memberId,
             'rate' => $rateId,
         ], false));
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     */
+    private function postWorkWeek(Organization $organization, string $memberId, array $body): TestResponse
+    {
+        return $this->postJson(route('profitability.settings.people.work_weeks.store', [
+            'organization' => $organization->getKey(),
+            'member' => $memberId,
+        ], false), $body);
+    }
+
+    private function deleteWorkWeek(Organization $organization, string $memberId, string $weekId): TestResponse
+    {
+        return $this->deleteJson(route('profitability.settings.people.work_weeks.destroy', [
+            'organization' => $organization->getKey(),
+            'member' => $memberId,
+            'week' => $weekId,
+        ], false));
+    }
+
+    private function workWeek(Member $member, string $effectiveFrom, int $weeklySeconds, int $targetPercent): MemberWorkWeek
+    {
+        return MemberWorkWeek::query()->create([
+            'organization_id' => $member->organization_id,
+            'member_id' => $member->getKey(),
+            'effective_from' => $effectiveFrom,
+            'weekly_seconds' => $weeklySeconds,
+            'chargeability_target_percent' => $targetPercent,
+        ]);
     }
 
     private function costRate(Member $member, string $effectiveFrom, int $cents): MemberCostRate
@@ -308,6 +343,155 @@ class PeopleSettingsTest extends TestCaseWithDatabase
         }
     }
 
+    public function test_admin_adds_a_working_week_with_target(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Admin);
+        $employee = Member::factory()->forOrganization($data->organization)->role(Role::Employee)->create();
+        $this->costRate($employee, '2026-03-01', 3000);
+        $older = $this->workWeek($employee, '2026-01-01', 144000, 80);
+        $this->actAs($data->user);
+
+        // Act: 40 h a week, target 75 %, from November
+        $store = $this->postWorkWeek($data->organization, $employee->getKey(), [
+            'effective_from' => '2026-11-01',
+            'weekly_seconds' => 144000,
+            'target_percent' => 75,
+        ]);
+        $list = $this->getPeople($data->organization);
+
+        // Assert
+        $store->assertCreated();
+        $store->assertJsonPath('data.effective_from', '2026-11-01');
+        $store->assertJsonPath('data.weekly_seconds', 144000);
+        $store->assertJsonPath('data.target_percent', 75);
+        $week = MemberWorkWeek::query()
+            ->where('member_id', '=', $employee->getKey())
+            ->where('effective_from', '=', '2026-11-01')
+            ->sole();
+        $this->assertSame($data->organization->getKey(), $week->organization_id);
+        $this->assertSame(75, $week->chargeability_target_percent);
+
+        /** @var array<int, array<string, mixed>> $rows */
+        $rows = $list->json('data');
+        $row = $this->rowOf($rows, $employee->getKey());
+        $this->assertSame(144000, $row['weekly_seconds']);
+        $this->assertSame(75, $row['target_percent']);
+        $this->assertSame(3000, $row['hourly_cost_cents']);
+        // The latest date of the two values in force
+        $this->assertSame('2026-11-01', $row['since']);
+        $this->assertSame([
+            ['id' => $week->getKey(), 'effective_from' => '2026-11-01', 'weekly_seconds' => 144000, 'target_percent' => 75],
+            ['id' => $older->getKey(), 'effective_from' => '2026-01-01', 'weekly_seconds' => 144000, 'target_percent' => 80],
+        ], $row['work_weeks']);
+    }
+
+    public function test_working_week_bounds_are_validated(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $this->actAs($data->user);
+
+        // Act
+        $tooHigh = $this->postWorkWeek($data->organization, $data->member->getKey(), [
+            'effective_from' => '2026-11-01',
+            'weekly_seconds' => 604801,
+            'target_percent' => 101,
+        ]);
+        $negative = $this->postWorkWeek($data->organization, $data->member->getKey(), [
+            'effective_from' => '2026-11-01',
+            'weekly_seconds' => -1,
+            'target_percent' => -1,
+        ]);
+        $upperBound = $this->postWorkWeek($data->organization, $data->member->getKey(), [
+            'effective_from' => '2026-11-01',
+            'weekly_seconds' => 604800,
+            'target_percent' => 100,
+        ]);
+
+        // Assert
+        $tooHigh->assertStatus(422);
+        $tooHigh->assertJsonValidationErrors(['weekly_seconds', 'target_percent']);
+        $negative->assertStatus(422);
+        $negative->assertJsonValidationErrors(['weekly_seconds', 'target_percent']);
+        $upperBound->assertCreated();
+        $this->assertSame(1, MemberWorkWeek::query()->where('member_id', '=', $data->member->getKey())->count());
+    }
+
+    public function test_duplicate_working_week_date_is_rejected(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $this->workWeek($data->member, '2026-11-01', 144000, 75);
+        $this->actAs($data->user);
+
+        // Act
+        $response = $this->postWorkWeek($data->organization, $data->member->getKey(), [
+            'effective_from' => '2026-11-01',
+            'weekly_seconds' => 108000,
+            'target_percent' => 60,
+        ]);
+
+        // Assert
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['effective_from' => __('profitability.validation.duplicate_date')]);
+        $this->assertSame(144000, MemberWorkWeek::query()->where('member_id', '=', $data->member->getKey())->sole()->weekly_seconds);
+    }
+
+    public function test_deleting_a_working_week_row(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $other = $this->createUserWithRole(Role::Owner);
+        $week = $this->workWeek($data->member, '2026-11-01', 144000, 75);
+        $foreignWeek = $this->workWeek($other->member, '2026-11-01', 144000, 75);
+        $this->actAs($data->user);
+
+        // Act
+        $foreign = $this->deleteWorkWeek($data->organization, $data->member->getKey(), $foreignWeek->getKey());
+        $foreignMember = $this->deleteWorkWeek($data->organization, $other->member->getKey(), $foreignWeek->getKey());
+        $response = $this->deleteWorkWeek($data->organization, $data->member->getKey(), $week->getKey());
+        $list = $this->getPeople($data->organization);
+
+        // Assert
+        $foreign->assertNotFound();
+        $foreignMember->assertNotFound();
+        $this->assertNotNull($foreignWeek->fresh());
+        $response->assertNoContent();
+        $this->assertNull($week->fresh());
+        /** @var array<int, array<string, mixed>> $rows */
+        $rows = $list->json('data');
+        $row = $this->rowOf($rows, $data->member->getKey());
+        $this->assertNull($row['weekly_seconds']);
+        $this->assertNull($row['target_percent']);
+        $this->assertNull($row['since']);
+        $this->assertSame([], $row['work_weeks']);
+    }
+
+    public function test_employee_and_core_manager_cannot_write_working_weeks(): void
+    {
+        foreach ([Role::Employee, Role::Manager] as $role) {
+            // Arrange
+            $data = $this->createUserWithRole($role);
+            $week = $this->workWeek($data->ownerMember, '2026-01-01', 144000, 75);
+            $this->actAs($data->user);
+
+            // Act
+            $store = $this->postWorkWeek($data->organization, $data->member->getKey(), [
+                'effective_from' => '2026-02-01',
+                'weekly_seconds' => 144000,
+                'target_percent' => 75,
+            ]);
+            $delete = $this->deleteWorkWeek($data->organization, $data->ownerMember->getKey(), $week->getKey());
+
+            // Assert
+            $store->assertNotFound();
+            $delete->assertNotFound();
+            $this->assertNotNull($week->fresh());
+            $this->assertSame(0, MemberWorkWeek::query()->where('member_id', '=', $data->member->getKey())->count());
+        }
+    }
+
     public function test_deleting_the_member_deletes_its_cost_rows(): void
     {
         // Arrange
@@ -315,13 +499,17 @@ class PeopleSettingsTest extends TestCaseWithDatabase
         $employee = Member::factory()->forOrganization($data->organization)->role(Role::Employee)->create();
         $this->costRate($employee, '2026-01-01', 3000);
         $this->costRate($employee, '2026-06-01', 3200);
+        $this->workWeek($employee, '2026-01-01', 144000, 75);
         $kept = $this->costRate($data->member, '2026-01-01', 4000);
+        $keptWeek = $this->workWeek($data->member, '2026-01-01', 144000, 75);
 
         // Act: a bulk delete without Eloquent events, as core does
         Member::query()->whereKey($employee->getKey())->delete();
 
         // Assert
         $this->assertSame(0, MemberCostRate::query()->where('member_id', '=', $employee->getKey())->count());
+        $this->assertSame(0, MemberWorkWeek::query()->where('member_id', '=', $employee->getKey())->count());
         $this->assertNotNull($kept->fresh());
+        $this->assertNotNull($keptWeek->fresh());
     }
 }
