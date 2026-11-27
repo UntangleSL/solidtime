@@ -572,4 +572,256 @@ class PeriodMaterializerTest extends TestCaseWithDatabase
         $this->assertNull($contract->ends_on);
         $this->assertSame($before, $this->periodsOf($contract));
     }
+
+    // --- Materializer lifecycle (BUDG-02; D-04, D-18) ---
+
+    public function test_materialization_is_idempotent(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $contract = $this->contract($project, ['starts_on' => '2026-09-01']);
+
+        // Act
+        $this->materialize($contract, '2026-11-18');
+        $periodIds = ContractPeriod::query()->where('contract_id', '=', $contract->getKey())->orderBy('starts_on')->pluck('id')->all();
+        $monthIds = ContractPeriodMonth::query()->whereIn('period_id', $periodIds)->orderBy('month')->pluck('id')->all();
+        $this->materialize($contract, '2026-11-18');
+
+        // Assert
+        $this->assertSame(['2026-09-01', '2026-10-01', '2026-11-01', '2026-12-01'], $this->startsOf($contract));
+        $this->assertSame(
+            $periodIds,
+            ContractPeriod::query()->where('contract_id', '=', $contract->getKey())->orderBy('starts_on')->pluck('id')->all(),
+        );
+        $this->assertSame(
+            $monthIds,
+            ContractPeriodMonth::query()->whereIn('period_id', $periodIds)->orderBy('month')->pluck('id')->all(),
+        );
+        $this->assertCount(4, $monthIds);
+    }
+
+    public function test_existing_rows_are_never_duplicated_when_inserted_concurrently(): void
+    {
+        // Arrange: October and November exist; a concurrent read already inserted December with its own values
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $contract = $this->contract($project, ['starts_on' => '2026-10-01']);
+        $this->materialize($contract, '2026-10-20');
+        $this->assertSame(['2026-10-01', '2026-11-01'], $this->startsOf($contract));
+        ContractPeriod::query()->create([
+            'organization_id' => $project->organization_id,
+            'contract_id' => $contract->getKey(),
+            'starts_on' => '2026-12-01',
+            'ends_on' => '2026-12-31',
+            'amount_cents' => 1,
+            'budget_seconds' => 7200,
+        ]);
+
+        // Act
+        $this->materialize($contract, '2026-12-05');
+        // The unique key turns a second insert of the same start into a no-op
+        $duplicate = ContractPeriod::query()->insertOrIgnore([
+            'id' => Str::uuid()->toString(),
+            'organization_id' => $project->organization_id,
+            'contract_id' => $contract->getKey(),
+            'starts_on' => '2026-12-01',
+            'ends_on' => '2026-12-31',
+            'amount_cents' => 300000,
+            'budget_seconds' => self::FORTY_HOURS,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Assert
+        $this->assertSame(0, $duplicate);
+        $this->assertSame([
+            ['starts_on' => '2026-10-01', 'ends_on' => '2026-10-31', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+            ['starts_on' => '2026-11-01', 'ends_on' => '2026-11-30', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+            ['starts_on' => '2026-12-01', 'ends_on' => '2026-12-31', 'budget_seconds' => 7200, 'amount_cents' => 1],
+            ['starts_on' => '2027-01-01', 'ends_on' => '2027-01-31', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+        ], $this->periodsOf($contract));
+        // The existing December row was neither updated nor given plan rows
+        $this->assertSame([], $this->planOf($this->periodStarting($contract, '2026-12-01')));
+        $this->assertSame(['2027-01-01' => self::FORTY_HOURS], $this->planOf($this->periodStarting($contract, '2027-01-01')));
+    }
+
+    public function test_creates_the_current_and_the_next_period_after_a_long_gap(): void
+    {
+        // Arrange: last read in June
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $contract = $this->contract($project, ['starts_on' => '2026-06-01']);
+        $this->materialize($contract, '2026-06-10');
+        $this->assertSame(['2026-06-01', '2026-07-01'], $this->startsOf($contract));
+
+        // Act: the next read is in November
+        $this->materialize($contract, '2026-11-18');
+
+        // Assert
+        $this->assertSame(
+            ['2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01', '2026-11-01', '2026-12-01'],
+            $this->startsOf($contract),
+        );
+        foreach ($this->periodsOf($contract) as $period) {
+            $this->assertSame(self::FORTY_HOURS, $period['budget_seconds']);
+            $this->assertSame(
+                [substr($period['starts_on'], 0, 8).'01' => self::FORTY_HOURS],
+                $this->planOf($this->periodStarting($contract, $period['starts_on'])),
+            );
+        }
+    }
+
+    public function test_no_period_starts_after_the_end_date(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $midDecember = $this->contract($this->billableProject($data->organization), [
+            'starts_on' => '2026-06-01',
+            'ends_on' => '2026-12-15',
+        ]);
+        $endOfNovember = $this->contract($this->billableProject($data->organization), [
+            'starts_on' => '2026-06-01',
+            'ends_on' => '2026-11-30',
+        ]);
+
+        // Act
+        $this->materialize($midDecember, '2026-11-18');
+        $this->materialize($endOfNovember, '2026-11-18');
+        // Long after the end
+        $this->materialize($midDecember, '2027-03-01');
+        $this->materialize($endOfNovember, '2027-03-01');
+
+        // Assert: December starts on or before 15 December, so it exists (periods are not cut at the end date)
+        $this->assertSame(
+            ['2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01', '2026-11-01', '2026-12-01'],
+            $this->startsOf($midDecember),
+        );
+        $this->assertSame('2026-12-31', $this->periodsOf($midDecember)[6]['ends_on']);
+        $this->assertSame(
+            ['2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01', '2026-11-01'],
+            $this->startsOf($endOfNovember),
+        );
+    }
+
+    public function test_nothing_is_created_while_the_project_is_archived(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $archived = Project::factory()->forOrganization($data->organization)->billable()->archived()->create();
+        $neverMaterialized = $this->contract($archived, ['starts_on' => '2026-06-01']);
+        $paused = $this->billableProject($data->organization);
+        $pausedContract = $this->contract($paused, ['starts_on' => '2026-06-01']);
+        $this->materialize($pausedContract, '2026-06-10');
+        $paused->archived_at = Carbon::parse('2026-07-15 10:00:00', 'UTC');
+        $paused->save();
+        $this->actAs($data->user);
+
+        // Act
+        $this->materialize($neverMaterialized, '2026-11-18');
+        $this->materialize($pausedContract, '2026-11-18');
+        $summary = $this->getSummary($data->organization, $archived->getKey());
+
+        // Assert
+        $this->assertSame([], $this->startsOf($neverMaterialized));
+        $this->assertSame(['2026-06-01', '2026-07-01'], $this->startsOf($pausedContract));
+        $summary->assertOk();
+        $summary->assertJsonPath('data.contract.archived', true);
+        $summary->assertJsonPath('data.periods', []);
+        $summary->assertJsonPath('data.period', null);
+    }
+
+    public function test_resume_on_skips_the_paused_months(): void
+    {
+        // Arrange: both contracts were read in June, then paused in July
+        $data = $this->createUserWithRole(Role::Owner);
+        $fromFirst = $this->contract($this->billableProject($data->organization), ['starts_on' => '2026-06-01']);
+        $midMonth = $this->contract($this->billableProject($data->organization), ['starts_on' => '2026-06-01']);
+        $this->materialize($fromFirst, '2026-06-10');
+        $this->materialize($midMonth, '2026-06-10');
+        $fromFirst->paused_on = CarbonImmutable::parse('2026-07-20');
+        $fromFirst->resume_on = CarbonImmutable::parse('2026-10-01');
+        $fromFirst->save();
+        $midMonth->paused_on = CarbonImmutable::parse('2026-07-20');
+        $midMonth->resume_on = CarbonImmutable::parse('2026-10-15');
+        $midMonth->save();
+
+        // Act
+        $this->materialize($fromFirst, '2026-11-18');
+        $this->materialize($midMonth, '2026-11-18');
+
+        // Assert: August and September are never back-filled
+        $this->assertSame(
+            ['2026-06-01', '2026-07-01', '2026-10-01', '2026-11-01', '2026-12-01'],
+            $this->startsOf($fromFirst),
+        );
+        // A resume on the 15th: a stub to the end of October, prorated (17 of 31 days), then full months
+        $this->assertSame([
+            ['starts_on' => '2026-06-01', 'ends_on' => '2026-06-30', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+            ['starts_on' => '2026-07-01', 'ends_on' => '2026-07-31', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+            ['starts_on' => '2026-10-15', 'ends_on' => '2026-10-31', 'budget_seconds' => 79200, 'amount_cents' => 164516],
+            ['starts_on' => '2026-11-01', 'ends_on' => '2026-11-30', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+            ['starts_on' => '2026-12-01', 'ends_on' => '2026-12-31', 'budget_seconds' => self::FORTY_HOURS, 'amount_cents' => 300000],
+        ], $this->periodsOf($midMonth));
+        $this->assertSame(['2026-10-01' => 79200], $this->planOf($this->periodStarting($midMonth, '2026-10-15')));
+    }
+
+    public function test_quarterly_and_annual_grids(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $quarterly = $this->contract($this->billableProject($data->organization), [
+            'schedule' => 'quarterly',
+            'starts_on' => '2026-01-01',
+            'budget_seconds' => 432000,
+            'amount_cents' => 900000,
+        ]);
+        $quarterlyStub = $this->contract($this->billableProject($data->organization), [
+            'schedule' => 'quarterly',
+            'starts_on' => '2026-11-10',
+            'budget_seconds' => 432000,
+            'amount_cents' => 900000,
+        ]);
+        $annual = $this->contract($this->billableProject($data->organization), [
+            'schedule' => 'annual',
+            'starts_on' => '2025-03-01',
+            'budget_seconds' => 1728000,
+            'amount_cents' => 3600000,
+        ]);
+
+        // Act
+        $this->materialize($quarterly, '2026-11-18');
+        $this->materialize($quarterlyStub, '2026-11-18');
+        $this->materialize($annual, '2026-11-18');
+
+        // Assert
+        $this->assertSame([
+            ['starts_on' => '2026-01-01', 'ends_on' => '2026-03-31', 'budget_seconds' => 432000, 'amount_cents' => 900000],
+            ['starts_on' => '2026-04-01', 'ends_on' => '2026-06-30', 'budget_seconds' => 432000, 'amount_cents' => 900000],
+            ['starts_on' => '2026-07-01', 'ends_on' => '2026-09-30', 'budget_seconds' => 432000, 'amount_cents' => 900000],
+            ['starts_on' => '2026-10-01', 'ends_on' => '2026-12-31', 'budget_seconds' => 432000, 'amount_cents' => 900000],
+            ['starts_on' => '2027-01-01', 'ends_on' => '2027-03-31', 'budget_seconds' => 432000, 'amount_cents' => 900000],
+        ], $this->periodsOf($quarterly));
+        $this->assertSame(
+            ['2026-10-01' => 144000, '2026-11-01' => 144000, '2026-12-01' => 144000],
+            $this->planOf($this->periodStarting($quarterly, '2026-10-01')),
+        );
+
+        // 10 to 30 November: 21 of 30 days of one month's share (40 h, 3000.00)
+        $this->assertSame([
+            ['starts_on' => '2026-11-10', 'ends_on' => '2026-11-30', 'budget_seconds' => 100800, 'amount_cents' => 210000],
+            ['starts_on' => '2026-12-01', 'ends_on' => '2027-02-28', 'budget_seconds' => 432000, 'amount_cents' => 900000],
+        ], $this->periodsOf($quarterlyStub));
+
+        $this->assertSame([
+            ['starts_on' => '2025-03-01', 'ends_on' => '2026-02-28', 'budget_seconds' => 1728000, 'amount_cents' => 3600000],
+            ['starts_on' => '2026-03-01', 'ends_on' => '2027-02-28', 'budget_seconds' => 1728000, 'amount_cents' => 3600000],
+            ['starts_on' => '2027-03-01', 'ends_on' => '2028-02-29', 'budget_seconds' => 1728000, 'amount_cents' => 3600000],
+        ], $this->periodsOf($annual));
+        $plan = $this->planOf($this->periodStarting($annual, '2026-03-01'));
+        $this->assertCount(12, $plan);
+        $this->assertSame('2026-03-01', array_key_first($plan));
+        $this->assertSame('2027-02-01', array_key_last($plan));
+        $this->assertSame([144000], array_values(array_unique($plan)));
+    }
 }
