@@ -18,8 +18,9 @@ use Illuminate\Support\Collection;
  * The balance of one contract period, shared by the project summary and the Profitability views so both
  * always show the same figures (BUDG-04, BUDG-05, BUDG-06).
  *
- * Hours part (every scope that may view the project): the period, hours sold and consumed, and the
- * months with their planned and consumed hours.
+ * Hours part (every scope that may view the project): the period, hours sold and consumed, the
+ * projection to the period close (still_to_consume_seconds, remaining_plan_seconds, run_rate_seconds and
+ * status, see Projection, D-02) and the months with their planned and consumed hours.
  *
  * Money part (D-07, D-09, D-11, D-19), merged only when AccessScope::hasMoneyFor() allows it (Owner,
  * Admin, account managers of the client). Without money the cost is not even queried and no money key
@@ -31,6 +32,8 @@ use Illuminate\Support\Collection;
  * - cost_cents: cost to date from the dated hourly cost of each person (D-08, ConsumptionQuery).
  * - margin_cents: revenue to date minus cost to date; the period margin (amount minus cost) is the
  *   headline figure once the period is closed.
+ * - projected_cost_cents / projected_margin_cents: the cost at close if the plan is followed, at the
+ *   average cost of the priced hours so far, and the amount minus it; null while nothing is priced.
  * - unpriced_cost_seconds: hours of people without an hourly cost on the entry date, which the cost
  *   leaves out (shown as "Incomplete", never as free time).
  */
@@ -39,10 +42,12 @@ class ProjectBalanceService
     public function __construct(
         private readonly ConsumptionQuery $consumption,
         private readonly PeriodCalendar $calendar,
+        private readonly Projection $projection,
     ) {}
 
     /**
-     * The period block of the project summary.
+     * The period block of the project summary: hours, projection and months for every scope that may
+     * view the project, plus the money part for scopes with money.
      *
      * @return array<string, mixed>
      */
@@ -65,6 +70,17 @@ class ProjectBalanceService
         );
         $state = $period->stateOn($today);
         $months = $this->months($contract->organization_id, $project, $period, $now);
+        $projection = $this->projection->forPeriod(
+            $period->budget_seconds,
+            $months,
+            $period->starts_on,
+            $period->ends_on,
+            $today,
+            $this->atRiskThreshold(),
+            $this->runRateMinWeekdays(),
+            $totals['cost_cents'],
+            $totals['priced_seconds'],
+        );
 
         $balance = [
             'id' => $period->getKey(),
@@ -73,6 +89,10 @@ class ProjectBalanceService
             'state' => $state,
             'budget_seconds' => $period->budget_seconds,
             'consumed_seconds' => $totals['seconds'],
+            'still_to_consume_seconds' => $projection->stillToConsumeSeconds,
+            'remaining_plan_seconds' => $projection->remainingPlanSeconds,
+            'run_rate_seconds' => $projection->runRateSeconds,
+            'status' => $projection->status,
             'months' => $months,
         ];
 
@@ -80,7 +100,7 @@ class ProjectBalanceService
             return $balance;
         }
 
-        return $balance + $this->money($period, $state, $months, $today, $totals);
+        return $balance + $this->money($period, $state, $months, $today, $totals, $projection);
     }
 
     /**
@@ -107,19 +127,37 @@ class ProjectBalanceService
      * @param  array{seconds: int, billable_seconds: int, cost_cents: int|null, priced_seconds: int|null, unpriced_seconds: int|null}  $totals
      * @return array<string, int|null>
      */
-    private function money(ContractPeriod $period, string $state, array $months, CarbonImmutable $today, array $totals): array
+    private function money(ContractPeriod $period, string $state, array $months, CarbonImmutable $today, array $totals, ProjectionResult $projection): array
     {
         $amount = $period->amount_cents;
         $cost = $totals['cost_cents'] ?? 0;
         $revenue = $this->revenueToDate($amount, $state, $months, $today);
+        $projectedCost = $projection->projectedCostCents;
 
         return [
             'amount_cents' => $amount,
             'revenue_to_date_cents' => $revenue,
             'cost_cents' => $cost,
             'margin_cents' => $revenue - $cost,
+            // Unknown (not hidden) while no consumed hour has a cost: the scope has money, the data has none
+            'projected_cost_cents' => $projectedCost,
+            'projected_margin_cents' => $projectedCost === null ? $projectedCost : $amount - $projectedCost,
             'unpriced_cost_seconds' => $totals['unpriced_seconds'] ?? 0,
         ];
+    }
+
+    private function atRiskThreshold(): float
+    {
+        $value = config('profitability.at_risk_threshold', 1.10);
+
+        return is_numeric($value) ? (float) $value : 1.10;
+    }
+
+    private function runRateMinWeekdays(): int
+    {
+        $value = config('profitability.run_rate_min_weekdays', 5);
+
+        return is_numeric($value) ? (int) $value : 5;
     }
 
     /**

@@ -144,7 +144,8 @@ class ProjectionTest extends TestCase
         // Assert
         $this->assertNull($result->runRateSeconds);
         $this->assertSame(Projection::STATUS_ON_TRACK, $result->status);
-        $this->assertSame(120 * self::HOUR, $result->remainingPlanSeconds);
+        // October is past: its unconsumed plan is gone, only November and December are still ahead
+        $this->assertSame(60 * self::HOUR, $result->remainingPlanSeconds);
     }
 
     public function test_before_the_period_starts(): void
