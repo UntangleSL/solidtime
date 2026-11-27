@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { Link } from '@inertiajs/vue3';
-import { ChevronDown, ChevronRight, CircleAlert, TriangleAlert } from '@lucide/vue';
+import { ChevronDown, ChevronRight, CircleAlert, Coins, TriangleAlert } from '@lucide/vue';
 import Card from '@/Components/Common/Card.vue';
 import StatCard from '@/Components/Common/StatCard.vue';
 import TableHeading from '@/Components/Common/TableHeading.vue';
 import SortableTableHeaderCell from '@/Components/Common/SortableTableHeaderCell.vue';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
 import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
+import CardTitle from '@/packages/ui/src/CardTitle.vue';
 import {
     Tooltip,
     TooltipContent,
@@ -19,6 +20,7 @@ import { getOrganizationCurrencyString } from '@/utils/money';
 import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
 import { useTableSortState } from '@/utils/useTableSortState';
+import ClientMarginChart from './ClientMarginChart.vue';
 import RangeSelect from './RangeSelect.vue';
 import StatusPill from './StatusPill.vue';
 import { formatHours, formatHoursNumber } from './format';
@@ -41,6 +43,7 @@ import {
     type ClientsViewClient,
     type ClientsViewProject,
 } from './clientsApi';
+import type { ClientMarginEntry } from './clientMarginOption';
 
 // The Clients view of the Profitability page (D-07, D-11, D-14, BUDG-06): the account manager's
 // portfolio for a calendar range, money sold against cost per client, expandable into projects. The
@@ -212,6 +215,21 @@ const NUMBER_CELL = `${CELL} text-right tabular-nums text-base text-text-primary
 const LOSS = 'text-red-700 dark:text-red-400';
 const WARNING = 'text-amber-800 dark:text-amber-400';
 
+// "Margin by client" chart: only with two or more clients (UI-SPEC zero-one-many)
+const chartClients = computed<ClientMarginEntry[]>(() =>
+    clients.value.map((client) => ({
+        key: clientKey(client),
+        name: clientName(client),
+        margin_cents: client.margin_cents,
+        amount_cents: client.amount_cents,
+        cost_cents: client.cost_cents,
+        margin_percent: client.margin_percent,
+        unpriced_cost_seconds: client.unpriced_cost_seconds,
+    }))
+);
+const showChart = computed(() => chartClients.value.length >= 2);
+const rangeLabel = computed(() => label(`ranges.${range.value}`));
+
 const isEmpty = computed(() => hasData.value && clients.value.length === 0);
 
 const toolbarTarget = useViewToolbarTarget();
@@ -286,6 +304,18 @@ const teleportTo = computed(() => toolbarTarget?.value ?? null);
                     <StatCard :title="label('kpi.hours_consumed')" :value="kpi?.consumed" />
                 </dl>
             </div>
+
+            <Card v-if="showChart" data-testid="profitability-client-margin-card">
+                <div class="px-4 pt-2 pb-4">
+                    <CardTitle :title="label('money.margin_chart_title')" :icon="Coins" />
+                    <ClientMarginChart
+                        :clients="chartClients"
+                        :range-label="rangeLabel"
+                        :labels="labels"
+                        :number-format="numberFormat"
+                        :format-money="money" />
+                </div>
+            </Card>
 
             <Card>
                 <div

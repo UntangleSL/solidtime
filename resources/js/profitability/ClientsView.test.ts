@@ -338,6 +338,32 @@ describe('ClientsView', () => {
         expect(query('profitability-clients-margin-pct')?.textContent?.trim()).toBe('--');
     });
 
+    it('hides the margin chart with fewer than two clients', async () => {
+        respond([client('c-1', 'Gain Corp', 40000)]);
+        mountView();
+        await settle();
+
+        expect(query('profitability-client-margin-card')).toBeNull();
+        expect(wrapper!.findComponent({ name: 'ClientMarginChart' }).exists()).toBe(false);
+    });
+
+    it('shows the margin chart for two or more clients, No client included by name', async () => {
+        respond([client('c-1', 'Gain Corp', 40000), client(null, null, -3000)]);
+        mountView();
+        await settle();
+
+        expect(query('profitability-client-margin-card')?.textContent).toContain(
+            'Margin by client'
+        );
+        const chart = wrapper!.findComponent({ name: 'ClientMarginChart' });
+        expect(chart.exists()).toBe(true);
+        const entries = chart.props('clients') as Array<{ name: string; margin_cents: number }>;
+        expect(entries.map((entry) => entry.name)).toEqual(['Gain Corp', 'No client']);
+        expect(chart.props('rangeLabel')).toBe('This month');
+        const formatMoney = chart.props('formatMoney') as (cents: number) => string;
+        expect(formatMoney(-3000)).toMatch(/^−/);
+    });
+
     it('shows the empty state for a range without figures', async () => {
         respond([], LAST_MONTH);
         mountView();
