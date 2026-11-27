@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import dayjs from 'dayjs';
-import { Briefcase, TriangleAlert } from '@lucide/vue';
+import { Briefcase, CalendarRange, Pencil, TriangleAlert } from '@lucide/vue';
 import MainContainer from '@/packages/ui/src/MainContainer.vue';
 import CardTitle from '@/packages/ui/src/CardTitle.vue';
 import LoadingSpinner from '@/packages/ui/src/LoadingSpinner.vue';
 import Button from '@/packages/ui/src/Buttons/Button.vue';
+import PrimaryButton from '@/packages/ui/src/Buttons/PrimaryButton.vue';
+import SecondaryButton from '@/packages/ui/src/Buttons/SecondaryButton.vue';
 import {
     Select,
     SelectContent,
@@ -26,6 +28,8 @@ import { getOrganizationCurrencyString } from '@/utils/money';
 import { useOrganizationQuery } from '@/utils/useOrganizationQuery';
 import { getCurrentOrganizationId } from '@/utils/useUser';
 import BudgetMeter from './BudgetMeter.vue';
+import ContractEditor from './ContractEditor.vue';
+import PlanGrid from './PlanGrid.vue';
 import PeriodMonthTable from './PeriodMonthTable.vue';
 import PlannedVsConsumedChart from './PlannedVsConsumedChart.vue';
 import StatusPill from './StatusPill.vue';
@@ -33,6 +37,8 @@ import { formatHours, formatHoursNumber, formatPercent, formatPeriod } from './f
 import { t, useProfitabilityProps } from './labels';
 import { monthDifference } from './plannedVsConsumedOption';
 import { isNotFound, useProjectSummaryQuery, type SummaryPeriodRef } from './summaryApi';
+import { projectNameFromCache } from './contractsApi';
+import { useQueryClient } from '@tanstack/vue-query';
 
 // Contract card on the project page (D-14, UI-SPEC "Project summary card"). It renders only what the
 // server allows: without `project.summary_url` in the shared prop there is no markup and no request,
@@ -266,6 +272,57 @@ const pillStatus = computed(() => {
     return period.value?.status ?? 'on_track';
 });
 
+// Editors (08-16). They exist only when the payload allows them (can_edit_terms / can_edit_plan) and
+// the shared prop carries the organization URL the writes go to; the server re-checks both.
+const organizationUrl = computed(() => profitability.value.organization_url ?? null);
+const queryClient = useQueryClient();
+const projectName = ref<string | null>(null);
+const editorOpen = ref(false);
+const editorMounted = ref(false);
+const editorMode = ref<'set' | 'edit'>('set');
+
+const canSetTerms = computed(
+    () =>
+        organizationUrl.value !== null &&
+        summary.value?.can_edit_terms === true &&
+        summary.value.contract === null
+);
+
+// "Plan months" for the selected period, never for a closed one (D-03)
+const canPlan = computed(
+    () =>
+        organizationUrl.value !== null &&
+        summary.value?.can_edit_plan === true &&
+        period.value !== null &&
+        period.value.state !== 'closed'
+);
+const planOpen = ref(false);
+const planPeriodId = ref<string | null>(null);
+
+function openPlan() {
+    if (!period.value) return;
+    projectName.value = projectNameFromCache(queryClient, props.projectId);
+    planPeriodId.value = period.value.id;
+    planOpen.value = true;
+}
+
+// "Edit contract terms" while the selected period is not closed (D-03: closed periods keep their
+// result; the editor itself never offers them)
+const canEditTerms = computed(
+    () =>
+        organizationUrl.value !== null &&
+        summary.value?.can_edit_terms === true &&
+        contract.value !== null &&
+        period.value?.state !== 'closed'
+);
+
+function openEditor(mode: 'set' | 'edit' = 'set') {
+    editorMode.value = mode;
+    projectName.value = projectNameFromCache(queryClient, props.projectId);
+    editorMounted.value = true;
+    editorOpen.value = true;
+}
+
 const meterCaption = computed(() => {
     if (!period.value) return '';
     const sold = period.value.budget_seconds;
@@ -281,9 +338,12 @@ const meterCaption = computed(() => {
 <template>
     <MainContainer v-if="visible" class="pt-6" data-testid="profitability-summary-card">
         <CardTitle :title="label('summary.title')" :icon="Briefcase">
-            <template v-if="periodOptions.length > 0" #actions>
+            <template v-if="periodOptions.length > 0 || canPlan || canEditTerms" #actions>
                 <div class="flex flex-wrap items-center justify-end gap-2">
-                    <Select :model-value="periodModel" @update:model-value="onPeriodChange">
+                    <Select
+                        v-if="periodOptions.length > 0"
+                        :model-value="periodModel"
+                        @update:model-value="onPeriodChange">
                         <SelectTrigger
                             size="sm"
                             class="min-w-0 max-w-full"
@@ -301,6 +361,20 @@ const meterCaption = computed(() => {
                             </SelectItem>
                         </SelectContent>
                     </Select>
+                    <SecondaryButton
+                        v-if="canPlan"
+                        :icon="CalendarRange"
+                        data-testid="profitability-summary-plan-months"
+                        @click="openPlan">
+                        {{ label('summary.plan_months') }}
+                    </SecondaryButton>
+                    <SecondaryButton
+                        v-if="canEditTerms"
+                        :icon="Pencil"
+                        data-testid="profitability-summary-edit-terms"
+                        @click="openEditor('edit')">
+                        {{ label('summary.edit_terms') }}
+                    </SecondaryButton>
                 </div>
             </template>
         </CardTitle>
@@ -335,6 +409,14 @@ const meterCaption = computed(() => {
                             : label('summary.empty_body_pm')
                     }}
                 </p>
+                <PrimaryButton
+                    v-if="canSetTerms"
+                    type="button"
+                    class="mt-4"
+                    data-testid="profitability-summary-set-terms"
+                    @click="openEditor('set')">
+                    {{ label('summary.set_terms') }}
+                </PrimaryButton>
             </div>
             <div v-else class="p-4 sm:p-6 space-y-6">
                 <p
@@ -436,5 +518,17 @@ const meterCaption = computed(() => {
                     :number-format="numberFormat" />
             </div>
         </Card>
+        <ContractEditor
+            v-if="editorMounted"
+            v-model:show="editorOpen"
+            :mode="editorMode"
+            :project-id="projectId"
+            :project-name="projectName" />
+        <PlanGrid
+            v-if="planPeriodId !== null"
+            v-model:show="planOpen"
+            :project-id="projectId"
+            :period-id="planPeriodId"
+            :project-name="projectName" />
     </MainContainer>
 </template>
