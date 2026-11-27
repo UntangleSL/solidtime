@@ -1,7 +1,7 @@
 ---
 gsd_state_version: "1.0"
 current_phase: 08
-current_phase_name: Project & Contract Budgets
+current_phase_name: Project Hour Budgets & Profitability
 status: ready_to_discuss
 stopped_at: Phase 7 executed, verified (human_needed: owner UAT) and released (sha-0ebd0f6); Entra spike cleanup done
 last_updated: "2026-11-27T13:00:00.000Z"
