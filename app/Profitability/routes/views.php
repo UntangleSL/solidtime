@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Profitability\Http\Controllers\ClientsViewController;
 use App\Profitability\Http\Controllers\ProjectsViewController;
 use Illuminate\Support\Facades\Route;
 
@@ -15,4 +16,10 @@ Route::middleware(['web', 'auth:web', 'auth.session', 'verified'])
             ->whereUuid('organization')
             ->middleware('throttle:120,1,profitability-read:')
             ->name('profitability.views.projects');
+
+        // The by-client view (BUDG-06, D-07): Owner/Admin and account managers only, always with money.
+        Route::get('/organizations/{organization}/views/clients', [ClientsViewController::class, 'index'])
+            ->whereUuid('organization')
+            ->middleware('throttle:120,1,profitability-read:')
+            ->name('profitability.views.clients');
     });
