@@ -11,13 +11,16 @@ Doppler (`vps`, configuración `prd`) y en la pestaña Environment de Dokploy.
 - Qué cubre: variables de entorno, copia de Doppler a Dokploy, URI de redirección, arranque inicial de
   la propietaria sin correo saliente (D-22), la comprobación con `php artisan m365:check`, el primer
   inicio de sesión real, la dependencia del MFA de Entra (D-06), los límites de los usuarios sin
-  contraseña, cómo desvincular una identidad y cómo apagar la integración.
+  contraseña, cómo desvincular una identidad, qué se borra con una persona u organización, la salud
+  de los contenedores scheduler y queue, y cómo apagar la integración.
 - Qué no cubre: el correo saliente (tarea aparte con el
   postfix del VPS) y Cloudflare Access (solo una nota, ver el último apartado).
 - El compose de referencia es `docs/deploy/dokploy-compose.fork.yml`. Este documento no lo aplica:
   pegarlo en Dokploy y redesplegar es un paso manual que se hace tras la aprobación de la propietaria.
 - El inicio de sesión con correo y contraseña sigue funcionando para todas las personas; Microsoft es
   un camino adicional, no un sustituto.
+- Para incorporar actualizaciones de solidtime (merge del proyecto original) sigue
+  `docs/m365/UPSTREAM-MERGE.md`.
 
 ## Variables de entorno
 
@@ -156,6 +159,8 @@ Quien se da de alta con Microsoft no tiene contraseña en solidtime. Consecuenci
 - Su inicio de sesión queda protegido por el MFA de Entra (apartado anterior).
 - Una persona administradora puede eliminar usuarios.
 - No hay «recordarme» para estos usuarios, por eso la sesión dura 12 horas (`SESSION_LIFETIME=720`).
+- Desde la actualización de solidtime de noviembre de 2026, el perfil ya no muestra los formularios
+  de contraseña y de doble factor: dice que el inicio de sesión lo gestiona el proveedor de identidad.
 
 ## Desconectar y desvincular
 
@@ -171,6 +176,24 @@ Quien se da de alta con Microsoft no tiene contraseña en solidtime. Consecuenci
 
   Las entradas de tiempo no se tocan. En el siguiente inicio de sesión con Microsoft la cuenta se
   vuelve a vincular por dirección de correo verificada, o se rechaza si no coincide ninguna.
+
+## Borrar personas u organizaciones
+
+La base de datos borra en cascada los datos de Microsoft; no hace falta ningún paso manual.
+
+- **Borrar una persona** (desde el panel de administración, o la propia persona desde su perfil si
+  tiene contraseña): se borran su identidad de Microsoft,
+  los tokens, las reuniones guardadas, las ventanas de sincronización, los vínculos de reuniones con
+  entradas y las reglas de series.
+- **Borrar una organización** (desde la aplicación o con el comando de consola de administración):
+  se borran los vínculos de las entradas de tiempo que se eliminan con
+  ella. Los datos de Microsoft de cada persona (identidad, reuniones guardadas, reglas) se conservan,
+  porque son de la persona y no de la organización.
+- **Quitar a un miembro junto con sus datos**: se borran sus vínculos en esa organización.
+- **Entradas de tiempo**: siguen las reglas propias de solidtime. Por ejemplo, las entradas de un
+  miembro que se quita pasan a un usuario de reemplazo (placeholder) y pierden el icono de Outlook.
+- Después de cualquiera de estos borrados no queda en la base de datos ningún dato de Microsoft
+  huérfano.
 
 ## Clientes OAuth de la app de escritorio y la extensión
 
@@ -242,6 +265,11 @@ cambian.
   empieza de cero.
 - **Suplantación (D-22).** Mientras una persona administradora suplanta a otra desde Filament no se
   muestran reuniones ni controles de Outlook y nunca se llama a Graph con la cuenta suplantada.
+  Tampoco se puede conectar, reconectar ni desconectar Microsoft para esa persona (esas rutas
+  responden 404) y el perfil no muestra la tarjeta de Microsoft 365 (Fase 7).
+- **Desconectar durante una sincronización (Fase 7).** Si la persona desconecta mientras corre una
+  sincronización, no queda nada guardado: al terminar, la sincronización comprueba la conexión y borra
+  lo que acababa de guardar.
 - **Rutas y Cloudflare Access.** `/m365/*` son rutas de sesión del navegador (cookie y CSRF) y no
   aceptan tokens de API, por eso **no necesitan ninguna excepción (bypass) de Cloudflare Access**. La
   excepción de `/api/*`, `/oauth/token` y `/health-check/up` descrita más abajo no cambia.
@@ -254,21 +282,31 @@ cambian.
   `microsoft_accounts`: `reconnect_required_at` y `graph_backoff_until`). Son aditivas y tienen
   `down()`; no reescriben datos.
 
-Pendiente para la Fase 7 (SEC-04), conocido y aceptado por ahora:
+## Contenedores scheduler y queue
 
-- Las URL de conectar y desconectar del perfil y `microsoft.redirect?intent=connect` no se bloquean
-  durante la suplantación: una persona administradora suplantando podría iniciar la conexión o
-  desconectar (y purgar) los datos de esa persona.
-- Una sincronización que corre a la vez que una desconexión puede volver a insertar filas que quedan
-  invisibles (la lectura responde vacío sin una cuenta conectada); se eliminan en la siguiente
-  desconexión.
+Su comprobación de salud ejecuta el script `healthcheck` de la propia imagen: pregunta a supervisor si
+el proceso del scheduler o del worker está en marcha, así que Dokploy los muestra `healthy` (antes
+heredaban la comprobación HTTP de la imagen base, que solo responde en el contenedor `app`, y salían
+`unhealthy` aunque funcionaran). Si alguna vez salen `unhealthy` mientras trabajan con normalidad
+(el registro del contenedor muestra el scheduler o el worker activos), cambia en el compose el `test`
+de ese servicio por `["CMD-SHELL", "supervisorctl status worker:worker_0 | grep -q RUNNING"]` (o
+`scheduler:scheduler_0` para el scheduler) y redespliega; como último recurso, `healthcheck:` con
+`disable: true` quita la comprobación.
 
 ## Apagar la integración
 
 Vacía `SOLIDTIME_MICROSOFT_CLIENT_ID`, `SOLIDTIME_MICROSOFT_CLIENT_SECRET` o
-`SOLIDTIME_MICROSOFT_TENANT_ID` en Dokploy y redespliega: desaparece el botón y las rutas de Microsoft
-responden 404. El inicio de sesión con correo y contraseña no cambia. La comprobación completa de
-apagado y limpieza se hace en la Fase 7.
+`SOLIDTIME_MICROSOFT_TENANT_ID` en Dokploy y redespliega. Con la integración apagada:
+
+- No hay botón de Microsoft en el inicio de sesión ni tarjeta de Microsoft 365 en el perfil.
+- El calendario no muestra nada de Outlook: ni el carril de reuniones, ni «Sync Outlook» o «Connect»,
+  ni el icono de Outlook en las entradas, ni las marcas de entradas desincronizadas.
+- Todas las rutas de Microsoft responden 404.
+- La comprobación diaria de las 05:30 sigue apareciendo en `schedule:list`, pero no se ejecuta.
+- No se borra nada. Al volver a rellenar las variables y redesplegar, todo vuelve tal como estaba:
+  vínculos, reuniones guardadas y entradas.
+
+El inicio de sesión con correo y contraseña no cambia.
 
 ## Cloudflare Access (futuro)
 
