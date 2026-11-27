@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Profitability\Http\Controllers\AbsenceProjectsController;
 use App\Profitability\Http\Controllers\PeopleSettingsController;
 use Illuminate\Support\Facades\Route;
 
@@ -34,4 +35,13 @@ Route::middleware(['web', 'auth:web', 'auth.session', 'verified'])
             ->whereUuid(['organization', 'member', 'week'])
             ->middleware(['check-organization-blocked', 'throttle:60,1,profitability-write:'])
             ->name('profitability.settings.people.work_weeks.destroy');
+
+        Route::get('/absence-projects', [AbsenceProjectsController::class, 'index'])
+            ->whereUuid('organization')
+            ->middleware('throttle:120,1,profitability-read:')
+            ->name('profitability.settings.absence');
+        Route::put('/absence-projects', [AbsenceProjectsController::class, 'update'])
+            ->whereUuid('organization')
+            ->middleware(['check-organization-blocked', 'throttle:60,1,profitability-write:'])
+            ->name('profitability.settings.absence.update');
     });
