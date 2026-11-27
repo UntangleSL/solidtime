@@ -2,7 +2,7 @@
 
 ## Overview
 
-This milestone extends Untangle's fork of solidtime so the team signs in with Microsoft 365 and finds their Outlook meetings already waiting as suggestions in the calendar, ready to become time entries in one click. The work moves from facts to features. First the Untangle M365 admin registers and consents the app, and real Outlook responses are recorded (Phase 1). Then come Microsoft sign-in with secure token storage (Phase 2), the read-only meeting overlay in the calendar (Phase 3), and turning meetings into time entries (Phase 4). Smart suggestions learned from history (Phase 5) and out-of-sync detection (Phase 6) both build on the meeting-to-entry link and can run in parallel. Phase 7 finishes deletion cleanup, impersonation safety, the off switch and an upstream merge rehearsal before the whole team relies on the integration. Phase 8 adds scheduled hour budgets on projects and contracts, so reported time measures project profitability per month and per contract.
+This milestone extends Untangle's fork of solidtime so the team signs in with Microsoft 365 and finds their Outlook meetings already waiting as suggestions in the calendar, ready to become time entries in one click. The work moves from facts to features. First the Untangle M365 admin registers and consents the app, and real Outlook responses are recorded (Phase 1). Then come Microsoft sign-in with secure token storage (Phase 2), the read-only meeting overlay in the calendar (Phase 3), and turning meetings into time entries (Phase 4). Smart suggestions learned from history (Phase 5) and out-of-sync detection (Phase 6) both build on the meeting-to-entry link and can run in parallel. Phase 7 finishes deletion cleanup, impersonation safety, the off switch and an upstream merge rehearsal before the whole team relies on the integration. Phase 8 gives each project its contract terms (hours and money, renewing), so reported time measures profitability per project, client and month, plus team chargeability. Phase 9 adds people assignment and occupancy.
 
 ## Cross-Phase Constraints
 
@@ -32,7 +32,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Smart Meeting Suggestions** - Recurring meetings come pre-assigned from series history, other meetings get a project suggested from past conversions (organizer, attendees, subject), one-click or bulk confirm, "always ignore this series" (completed 2026-11-24, owner UAT)
 - [x] **Phase 6: Out-of-Sync Detection** - Entries of meetings not yet started follow Outlook moves unless edited; edited or cancelled ones are flagged (keep, adjust or delete); started meetings are never changed (completed 2026-11-25, owner UAT)
 - [x] **Phase 7: Hardening & Release** - Complete deletion cleanup, impersonation guard, clean off switch, documented fork seams and upstream merge rehearsal
-- [ ] **Phase 8: Project Hour Budgets & Profitability** - Projects and contracts carry scheduled, renewing hour budgets; reported time counts against them; profitability per month and contract
+- [ ] **Phase 8: Project Hour Budgets & Profitability** - Each project carries its contract terms (hours and EUR, renewing); billable time consumes them; profitability by project, client and month with projection to close; team chargeability
+- [ ] **Phase 9: People Assignment & Occupancy** - People assigned to projects with planned hours per month, occupancy, holiday calendars and days off; employees see their assignment
 
 ## Phase Details
 
@@ -406,21 +407,31 @@ Plans:
 
 ### Phase 8: Project Hour Budgets & Profitability
 
-**Goal**: As Untangle management, I want to load projects and contracts with assigned hours that renew on a schedule, and have the team's reported time count against them, so that we can see project profitability per month and per contract.
-**Depends on**: Phase 7 (independent of the Microsoft 365 work; can be re-ordered earlier if needed)
-**Requirements**: BUDG-01, BUDG-02, BUDG-03, BUDG-04 (high level; refined in discuss-phase)
+**Goal**: As Untangle management, I want each client project to carry its contract terms (hours and money sold, renewing on a schedule), the team's billable time to consume them, and a view of profitability and team chargeability, so that we see per month, per project, per client and per person whether we are on track to the contract close.
+**Depends on**: Phase 7 (independent of the Microsoft 365 work)
+**Requirements**: BUDG-01, BUDG-02, BUDG-03, BUDG-04, BUDG-05, BUDG-06, BUDG-07, CHRG-01, CHRG-02, CHRG-03
 **Success Criteria** (what must be TRUE):
-  1. A manager can give a project or contract an hour budget, either one-off or renewing on a schedule (for example monthly or weekly).
-  2. When a budget period starts, the new allocation is created automatically according to its schedule.
-  3. Time entries the team reports on that project count against the budget period they fall into, with no extra steps for the person logging time.
-  4. A manager can see, per month and per contract, hours budgeted versus hours consumed, as the basis for profitability.
+  1. An account manager sets a project's contract terms (service, amount and hours per period, one-off or renewing monthly, quarterly or annually); a renewing project starts each new period automatically and clean, until an end date or archive.
+  2. A project manager distributes a period's hours across its months (uneven allowed) and sees planned vs consumed per month and the projection to the period close.
+  3. Time entries on a project count against the period they fall into with no extra step, and entries on a billable project are always billable.
+  4. Account managers see money sold, cost (dated hourly cost per person), margin and hours for their clients; Owner/Admin see everything; employees see nothing new; no new core roles.
+  5. Each person's chargeability (billable / available hours from a dated working week, minus Vacaciones and Festivo time) is shown against their target on the "Rentabilidad" page, which also has project and client views and a summary on each project page.
+
+**Plans**: TBD
+
+### Phase 9: People Assignment & Occupancy
+
+**Goal**: As Untangle management, I want to assign people to projects with planned hours per month and see each person's occupancy, using each employee's holiday calendar and days off, so that we plan capacity; each employee sees their own assignment and available hours per project.
+**Depends on**: Phase 8
+**Requirements**: TBD (to be defined in discuss-phase)
+**Success Criteria**: TBD
 
 **Plans**: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 3.1 and 3.2 (parallel, both depend only on Phase 3) → 4 → 5 and 6 (parallel, both depend only on Phase 4) → 7 → 8
+Phases execute in numeric order: 1 → 2 → 3 → 3.1 and 3.2 (parallel, both depend only on Phase 3) → 4 → 5 and 6 (parallel, both depend only on Phase 4) → 7 → 8 → 9
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -429,8 +440,9 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 and 3.2 (parallel, both d
 | 3. Outlook Meetings in the Calendar | 12/12 | Complete    | 2026-11-10 |
 | 3.1 Calendar UX Polish | 8/8 | Complete | 2026-11-17 |
 | 3.2 Appearance & Untangle Branding | 9/9 | Complete | 2026-11-17 |
-| 4. Assign Meetings to Projects | 0/9 | Planned | - |
-| 5. Smart Meeting Suggestions | 0/TBD | Not started | - |
-| 6. Out-of-Sync Detection | 0/TBD | Not started | - |
+| 4. Assign Meetings to Projects | 9/9 | Complete | 2026-11-25 |
+| 5. Smart Meeting Suggestions | done | Complete | 2026-11-25 |
+| 6. Out-of-Sync Detection | done | Complete | 2026-11-25 |
 | 7. Hardening & Release | 7/7 | Complete (owner UAT pending) | 2026-11-27 |
-| 8. Project Hour Budgets & Profitability | 0/TBD | Not started | - |
+| 8. Project Hour Budgets & Profitability | 0/TBD | Context gathered | - |
+| 9. People Assignment & Occupancy | 0/TBD | Not started | - |
