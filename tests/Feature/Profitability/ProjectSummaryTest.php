@@ -263,6 +263,95 @@ class ProjectSummaryTest extends TestCaseWithDatabase
         $this->assertNoKeyMatches($json, '/(amount|cost|margin|revenue|cents)/i');
     }
 
+    public function test_breaks_and_other_projects_never_count(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $otherProject = $this->billableProject($data->organization);
+        $this->contractWithNovemberPeriod($project);
+        $this->workEntry($data->member, $project, '2026-11-05 09:00:00', 3600);
+        $this->workEntry($data->member, $otherProject, '2026-11-05 11:00:00', 5400);
+        $break = TimeEntry::factory()
+            ->forMember($data->member)
+            ->isBreak()
+            ->startWithDuration(Carbon::parse('2026-11-05 10:00:00', 'UTC'), 1800)
+            ->create(['description' => '']);
+        // Core clears the project of a break on save; a bulk update (no model events) still could not
+        // make it count
+        TimeEntry::query()->whereKey($break->getKey())->update(['project_id' => $project->getKey()]);
+        $this->actAs($data->user);
+
+        // Act
+        $response = $this->getSummary($data->organization, $project->getKey());
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('data.period.consumed_seconds', 3600);
+    }
+
+    public function test_running_entry_counts_up_to_now(): void
+    {
+        // Arrange: started 08:00 UTC, the test clock is 10:00 UTC
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->contractWithNovemberPeriod($project);
+        TimeEntry::factory()
+            ->forMember($data->member)
+            ->forProject($project)
+            ->start(Carbon::parse('2026-11-18 08:00:00', 'UTC'))
+            ->active()
+            ->create(['description' => '']);
+        $this->actAs($data->user);
+
+        // Act
+        $response = $this->getSummary($data->organization, $project->getKey());
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('data.period.consumed_seconds', 7200);
+    }
+
+    public function test_entry_starting_in_the_period_counts_in_full_even_if_it_ends_after(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->contractWithNovemberPeriod($project);
+        // 2026-11-30 23:00 local (last day of the period) to 2026-12-01 01:00 local: two hours, all counted
+        $this->workEntry($data->member, $project, '2026-11-30 22:00:00', 7200);
+        // 2026-12-01 00:00 local: the day after the period, never counted
+        $this->workEntry($data->member, $project, '2026-11-30 23:00:00', 600);
+        $this->actAs($data->user);
+
+        // Act
+        $response = $this->getSummary($data->organization, $project->getKey());
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('data.period.consumed_seconds', 7200);
+    }
+
+    public function test_entries_of_other_organizations_never_count(): void
+    {
+        // Arrange
+        $data = $this->createUserWithRole(Role::Owner);
+        $foreign = $this->createUserWithRole(Role::Owner);
+        $project = $this->billableProject($data->organization);
+        $this->contractWithNovemberPeriod($project);
+        $this->workEntry($data->member, $project, '2026-11-05 09:00:00', 3600);
+        // An entry of another organization pointing at this project id
+        $this->workEntry($foreign->member, $project, '2026-11-06 09:00:00', 5400);
+        $this->actAs($data->user);
+
+        // Act
+        $response = $this->getSummary($data->organization, $project->getKey());
+
+        // Assert
+        $response->assertOk();
+        $response->assertJsonPath('data.period.consumed_seconds', 3600);
+    }
+
     /**
      * Fails when any key at any depth of the JSON matches the pattern: money must be absent, not null.
      *
