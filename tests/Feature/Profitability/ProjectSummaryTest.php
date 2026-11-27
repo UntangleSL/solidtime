@@ -243,7 +243,7 @@ class ProjectSummaryTest extends TestCaseWithDatabase
         $response->assertJsonPath('data.period', null);
     }
 
-    public function test_response_has_no_money_key(): void
+    public function test_money_appears_only_inside_the_owner_period_block(): void
     {
         // Arrange
         $data = $this->createUserWithRole(Role::Owner);
@@ -255,12 +255,18 @@ class ProjectSummaryTest extends TestCaseWithDatabase
         // Act
         $response = $this->getSummary($data->organization, $project->getKey());
 
-        // Assert
+        // Assert: Owner has money (08-10), but only the period block carries it; the contract terms,
+        // the period list and the months never do
         $response->assertOk();
-        $json = $response->json();
-        $this->assertIsArray($json);
-        $this->assertNotNull($response->json('data.period'));
-        $this->assertNoKeyMatches($json, '/(amount|cost|margin|revenue|cents)/i');
+        $response->assertJsonPath('data.period.amount_cents', 250000);
+        $payload = $response->json('data');
+        $this->assertIsArray($payload);
+        $period = $payload['period'];
+        $this->assertIsArray($period);
+        unset($payload['period']);
+        $this->assertNoKeyMatches($payload, '/(amount|cost|margin|revenue|cents)/i');
+        $this->assertIsArray($period['months']);
+        $this->assertNoKeyMatches($period['months'], '/(amount|cost|margin|revenue|cents)/i');
     }
 
     public function test_breaks_and_other_projects_never_count(): void

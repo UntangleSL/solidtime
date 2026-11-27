@@ -65,7 +65,7 @@ class DatedCostTest extends TestCaseWithDatabase
     }
 
     /**
-     * @return object{data: object, client: Client, project: Project, memberA: Member, memberB: Member}
+     * @return object{data: object{user: User, organization: Organization, member: Member, owner: User, ownerMember: Member}, client: Client, project: Project, memberA: Member, memberB: Member}
      */
     private function fixture(Role $role = Role::Owner): object
     {
