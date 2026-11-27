@@ -11,9 +11,23 @@ use App\Models\Project;
  * Built only by ProfitabilityAccess; controllers, resources and the shared prop ask it before reading
  * any data.
  *
- * - full: Owner or Admin, everything (every project, client, person, the money and the settings)
- * - account manager of a client: terms and money of that client's projects
- * - project manager of a project: that project's hours and monthly plan, never money
+ * Decision table (pinned by tests/Unit/Profitability/AccessScopeTest.php):
+ *
+ * | scope                         | view project       | edit terms | edit plan | money      | views                              |
+ * |-------------------------------|--------------------|------------|-----------|------------|------------------------------------|
+ * | full (Owner, Admin)           | every project      | yes        | yes       | yes        | projects, clients, people, settings|
+ * | account manager of client C   | every project of C | C only     | no        | C only     | projects, clients                  |
+ * | project manager of project P  | P only             | no         | P only    | never      | projects                           |
+ * | none                          | nothing            | no         | no        | never      | (empty)                            |
+ *
+ * - D-11 (visibility): a project manager sees the hours of the projects they manage and never money; an
+ *   account manager sees the money of their clients' projects; a project without client is reachable
+ *   only through full scope or a project manager assignment.
+ * - D-12 (editing): terms (hours and money sold, renewal) belong to the account side, the monthly plan
+ *   to the delivery side; Owner and Admin edit everything.
+ * - D-16: a core Manager, an Employee or a placeholder with no assignment gets none; per-person views
+ *   and settings are full scope only.
+ * - Both assignments combine: each project gets the union of what each assignment grants on it.
  *
  * Immutable and request-local: it is never cached on a static or a singleton (Octane).
  */
