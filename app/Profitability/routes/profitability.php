@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Profitability\Http\Controllers\ProfitabilityPageController;
 use App\Profitability\Http\Controllers\ProjectSummaryController;
 use Illuminate\Support\Facades\Route;
 
@@ -12,6 +13,11 @@ use Illuminate\Support\Facades\Route;
 Route::middleware(['web', 'auth:web', 'auth.session', 'verified'])
     ->prefix('profitability')
     ->group(function (): void {
+        // The Profitability page (D-14): 404 without access (D-16). Its tabs and copy come from the
+        // shared `profitability` prop, which carries the full label tree on this route name.
+        Route::get('/', [ProfitabilityPageController::class, 'show'])
+            ->name('profitability');
+
         // Hours sold and consumed of the project's current contract period (BUDG-03)
         Route::get('/organizations/{organization}/projects/{project}/summary', [ProjectSummaryController::class, 'show'])
             ->whereUuid(['organization', 'project'])
