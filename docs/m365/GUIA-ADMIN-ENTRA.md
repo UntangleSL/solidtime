@@ -135,7 +135,7 @@ La página de Información general muestra el nombre `solidtime-m365`, los dos i
    | `https://time.untangle.es/auth/microsoft/callback` | Producción en Dokploy. |
    | `https://solidtime.test/auth/microsoft/callback` | Desarrollo local con proxy. |
    | `http://localhost/auth/microsoft/callback` | Desarrollo local sin proxy. |
-   | `http://localhost/m365-spike/callback` | TEMPORAL: solo para la herramienta de captura del desarrollador; se elimina en la limpieza. |
+   | `http://localhost/m365-spike/callback` | RETIRADO 2026-11-27: solo para la herramienta de captura del desarrollador; eliminado del registro el 2026-11-27. |
 
 5. En la misma página, sección Concesión implícita y flujos híbridos (Implicit grant and hybrid flows):
    - Las dos casillas, Tokens de acceso (Access tokens) y Tokens de id. (ID tokens), deben quedar desmarcadas.
@@ -224,16 +224,16 @@ Esta comprobación atrapa el error más común (copiar el Id. de secreto en luga
 valor sigue en el gestor de contraseñas. El primer inicio de sesión con Microsoft en Dokploy (Fase 2)
 será la prueba definitiva de que el secreto funciona.
 
-**(b) Secreto spike (TEMPORAL)**
+**(b) Secreto spike (RETIRADO 2026-11-27)**
 
-1. TEMPORAL: crea un segundo secreto con Descripción (Description) `spike-AAAA-MM` (TEMPORAL),
+1. RETIRADO 2026-11-27: crea un segundo secreto con Descripción (Description) `spike-AAAA-MM` (RETIRADO 2026-11-27),
    con el año y el mes actuales.
-2. TEMPORAL: Expira (Expires) también 180 días (6 meses). Debe seguir vigente durante el registro, la
+2. RETIRADO 2026-11-27: Expira (Expires) también 180 días (6 meses). Debe seguir vigente durante el registro, la
    Ronda A y la Ronda B, y esas fechas dependen de cuándo se preparen los escenarios.
-3. TEMPORAL: lo usa solo la herramienta de captura del desarrollador. Guárdalo únicamente en el
+3. RETIRADO 2026-11-27: lo usa solo la herramienta de captura del desarrollador. Guárdalo únicamente en el
    gestor de contraseñas (Doppler, proyecto `vps`, entorno `dev`, secreto `SOLIDTIME_M365_SPIKE_CLIENT_SECRET`).
    Se elimina en la limpieza, de modo que el secreto de producción nunca sale del gestor de contraseñas.
-4. TEMPORAL: si el equipo avisa de que caducó antes de terminar la Ronda B (error AADSTS7000222), crea
+4. RETIRADO 2026-11-27: si el equipo avisa de que caducó antes de terminar la Ronda B (error AADSTS7000222), crea
    otro igual y entrégalo igual; las capturas ya hechas siguen siendo válidas.
 
 **Por qué (secreto spike)**

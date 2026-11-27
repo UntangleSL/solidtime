@@ -15,14 +15,14 @@ Los valores se completaron el 2026-10-19, tras el registro y la verificación.
 | --- | --- |
 | Directory (tenant) ID | fad1cfee-2190-49da-ab7f-95c7ed3bd46a |
 | Application (client) ID | 3ec957c9-3350-4585-abaa-4793e28da27d |
-| Redirect URIs | `https://time.untangle.es/auth/microsoft/callback`<br>`https://solidtime.test/auth/microsoft/callback`<br>`http://localhost/auth/microsoft/callback`<br>`http://localhost/m365-spike/callback` (TEMPORAL: sigue en Entra; eliminación APLAZADA hasta producción, ver `## Limpieza tras el spike`) |
+| Redirect URIs | `https://time.untangle.es/auth/microsoft/callback`<br>`https://solidtime.test/auth/microsoft/callback`<br>`http://localhost/auth/microsoft/callback`<br>`http://localhost/m365-spike/callback` (RETIRADO 2026-11-27: eliminado de Entra) |
 | Scopes delegados | `openid profile email offline_access User.Read Calendars.Read` |
 | Modo de acceso | tenant (Asignación requerida = No; sin asignaciones) |
 | Dominios | untanglegrowth.com (primario), untangle.es |
 | Caducidad del secreto de producción | 2028-10-19 (secreto `produccion-2026-10`, creado 2026-10-19; 24 meses, ver nota) |
 | Recordatorio de renovación | 2028-09-04 (calendario de Outlook de la administración) |
 | Responsable del recordatorio | Administración de Microsoft 365 (Global Administrator) |
-| Caducidad del secreto spike | 2027-04-19 (secreto `spike-2026-10`, creado 2026-10-19; 6 meses; sigue en Entra: eliminación APLAZADA hasta producción; su valor ya no existe en Doppler) |
+| Caducidad del secreto spike | 2027-04-19 (secreto `spike-2026-10`, creado 2026-10-19; eliminado de Entra el 2026-11-27; ya no existe) |
 | Acceso condicional | Sin políticas de acceso condicional; el tenant usa Security Defaults (MFA obligatorio para toda la organización). Sin cambios. |
 | Dominio Dokploy | time.untangle.es |
 
@@ -121,14 +121,14 @@ y todos los identificadores de las Rondas A y B cambiarían.
 
 ## Limpieza tras el spike
 
-Estado a 2026-10-19:
+Estado a 2026-11-27:
 
-- [ ] Eliminar el URI `http://localhost/m365-spike/callback` del registro (Autenticación > Web). APLAZADO hasta producción (decisión de la propietaria 2026-10-19), pendiente en Fase 7 (criterio de éxito de la Fase 7 en el ROADMAP). El URI sigue registrado y las líneas de la guía siguen marcadas TEMPORAL.
-- [ ] Eliminar el secreto `spike-2026-10` en Certificados y secretos. APLAZADO hasta producción (decisión de la propietaria 2026-10-19), pendiente en Fase 7. Caduca el 2027-04-19 aunque no se elimine antes.
+- [x] Eliminar el URI `http://localhost/m365-spike/callback` del registro (Autenticación > Web): hecho el 2026-11-27 por la propietaria (Fase 7). Quedan tres URI de redirección.
+- [x] Eliminar el secreto `spike-2026-10` en Certificados y secretos: hecho el 2026-11-27 por la propietaria (Fase 7). Queda un secreto, `produccion-2026-10`.
 - [x] Eliminar de Doppler (`vps`, `dev`) las siete claves `SOLIDTIME_M365_SPIKE_*`: hecho el 2026-10-19 por la orquestación (comprobado: `dev` solo conserva `SOLIDTIME_MICROSOFT_CLIENT_ID` y `SOLIDTIME_MICROSOFT_TENANT_ID`; `prd` sin cambios). Consecuencia: el valor del secreto spike ya no existe en ningún sitio utilizable y una captura nueva necesitaría un secreto spike nuevo.
 - [x] Borrar en local `tests/Tools/m365-spike/raw/` (datos reales de buzones de prueba, sal e identidad de seudónimos): hecho el 2026-10-19, tras pasar `validate-fixtures --raw` (esquema, semántica, fugas y reproducción de las páginas completas) y con la aprobación de la propietaria. `tests/Tools/m365-spike/.env.local` no existía (se usó Doppler).
-- [ ] Marcar en la guía las líneas que nombran el URI spike y el secreto spike como `RETIRADO <fecha>`. APLAZADO junto con la eliminación en Entra: mientras el URI y el secreto sigan registrados, la guía los mantiene como TEMPORAL y no se marcan RETIRADO.
-- [ ] Al eliminar el URI y el secreto en Entra: actualizar `Redirect URIs` y `Caducidad del secreto spike` en esta tabla (con una nota `(eliminado AAAA-MM-DD)`), marcar la guía como RETIRADO y añadir la línea a `## Historial`.
+- [x] Marcar en la guía las líneas que nombran el URI spike y el secreto spike como `RETIRADO <fecha>`: hecho el 2026-11-27.
+- [x] Actualizar `Redirect URIs` y `Caducidad del secreto spike` en esta tabla y añadir la línea a `## Historial`: hecho el 2026-11-27.
 
 PHPUnit (`CalendarViewFixturesTest`): no disponible el 2026-10-19 (el equipo de desarrollo no tiene PHP ni Docker); pendiente de CI o Sail. La reproducción en Node de cada secuencia completa de páginas sí pasó (21 o 22 peticiones y 12 o 14 eventos por pasada).
 
@@ -151,3 +151,4 @@ PHPUnit (`CalendarViewFixturesTest`): no disponible el 2026-10-19 (el equipo de 
 | 2026-11-17 | Fase 5: sugerencias inteligentes de reuniones publicada (imagen sha-0f2d424; sin variables nuevas; migraciones de columnas en outlook_meeting_links y outlook_meetings y tabla outlook_series_settings; $select de Graph con attendees) | orquestación |
 | 2026-11-24 | Fase 6: detección de desincronización publicada (imagen sha-8ec9a5a; sin variables nuevas en el entorno de Dokploy; las variables SOLIDTIME_MICROSOFT_* pasan también a scheduler y queue; migración de columnas de estado en outlook_meeting_links con índice único de vínculos activos, ya aplicada con sha-6d8a5cc; comprobación diaria m365:check-out-of-sync a las 05:30 Europe/Madrid; schedule:list y la ejecución en seco aún sin comprobar dentro del contenedor) | orquestación |
 | 2026-11-27 | Fase 7: endurecimiento y actualización de solidtime publicados (imagen sha-0ebd0f6; merge de solidtime d0f5e745; tres migraciones de solidtime ejecutadas al arrancar con AUTO_DB_MIGRATE, sin registro visible desde Dokploy; sin variables nuevas obligatorias; scheduler y queue con comprobación de salud propia, ambos sanos; copia de la base de datos pre-fase7-2026-11-27.dump (pg_dump -Fc, 135735 bytes, 11:27 hora del servidor, en el volumen database-storage-m365) tomada antes del despliegue; vuelta atrás: imagen sha-d379903 y restaurar esa copia, ver docs/m365/UPSTREAM-MERGE.md) | propietaria / orquestación |
+| 2026-11-27 | Limpieza en Entra: eliminados el URI spike (RETIRADO) y el secreto `spike-2026-10`; quedan tres URI y un secreto (confirmado por la propietaria); el secreto de producción no cambia, así que el inicio de sesión con Microsoft no depende de esta limpieza; guía marcada RETIRADO | propietaria / orquestación |
