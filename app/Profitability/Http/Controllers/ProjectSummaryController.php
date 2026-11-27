@@ -9,13 +9,10 @@ use App\Models\Project;
 use App\Models\User;
 use App\Profitability\Access\ProfitabilityAccess;
 use App\Profitability\Models\ContractPeriod;
-use App\Profitability\Models\ContractPeriodMonth;
 use App\Profitability\Models\ProjectContract;
-use App\Profitability\Periods\PeriodBounds;
-use App\Profitability\Periods\PeriodCalendar;
 use App\Profitability\Periods\PeriodMaterializer;
 use App\Profitability\Reporting\ConsumptionQuery;
-use Carbon\CarbonImmutable;
+use App\Profitability\Reporting\ProjectBalanceService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,9 +22,10 @@ use Illuminate\Support\Str;
 
 /**
  * The profitability summary of one project for the project page (BUDG-03, D-14): its contract terms,
- * every period of the contract newest first with its state (current, upcoming, closed), and the hours
- * sold and consumed of one period with its months planned and consumed (BUDG-04, D-03). Reading
- * materializes the periods the contract needs up to today and the next one (BUDG-02, D-04).
+ * every period of the contract newest first with its state (current, upcoming, closed), and the balance
+ * of one period: hours sold and consumed, its months planned and consumed (BUDG-04, D-03), and for scopes
+ * with money the amount, cost and margin (BUDG-05, BUDG-06). Reading materializes the periods the
+ * contract needs up to today and the next one (BUDG-02, D-04).
  *
  * ?period=<uuid> selects a period of this project's contract; any other value (another contract's
  * period, an unknown or malformed id) is a 404. Without it the period shown is the current one, else
@@ -37,8 +35,8 @@ use Illuminate\Support\Str;
  * project outside the caller's scope and a non-billable project without contract terms are all the same
  * plain 404: no oracle for what exists (D-11, D-16).
  *
- * Hours only: no money key is ever part of this response here; money arrives later, and only for scopes
- * that have money.
+ * The period block is built by ProjectBalanceService, which merges the money keys only for scopes with
+ * money (Owner, Admin, account managers of the client); a project manager gets no money key at all.
  */
 class ProjectSummaryController extends Controller
 {
@@ -46,7 +44,7 @@ class ProjectSummaryController extends Controller
         private readonly ProfitabilityAccess $access,
         private readonly ConsumptionQuery $consumption,
         private readonly PeriodMaterializer $materializer,
-        private readonly PeriodCalendar $calendar,
+        private readonly ProjectBalanceService $balance,
     ) {}
 
     public function show(Request $request, Organization $organization, string $project): JsonResponse
@@ -96,7 +94,7 @@ class ProjectSummaryController extends Controller
 
         $period = is_string($requested)
             ? $periods->first(fn (ContractPeriod $candidate): bool => $candidate->getKey() === $requested)
-            : $this->defaultPeriod($periods, $localToday);
+            : $this->balance->defaultPeriod($periods, $localToday);
         if (is_string($requested) && $period === null) {
             throw (new ModelNotFoundException)->setModel(ContractPeriod::class, [$requested]);
         }
@@ -122,75 +120,10 @@ class ProjectSummaryController extends Controller
                     ])
                     ->values()
                     ->all(),
-                'period' => $period === null ? null : [
-                    'id' => $period->getKey(),
-                    'starts_on' => $period->starts_on->format('Y-m-d'),
-                    'ends_on' => $period->ends_on->format('Y-m-d'),
-                    'state' => $period->stateOn($localToday),
-                    'budget_seconds' => $period->budget_seconds,
-                    'consumed_seconds' => $this->consumption->totalSeconds(
-                        $organization->getKey(),
-                        $model->getKey(),
-                        $period->starts_on,
-                        $period->ends_on,
-                        $now,
-                    ),
-                    'months' => $this->months($organization, $model, $period, $now),
-                ],
+                'period' => $period === null || $contract === null
+                    ? null
+                    : $this->balance->periodBalance($model, $contract, $period, $scope, $localToday, $now),
             ],
         ]);
-    }
-
-    /**
-     * The current period, else the latest one that has started (the contract ended or is paused), else
-     * the first upcoming one (the contract has not started yet).
-     *
-     * @param  Collection<int, ContractPeriod>  $periods  newest first
-     */
-    private function defaultPeriod(Collection $periods, CarbonImmutable $today): ?ContractPeriod
-    {
-        $started = $periods->filter(
-            fn (ContractPeriod $item): bool => $item->stateOn($today) !== PeriodCalendar::STATE_UPCOMING
-        );
-
-        return $started->first(fn (ContractPeriod $item): bool => $item->stateOn($today) === PeriodCalendar::STATE_CURRENT)
-            ?? $started->first()
-            ?? $periods->last();
-    }
-
-    /**
-     * Every month of the period with its planned hours (0 when it has no plan row) and the hours consumed
-     * in it (0 for a month without time).
-     *
-     * @return list<array{month: string, planned_seconds: int, consumed_seconds: int}>
-     */
-    private function months(Organization $organization, Project $project, ContractPeriod $period, CarbonImmutable $now): array
-    {
-        $planned = [];
-        $rows = ContractPeriodMonth::query()
-            ->where('period_id', '=', $period->getKey())
-            ->get();
-        foreach ($rows as $row) {
-            $planned[$row->month->format('Y-m-d')] = $row->planned_seconds;
-        }
-        $consumed = $this->consumption->secondsByMonth(
-            $organization->getKey(),
-            $project->getKey(),
-            $period->starts_on,
-            $period->ends_on,
-            $now,
-        );
-
-        $months = [];
-        foreach ($this->calendar->months(new PeriodBounds($period->starts_on, $period->ends_on, false)) as $month) {
-            $key = $month->format('Y-m-d');
-            $months[] = [
-                'month' => $key,
-                'planned_seconds' => $planned[$key] ?? 0,
-                'consumed_seconds' => $consumed[$key] ?? 0,
-            ];
-        }
-
-        return $months;
     }
 }
