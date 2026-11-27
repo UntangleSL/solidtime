@@ -30,8 +30,8 @@ const format = useSettingsFormat();
 const { data, isPending, isError, refetch } = usePeopleSettingsQuery();
 const people = computed<SettingsPerson[]>(() => data.value ?? []);
 
-// `?person=` opens that person's dialog (the People view's "Set in Settings" link).
-const selectedId = ref<string | null>(readQueryParam('person'));
+// `?member=<id>` opens that person's dialog (the People view's "Set in Settings" link, 08-18).
+const selectedId = ref<string | null>(readQueryParam('member'));
 const selected = computed(
     () => people.value.find((person) => person.member_id === selectedId.value) ?? null
 );
@@ -42,7 +42,7 @@ function edit(person: SettingsPerson) {
 
 function closeDialog() {
     selectedId.value = null;
-    replaceQueryParam('person', null);
+    replaceQueryParam('member', null);
 }
 
 const WARNING = 'text-amber-800 dark:text-amber-400';

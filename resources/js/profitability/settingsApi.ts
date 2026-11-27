@@ -471,7 +471,7 @@ export function useSettingsFormat() {
                 formatCents(
                     cents,
                     getOrganizationCurrencyString(),
-                    organization.value?.currency_format,
+                    organization.value?.currency_format ?? 'iso-code-before-with-space',
                     organization.value?.currency_symbol,
                     organization.value?.number_format
                 ) ?? ''
