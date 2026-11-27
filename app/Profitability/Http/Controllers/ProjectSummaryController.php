@@ -20,11 +20,18 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 /**
- * The profitability summary of one project for the project page (BUDG-03, D-14): its contract terms
- * and the hours sold and consumed of the current period, with its months planned and consumed (BUDG-04).
- * Reading materializes the periods the contract needs up to today and the next one (BUDG-02, D-04).
+ * The profitability summary of one project for the project page (BUDG-03, D-14): its contract terms,
+ * every period of the contract newest first with its state (current, upcoming, closed), and the hours
+ * sold and consumed of one period with its months planned and consumed (BUDG-04, D-03). Reading
+ * materializes the periods the contract needs up to today and the next one (BUDG-02, D-04).
+ *
+ * ?period=<uuid> selects a period of this project's contract; any other value (another contract's
+ * period, an unknown or malformed id) is a 404. Without it the period shown is the current one, else
+ * the latest one that has started, else the first upcoming one.
  *
  * The scope is resolved before any data is read. A project of another organization, an unknown id, a
  * project outside the caller's scope and a non-billable project without contract terms are all the same
@@ -72,18 +79,27 @@ class ProjectSummaryController extends Controller
 
         $now = now()->toImmutable();
         $localToday = $now->setTimezone($this->consumption->timezone())->startOfDay();
-        $today = $localToday->format('Y-m-d');
         if ($contract !== null) {
             $this->materializer->ensureThrough($contract, $localToday);
         }
 
-        /** @var ContractPeriod|null $period */
-        $period = $contract === null ? null : ContractPeriod::query()
+        $requested = $request->query('period');
+        if ($requested !== null && (! is_string($requested) || ! Str::isUuid($requested) || $contract === null)) {
+            throw (new ModelNotFoundException)->setModel(ContractPeriod::class, [is_string($requested) ? $requested : '']);
+        }
+
+        /** @var Collection<int, ContractPeriod> $periods */
+        $periods = $contract === null ? collect() : ContractPeriod::query()
             ->where('contract_id', '=', $contract->getKey())
-            ->where('starts_on', '<=', $today)
-            ->where('ends_on', '>=', $today)
-            ->orderBy('starts_on')
-            ->first();
+            ->orderByDesc('starts_on')
+            ->get();
+
+        $period = is_string($requested)
+            ? $periods->first(fn (ContractPeriod $candidate): bool => $candidate->getKey() === $requested)
+            : $this->defaultPeriod($periods, $localToday);
+        if (is_string($requested) && $period === null) {
+            throw (new ModelNotFoundException)->setModel(ContractPeriod::class, [$requested]);
+        }
 
         return new JsonResponse([
             'data' => [
@@ -97,11 +113,20 @@ class ProjectSummaryController extends Controller
                     'ends_on' => $contract->ends_on?->format('Y-m-d'),
                     'archived' => $model->archived_at !== null,
                 ],
+                'periods' => $periods
+                    ->map(fn (ContractPeriod $item): array => [
+                        'id' => $item->getKey(),
+                        'starts_on' => $item->starts_on->format('Y-m-d'),
+                        'ends_on' => $item->ends_on->format('Y-m-d'),
+                        'state' => $item->stateOn($localToday),
+                    ])
+                    ->values()
+                    ->all(),
                 'period' => $period === null ? null : [
                     'id' => $period->getKey(),
                     'starts_on' => $period->starts_on->format('Y-m-d'),
                     'ends_on' => $period->ends_on->format('Y-m-d'),
-                    'state' => 'current',
+                    'state' => $period->stateOn($localToday),
                     'budget_seconds' => $period->budget_seconds,
                     'consumed_seconds' => $this->consumption->totalSeconds(
                         $organization->getKey(),
@@ -114,6 +139,23 @@ class ProjectSummaryController extends Controller
                 ],
             ],
         ]);
+    }
+
+    /**
+     * The current period, else the latest one that has started (the contract ended or is paused), else
+     * the first upcoming one (the contract has not started yet).
+     *
+     * @param  Collection<int, ContractPeriod>  $periods  newest first
+     */
+    private function defaultPeriod(Collection $periods, CarbonImmutable $today): ?ContractPeriod
+    {
+        $started = $periods->filter(
+            fn (ContractPeriod $item): bool => $item->stateOn($today) !== PeriodCalendar::STATE_UPCOMING
+        );
+
+        return $started->first(fn (ContractPeriod $item): bool => $item->stateOn($today) === PeriodCalendar::STATE_CURRENT)
+            ?? $started->first()
+            ?? $periods->last();
     }
 
     /**
