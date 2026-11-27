@@ -384,7 +384,25 @@ Plans:
   4. Fork code sits in its own module with a documented list of touched core files, and a rehearsed merge of current upstream solidtime conflicts only within that list.
   5. Entra spike cleanup (remove http://localhost/m365-spike/callback and secret spike-2026-10) once production sign-in works; then mark the guide lines RETIRADO and update the runbook (deferred from Phase 1 by the owner, 2026-10-19).
 
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+**Wave 1**
+- [ ] 07-01-PLAN.md — Real upstream merge of solidtime main d0f5e745 (conflicts only in the ledger), ledger in the merged state, ledger-check.sh and docs/m365/UPSTREAM-MERGE.md (OPS-03; D-01, D-03, D-04)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 07-02-PLAN.md — Impersonation: Disconnect, Connect, callback and profile card inert; route matrix with canary; fork isolation canaries (SEC-04; D-07, D-08)
+- [ ] 07-03-PLAN.md — Deletion cleanup proof on every core path, schema cascade guard, no residue when a disconnect races a sync (SEC-03)
+- [ ] 07-04-PLAN.md — Off switch proof: calendar e2e with nothing Outlook-related, every fork route 404, job filtered, data kept and restored (OPS-02)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 07-05-PLAN.md — Release prep: ledger reconciled, operator doc, scheduler/queue healthchecks, Spanish owner summary (D-02)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 07-06-PLAN.md — Release: pin the green image, owner summary, database backup, Dokploy deploy, health and public checks (D-01, D-02, D-03; checkpoint)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 07-07-PLAN.md — Entra spike cleanup by the owner, sign-in and Sync rechecked, guide RETIRADO and runbook updated (criterion 5; D-05, D-06; owner checkpoint)
 
 ### Phase 8: Project Hour Budgets & Profitability
 
@@ -414,5 +432,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 and 3.2 (parallel, both d
 | 4. Assign Meetings to Projects | 0/9 | Planned | - |
 | 5. Smart Meeting Suggestions | 0/TBD | Not started | - |
 | 6. Out-of-Sync Detection | 0/TBD | Not started | - |
-| 7. Hardening & Release | 0/TBD | Not started | - |
+| 7. Hardening & Release | 0/7 | Planned | - |
 | 8. Project Hour Budgets & Profitability | 0/TBD | Not started | - |
