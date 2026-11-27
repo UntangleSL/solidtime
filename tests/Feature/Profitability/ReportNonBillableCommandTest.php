@@ -78,17 +78,24 @@ class ReportNonBillableCommandTest extends TestCaseWithDatabase
 
     public function test_the_report_prints_the_counts_and_one_line_per_project(): void
     {
+        // Arrange: the command lists projects ordered by organization id, then project id (uuids)
+        $expected = [
+            [$this->projectOne->organization_id, $this->projectOne->getKey(), ' 2 1.5'],
+            [$this->projectTwo->organization_id, $this->projectTwo->getKey(), ' 2 2.5'],
+            [$this->projectB->organization_id, $this->projectB->getKey(), ' 1 1.0'],
+        ];
+        usort($expected, fn (array $a, array $b): int => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+
         // Act and assert
-        $this->artisan('profitability:report-nonbillable')
+        $command = $this->artisan('profitability:report-nonbillable')
             ->expectsOutput('organizations: 2')
             ->expectsOutput('projects: 3')
             ->expectsOutput('entries: 5')
-            ->expectsOutput('hours: 5.0')
-            ->expectsOutput('project '.$this->projectOne->getKey().' 2 1.5')
-            ->expectsOutput('project '.$this->projectTwo->getKey().' 2 2.5')
-            ->expectsOutput('project '.$this->projectB->getKey().' 1 1.0')
-            ->assertExitCode(0)
-            ->run();
+            ->expectsOutput('hours: 5.0');
+        foreach ($expected as [$organizationId, $projectId, $suffix]) {
+            $command->expectsOutput('project '.$projectId.$suffix);
+        }
+        $command->assertExitCode(0)->run();
     }
 
     public function test_the_report_changes_no_row(): void
