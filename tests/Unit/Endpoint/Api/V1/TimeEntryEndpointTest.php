@@ -5017,11 +5017,13 @@ class TimeEntryEndpointTest extends ApiEndpointTestAbstract
             'billable' => true,
             'billable_rate' => $project->billable_rate,
         ]);
+        // Fork seam (profitability, Phase 8, D-05): time on a billable project is always billable,
+        // so the entry created as not billable on a billable project is saved billable and moves billable.
         $this->assertDatabaseHas(TimeEntry::class, [
             'id' => $timeEntry2->getKey(),
             'project_id' => $project->getKey(),
-            'billable' => false,
-            'billable_rate' => null,
+            'billable' => true,
+            'billable_rate' => $project->billable_rate,
         ]);
     }
 

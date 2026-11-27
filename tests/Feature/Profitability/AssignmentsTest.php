@@ -72,7 +72,7 @@ class AssignmentsTest extends TestCaseWithDatabase
         return $this->deleteJson(route('profitability.settings.project-managers.destroy', [
             'organization' => $organization->getKey(),
             'project' => $projectId,
-            'member' => $memberId,
+            'memberId' => $memberId,
         ], false));
     }
 
@@ -89,7 +89,7 @@ class AssignmentsTest extends TestCaseWithDatabase
         return $this->deleteJson(route('profitability.settings.account-managers.destroy', [
             'organization' => $organization->getKey(),
             'client' => $clientId,
-            'member' => $memberId,
+            'memberId' => $memberId,
         ], false));
     }
 

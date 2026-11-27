@@ -69,7 +69,7 @@ class PeopleSettingsTest extends TestCaseWithDatabase
     {
         return $this->postJson(route('profitability.settings.people.cost_rates.store', [
             'organization' => $organization->getKey(),
-            'member' => $memberId,
+            'memberId' => $memberId,
         ], false), $body);
     }
 
@@ -77,7 +77,7 @@ class PeopleSettingsTest extends TestCaseWithDatabase
     {
         return $this->deleteJson(route('profitability.settings.people.cost_rates.destroy', [
             'organization' => $organization->getKey(),
-            'member' => $memberId,
+            'memberId' => $memberId,
             'rate' => $rateId,
         ], false));
     }
@@ -89,7 +89,7 @@ class PeopleSettingsTest extends TestCaseWithDatabase
     {
         return $this->postJson(route('profitability.settings.people.work_weeks.store', [
             'organization' => $organization->getKey(),
-            'member' => $memberId,
+            'memberId' => $memberId,
         ], false), $body);
     }
 
@@ -97,7 +97,7 @@ class PeopleSettingsTest extends TestCaseWithDatabase
     {
         return $this->deleteJson(route('profitability.settings.people.work_weeks.destroy', [
             'organization' => $organization->getKey(),
-            'member' => $memberId,
+            'memberId' => $memberId,
             'week' => $weekId,
         ], false));
     }

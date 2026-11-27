@@ -107,10 +107,10 @@ class PeopleSettingsController extends Controller
     /**
      * A new hourly cost of the member from a date on. A second row on the same date is a 422.
      */
-    public function storeCostRate(CostRateRequest $request, Organization $organization, string $member): JsonResponse
+    public function storeCostRate(CostRateRequest $request, Organization $organization, string $memberId): JsonResponse
     {
         $this->authorizeFull($request, $organization);
-        $model = $this->findMember($organization, $member);
+        $model = $this->findMember($organization, $memberId);
 
         $effectiveFrom = $request->effectiveFrom();
         $exists = MemberCostRate::query()
@@ -137,10 +137,10 @@ class PeopleSettingsController extends Controller
         return new JsonResponse(['data' => $this->costRateData($rate->refresh())], 201);
     }
 
-    public function destroyCostRate(Request $request, Organization $organization, string $member, string $rate): Response
+    public function destroyCostRate(Request $request, Organization $organization, string $memberId, string $rate): Response
     {
         $this->authorizeFull($request, $organization);
-        $model = $this->findMember($organization, $member);
+        $model = $this->findMember($organization, $memberId);
 
         /** @var MemberCostRate $row */
         $row = MemberCostRate::query()
@@ -157,10 +157,10 @@ class PeopleSettingsController extends Controller
      * A new working week with its chargeability target from a date on. A second row on the same date is
      * a 422.
      */
-    public function storeWorkWeek(WorkWeekRequest $request, Organization $organization, string $member): JsonResponse
+    public function storeWorkWeek(WorkWeekRequest $request, Organization $organization, string $memberId): JsonResponse
     {
         $this->authorizeFull($request, $organization);
-        $model = $this->findMember($organization, $member);
+        $model = $this->findMember($organization, $memberId);
 
         $effectiveFrom = $request->effectiveFrom();
         $exists = MemberWorkWeek::query()
@@ -188,10 +188,10 @@ class PeopleSettingsController extends Controller
         return new JsonResponse(['data' => $this->workWeekData($week->refresh())], 201);
     }
 
-    public function destroyWorkWeek(Request $request, Organization $organization, string $member, string $week): Response
+    public function destroyWorkWeek(Request $request, Organization $organization, string $memberId, string $week): Response
     {
         $this->authorizeFull($request, $organization);
-        $model = $this->findMember($organization, $member);
+        $model = $this->findMember($organization, $memberId);
 
         /** @var MemberWorkWeek $row */
         $row = MemberWorkWeek::query()
@@ -214,12 +214,12 @@ class PeopleSettingsController extends Controller
         }
     }
 
-    private function findMember(Organization $organization, string $member): Member
+    private function findMember(Organization $organization, string $memberId): Member
     {
         /** @var Member $model */
         $model = Member::query()
             ->whereBelongsTo($organization, 'organization')
-            ->whereKey($member)
+            ->whereKey($memberId)
             ->firstOrFail();
 
         return $model;

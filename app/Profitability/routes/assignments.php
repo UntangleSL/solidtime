@@ -22,14 +22,14 @@ Route::middleware(['web', 'auth:web', 'auth.session', 'verified'])
                 Route::post('/projects/{project}/managers', [AssignmentController::class, 'addProjectManager'])
                     ->whereUuid(['organization', 'project'])
                     ->name('profitability.settings.project-managers.store');
-                Route::delete('/projects/{project}/managers/{member}', [AssignmentController::class, 'removeProjectManager'])
-                    ->whereUuid(['organization', 'project', 'member'])
+                Route::delete('/projects/{project}/managers/{memberId}', [AssignmentController::class, 'removeProjectManager'])
+                    ->whereUuid(['organization', 'project', 'memberId'])
                     ->name('profitability.settings.project-managers.destroy');
                 Route::post('/clients/{client}/account-managers', [AssignmentController::class, 'addAccountManager'])
                     ->whereUuid(['organization', 'client'])
                     ->name('profitability.settings.account-managers.store');
-                Route::delete('/clients/{client}/account-managers/{member}', [AssignmentController::class, 'removeAccountManager'])
-                    ->whereUuid(['organization', 'client', 'member'])
+                Route::delete('/clients/{client}/account-managers/{memberId}', [AssignmentController::class, 'removeAccountManager'])
+                    ->whereUuid(['organization', 'client', 'memberId'])
                     ->name('profitability.settings.account-managers.destroy');
             });
     });

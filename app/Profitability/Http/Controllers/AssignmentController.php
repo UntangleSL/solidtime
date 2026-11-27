@@ -154,11 +154,11 @@ class AssignmentController extends Controller
     /**
      * Removes the member from the project managers of the route project; a 204 also when they were not one.
      */
-    public function removeProjectManager(Request $request, Organization $organization, string $project, string $member): Response
+    public function removeProjectManager(Request $request, Organization $organization, string $project, string $memberId): Response
     {
         $this->ensureFullScope($request, $organization);
         $model = $this->project($organization, $project);
-        $memberModel = $this->member($organization, $member);
+        $memberModel = $this->member($organization, $memberId);
 
         ProjectManager::query()
             ->where('organization_id', '=', $organization->getKey())
@@ -194,11 +194,11 @@ class AssignmentController extends Controller
     /**
      * Removes the member from the account managers of the route client; a 204 also when they were not one.
      */
-    public function removeAccountManager(Request $request, Organization $organization, string $client, string $member): Response
+    public function removeAccountManager(Request $request, Organization $organization, string $client, string $memberId): Response
     {
         $this->ensureFullScope($request, $organization);
         $model = $this->client($organization, $client);
-        $memberModel = $this->member($organization, $member);
+        $memberModel = $this->member($organization, $memberId);
 
         ClientAccountManager::query()
             ->where('organization_id', '=', $organization->getKey())

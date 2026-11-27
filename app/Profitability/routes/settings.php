@@ -18,21 +18,21 @@ Route::middleware(['web', 'auth:web', 'auth.session', 'verified'])
             ->middleware('throttle:120,1,profitability-read:')
             ->name('profitability.settings.people');
 
-        Route::post('/people/{member}/cost-rates', [PeopleSettingsController::class, 'storeCostRate'])
-            ->whereUuid(['organization', 'member'])
+        Route::post('/people/{memberId}/cost-rates', [PeopleSettingsController::class, 'storeCostRate'])
+            ->whereUuid(['organization', 'memberId'])
             ->middleware(['check-organization-blocked', 'throttle:60,1,profitability-write:'])
             ->name('profitability.settings.people.cost_rates.store');
-        Route::delete('/people/{member}/cost-rates/{rate}', [PeopleSettingsController::class, 'destroyCostRate'])
-            ->whereUuid(['organization', 'member', 'rate'])
+        Route::delete('/people/{memberId}/cost-rates/{rate}', [PeopleSettingsController::class, 'destroyCostRate'])
+            ->whereUuid(['organization', 'memberId', 'rate'])
             ->middleware(['check-organization-blocked', 'throttle:60,1,profitability-write:'])
             ->name('profitability.settings.people.cost_rates.destroy');
 
-        Route::post('/people/{member}/work-weeks', [PeopleSettingsController::class, 'storeWorkWeek'])
-            ->whereUuid(['organization', 'member'])
+        Route::post('/people/{memberId}/work-weeks', [PeopleSettingsController::class, 'storeWorkWeek'])
+            ->whereUuid(['organization', 'memberId'])
             ->middleware(['check-organization-blocked', 'throttle:60,1,profitability-write:'])
             ->name('profitability.settings.people.work_weeks.store');
-        Route::delete('/people/{member}/work-weeks/{week}', [PeopleSettingsController::class, 'destroyWorkWeek'])
-            ->whereUuid(['organization', 'member', 'week'])
+        Route::delete('/people/{memberId}/work-weeks/{week}', [PeopleSettingsController::class, 'destroyWorkWeek'])
+            ->whereUuid(['organization', 'memberId', 'week'])
             ->middleware(['check-organization-blocked', 'throttle:60,1,profitability-write:'])
             ->name('profitability.settings.people.work_weeks.destroy');
 
