@@ -417,7 +417,44 @@ Plans:
   4. Account managers see money sold, cost (dated hourly cost per person), margin and hours for their clients; Owner/Admin see everything; employees see nothing new; no new core roles.
   5. Each person's chargeability (billable / available hours from a dated working week, minus Vacaciones and Festivo time) is shown against their target on the "Rentabilidad" page, which also has project and client views and a summary on each project page.
 
-**Plans**: TBD
+**Plans**: 20 plans
+
+Plans:
+**Wave 1**
+- [ ] 08-01-PLAN.md — Server tracer: fork module, contract tables, access resolver, live consumption, project summary endpoint (BUDG-03, CHRG-03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 08-02-PLAN.md — Scope-gated shared prop, module config and the complete en/es copy (CHRG-03; D-17)
+- [ ] 08-03-PLAN.md — Project and account manager assignments drive access; Owner/Admin assignment endpoints (BUDG-07, BUDG-06; D-10, D-16)
+- [ ] 08-04-PLAN.md — Contract terms endpoint, period calendar with stub, lazy idempotent materializer, even monthly plan (BUDG-01, BUDG-02, BUDG-04; D-01..D-04, D-15)
+- [ ] 08-05-PLAN.md — Dated hourly costs, dated working week and target, explicit absence projects (BUDG-05, CHRG-01, CHRG-02; D-06, D-08, D-13)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 08-06-PLAN.md — Contract card on the project page, formatters, status pill and budget meter (CHRG-03, BUDG-03)
+- [ ] 08-07-PLAN.md — Time on billable projects always billable, legacy entries reported never rewritten, two upstream e2e tests assert D-05 (BUDG-03)
+- [ ] 08-08-PLAN.md — Period list and selection, edits of started contracts without touching closed periods, materializer lifecycle (BUDG-01, BUDG-02, BUDG-04; D-03, D-04, D-18)
+- [ ] 08-11-PLAN.md — People view endpoint: chargeability vs target, report ranges, available hours (CHRG-02, CHRG-03; D-06, D-13)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 08-09-PLAN.md — Monthly plan editing by project managers, daily renewal safety net, archive pauses / un-archive resumes (BUDG-04, BUDG-02; D-02, D-18)
+- [ ] 08-10-PLAN.md — Dated cost and margin by scope, projection to close with status, Projects view endpoint (BUDG-03..BUDG-06; D-07, D-08, D-19)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 08-12-PLAN.md — Profitability page with view discovery, sidebar item, Projects view, range toolbar (CHRG-03, BUDG-04, BUDG-06)
+- [ ] 08-13-PLAN.md — Full Contract card: period select, projection, meter, planned-vs-consumed chart, month table, money strip, period states (BUDG-04, CHRG-03, BUDG-06)
+- [ ] 08-14-PLAN.md — Clients view endpoint (account manager portfolio) (BUDG-06; D-19)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 08-15-PLAN.md — Settings tab: people costs and working weeks, managers, absence projects (BUDG-05, BUDG-07, CHRG-01)
+- [ ] 08-16-PLAN.md — Contract terms editor and monthly plan editor from the card and the Projects view (BUDG-01, BUDG-04)
+- [ ] 08-17-PLAN.md — Clients tab with the margin by client chart (CHRG-03, BUDG-06)
+- [ ] 08-18-PLAN.md — People tab with the chargeability vs target chart (CHRG-02, CHRG-03)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 08-19-PLAN.md — Authorization matrix with route canary, browser proofs, isolation canaries, Phase 8 ledger with ledger-check OK
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 08-20-PLAN.md — Release: pin the green image, Dokploy deploy, public checks, Spanish owner message and end-of-phase checks (checkpoint)
 
 ### Phase 9: People Assignment & Occupancy
 
